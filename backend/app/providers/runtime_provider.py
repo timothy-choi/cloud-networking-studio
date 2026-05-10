@@ -6,6 +6,11 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from app.models.deployment import DeploymentEventLevel
+from app.providers.runtime_types import (
+    ProviderReconciliationResult,
+    ProviderRuntimeSnapshot,
+    ProviderRuntimeStats,
+)
 from app.services.deployment_planner import DeploymentPlan
 
 ProviderEvent = tuple[DeploymentEventLevel, str]
@@ -25,3 +30,27 @@ class RuntimeProvider(ABC):
     @abstractmethod
     def destroy(self, topology_id: UUID, deployment_id: UUID) -> list[ProviderEvent]:
         """Tear down external resources created for this topology/deployment."""
+
+    @abstractmethod
+    def inspect_topology_runtime(self, topology_id: UUID) -> ProviderRuntimeSnapshot:
+        """Observe networks + containers for ``topology_id`` (labels, not hardcoded names)."""
+
+    @abstractmethod
+    def fetch_logs_for_node(
+        self, topology_id: UUID, node_id: UUID, tail: int
+    ) -> str | None:
+        """Return recent container stdout/stderr, or None if no matching container."""
+
+    @abstractmethod
+    def fetch_stats_for_node(
+        self, topology_id: UUID, node_id: UUID
+    ) -> ProviderRuntimeStats | None:
+        """Lightweight resource stats, or None if no matching / stats unavailable."""
+
+    @abstractmethod
+    def reconcile_runtime(
+        self,
+        topology_id: UUID,
+        desired_node_ids: frozenset[UUID],
+    ) -> ProviderReconciliationResult:
+        """Compare desired node set vs actual containers/networks; report drift only."""

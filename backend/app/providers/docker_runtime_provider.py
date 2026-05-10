@@ -12,6 +12,13 @@ from docker.errors import APIError, ImageNotFound, NotFound
 
 from app.models.deployment import DeploymentEventLevel
 from app.providers.runtime_provider import ProviderEvent, RuntimeProvider
+from app.providers.runtime_types import (
+    ProviderReconciliationResult,
+    ProviderRuntimeSnapshot,
+    ProviderRuntimeStats,
+    RuntimeContainerRecord,
+    RuntimeNetworkRecord,
+)
 from app.services.deployment_planner import DeploymentPlan
 
 
@@ -108,6 +115,40 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
                 f"Destroy simulated for topology {topology_id} (no Docker socket)",
             ),
         ]
+
+    def inspect_topology_runtime(self, topology_id: UUID) -> ProviderRuntimeSnapshot:
+        _ = topology_id
+        return ProviderRuntimeSnapshot()
+
+    def fetch_logs_for_node(
+        self, topology_id: UUID, node_id: UUID, tail: int
+    ) -> str | None:
+        _ = (topology_id, node_id, tail)
+        return None
+
+    def fetch_stats_for_node(
+        self, topology_id: UUID, node_id: UUID
+    ) -> ProviderRuntimeStats | None:
+        _ = (topology_id, node_id)
+        return None
+
+    def reconcile_runtime(
+        self,
+        topology_id: UUID,
+        desired_node_ids: frozenset[UUID],
+    ) -> ProviderReconciliationResult:
+        _ = topology_id
+        missing_nodes = tuple(sorted(desired_node_ids, key=lambda u: str(u)))
+        lines = (
+            "Simulated runtime (no Docker engine): reconciliation assumes drift.",
+            f"Expected {len(missing_nodes)} node container(s) not present in engine.",
+        )
+        return ProviderReconciliationResult(
+            missing_network=True,
+            missing_node_ids=missing_nodes,
+            stopped_containers=(),
+            summary_lines=lines,
+        )
 
 
 class DockerRuntimeProvider(RuntimeProvider):
@@ -339,6 +380,274 @@ class DockerRuntimeProvider(RuntimeProvider):
             )
         )
         return events
+
+    def inspect_topology_runtime(self, topology_id: UUID) -> ProviderRuntimeSnapshot:
+        flt = _topology_runtime_filters(topology_id)
+        nets_raw: list = []
+        ctrs_raw: list = []
+        try:
+            nets_raw = list(self._client.networks.list(filters=flt))
+        except APIError:
+            pass
+        try:
+            ctrs_raw = list(self._client.containers.list(all=True, filters=flt))
+        except APIError:
+            pass
+        nets = tuple(_network_record(n) for n in nets_raw)
+        ctrs = tuple(_container_record(c) for c in ctrs_raw)
+        return ProviderRuntimeSnapshot(networks=nets, containers=ctrs)
+
+    def fetch_logs_for_node(
+        self, topology_id: UUID, node_id: UUID, tail: int
+    ) -> str | None:
+        ctr = _find_managed_container(self._client, topology_id, node_id)
+        if ctr is None:
+            return None
+        try:
+            n = max(1, min(int(tail), 10000))
+            raw = ctr.logs(
+                tail=n,
+                timestamps=True,
+                stdout=True,
+                stderr=True,
+            )
+            if isinstance(raw, bytes):
+                return raw.decode("utf-8", errors="replace")
+            return str(raw)
+        except APIError:
+            return None
+
+    def fetch_stats_for_node(
+        self, topology_id: UUID, node_id: UUID
+    ) -> ProviderRuntimeStats | None:
+        ctr = _find_managed_container(self._client, topology_id, node_id)
+        if ctr is None:
+            return None
+        try:
+            stats = ctr.stats(stream=False)
+        except APIError:
+            return None
+        return _docker_stats_to_provider(stats)
+
+    def reconcile_runtime(
+        self,
+        topology_id: UUID,
+        desired_node_ids: frozenset[UUID],
+    ) -> ProviderReconciliationResult:
+        flt = _topology_runtime_filters(topology_id)
+        missing_network = True
+        try:
+            nets = self._client.networks.list(filters=flt)
+            missing_network = len(nets) == 0
+        except APIError:
+            missing_network = True
+
+        try:
+            ctrs = list(self._client.containers.list(all=True, filters=flt))
+        except APIError:
+            ctrs = []
+
+        by_node: dict[UUID, RuntimeContainerRecord] = {}
+        stopped: list[tuple[str, str]] = []
+        for c in ctrs:
+            rec = _container_record(c)
+            if rec.node_id is not None:
+                by_node[rec.node_id] = rec
+                if not rec.running:
+                    stopped.append((rec.container_id, rec.name))
+
+        missing_nodes: list[UUID] = []
+        for nid in sorted(desired_node_ids, key=lambda u: str(u)):
+            if nid not in by_node:
+                missing_nodes.append(nid)
+
+        lines: list[str] = []
+        if missing_network:
+            lines.append(
+                "Drift: managed Docker network labeled for this topology was not found."
+            )
+        for nid in missing_nodes:
+            lines.append(f"Missing container for desired node_id={nid}.")
+        for cid, nm in stopped:
+            sid = cid[:12] if cid else "?"
+            lines.append(f"Stopped or non-running container detected: {nm} ({sid}).")
+
+        if not lines:
+            lines.append(
+                "No drift detected: labeled network present and all desired nodes running."
+            )
+
+        return ProviderReconciliationResult(
+            missing_network=missing_network,
+            missing_node_ids=tuple(missing_nodes),
+            stopped_containers=tuple(stopped),
+            summary_lines=tuple(lines),
+        )
+
+
+def _topology_runtime_filters(topology_id: UUID) -> dict[str, list[str]]:
+    tid = str(topology_id)
+    return {"label": [f"cns.topology_id={tid}", "cns.managed=true"]}
+
+
+def _find_managed_container(
+    client: docker.DockerClient,
+    topology_id: UUID,
+    node_id: UUID,
+):
+    tid = str(topology_id)
+    nid = str(node_id)
+    try:
+        lst = client.containers.list(
+            all=True,
+            filters={
+                "label": [
+                    f"cns.topology_id={tid}",
+                    f"cns.node_id={nid}",
+                    "cns.managed=true",
+                ]
+            },
+        )
+        return lst[0] if lst else None
+    except APIError:
+        return None
+
+
+def _network_record(net) -> RuntimeNetworkRecord:
+    attrs = net.attrs
+    ipam = attrs.get("IPAM") or {}
+    subnets: list[str] = []
+    for cfg in ipam.get("Config") or []:
+        sub = cfg.get("Subnet")
+        if sub:
+            subnets.append(sub)
+    labels = attrs.get("Labels") or {}
+    nid = attrs.get("Id") or ""
+    name = attrs.get("Name") or ""
+    if name.startswith("/"):
+        name = name[1:]
+    return RuntimeNetworkRecord(
+        network_id=nid[:64] if nid else "",
+        name=name,
+        driver=str(attrs.get("Driver") or "bridge"),
+        labels=dict(labels),
+        scope=attrs.get("Scope"),
+        ipam_driver=ipam.get("Driver"),
+        subnet_hints=tuple(subnets),
+    )
+
+
+def _container_record(ctr) -> RuntimeContainerRecord:
+    attrs = ctr.attrs
+    cid = attrs.get("Id") or ""
+    st = attrs.get("State") or {}
+    cfg = attrs.get("Config") or {}
+    labels = cfg.get("Labels") or attrs.get("Labels") or {}
+    if not isinstance(labels, dict):
+        labels = {}
+    node_uuid: UUID | None = None
+    raw_nid = labels.get("cns.node_id") if isinstance(labels, dict) else None
+    if raw_nid:
+        try:
+            node_uuid = UUID(str(raw_nid))
+        except ValueError:
+            node_uuid = None
+    nets = (attrs.get("NetworkSettings") or {}).get("Networks") or {}
+    ipv4_map: dict[str, str] = {}
+    for nname, nc in nets.items():
+        if not isinstance(nc, dict):
+            continue
+        ip = nc.get("IPAddress") or ""
+        if ip:
+            ipv4_map[str(nname)] = ip
+    name = attrs.get("Name") or ""
+    if isinstance(name, str) and name.startswith("/"):
+        name = name[1:]
+    image_tag = cfg.get("Image") or attrs.get("Image") or getattr(ctr, "image", None)
+    if hasattr(image_tag, "tags") and image_tag.tags:
+        image_tag = image_tag.tags[0]
+    image_s = str(image_tag or "")
+    running = bool(st.get("Running"))
+    return RuntimeContainerRecord(
+        container_id=cid,
+        short_id=cid[:12] if len(cid) >= 12 else cid,
+        name=name or getattr(ctr, "name", "") or "",
+        image=image_s,
+        status=getattr(ctr, "status", "") or st.get("Status") or "",
+        state_status=st.get("Status"),
+        running=running,
+        labels=dict(labels),
+        node_id=node_uuid,
+        ipv4_by_network=dict(ipv4_map),
+        created=attrs.get("Created"),
+        started_at=st.get("StartedAt"),
+    )
+
+
+def _docker_stats_to_provider(stats: dict) -> ProviderRuntimeStats:
+    cpu_p = _docker_cpu_percent(stats)
+    mem_use, mem_lim = _docker_memory_usage(stats)
+    rx, tx = _docker_network_totals(stats)
+    return ProviderRuntimeStats(
+        cpu_percent=cpu_p,
+        memory_usage_bytes=mem_use,
+        memory_limit_bytes=mem_lim,
+        network_rx_bytes=rx,
+        network_tx_bytes=tx,
+    )
+
+
+def _docker_cpu_percent(stats: dict) -> float | None:
+    try:
+        cpu_stats = stats["cpu_stats"]
+        precpu = stats["precpu_stats"]
+        cpu_delta = cpu_stats["cpu_usage"]["total_usage"] - precpu["cpu_usage"][
+            "total_usage"
+        ]
+        system_delta = cpu_stats["system_cpu_usage"] - precpu["system_cpu_usage"]
+        if system_delta <= 0 or cpu_delta < 0:
+            return 0.0
+        ncpus = len(cpu_stats.get("online_cpus") or [])
+        if ncpus == 0:
+            ncpus = 1
+        return float((cpu_delta / system_delta) * ncpus * 100.0)
+    except (KeyError, TypeError, ZeroDivisionError):
+        return None
+
+
+def _docker_memory_usage(stats: dict) -> tuple[int | None, int | None]:
+    try:
+        mem = stats.get("memory_stats") or {}
+        usage = mem.get("usage")
+        limit = mem.get("limit")
+        u = int(usage) if usage is not None else None
+        l = int(limit) if limit is not None else None
+        return u, l
+    except (TypeError, ValueError):
+        return None, None
+
+
+def _docker_network_totals(stats: dict) -> tuple[int | None, int | None]:
+    rx_total = 0
+    tx_total = 0
+    nets = stats.get("networks") or {}
+    if not isinstance(nets, dict):
+        return None, None
+    any_data = False
+    for _iface, data in nets.items():
+        if not isinstance(data, dict):
+            continue
+        rx = data.get("rx_bytes")
+        tx = data.get("tx_bytes")
+        if rx is not None:
+            rx_total += int(rx)
+            any_data = True
+        if tx is not None:
+            tx_total += int(tx)
+            any_data = True
+    if not any_data:
+        return None, None
+    return rx_total, tx_total
 
 
 def _remove_container_if_exists(client: docker.DockerClient, name: str) -> None:

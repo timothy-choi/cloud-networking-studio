@@ -1,0 +1,157 @@
+"""API tests for topology graph persistence (integration-style against DATABASE_URL)."""
+
+from __future__ import annotations
+
+import uuid
+
+from app.models.topology import NodeType
+
+TOPOLOGY_BODY = {
+    "name": "Lab",
+    "description": "test topology",
+    "runtime_target": "docker",
+    "networking_mode": "docker_bridge",
+}
+
+
+def test_health_ok(client):
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
+def test_topology_crud_flow(client):
+    # Create
+    r = client.post("/topologies", json=TOPOLOGY_BODY)
+    assert r.status_code == 201
+    tid = r.json()["id"]
+    assert r.json()["name"] == TOPOLOGY_BODY["name"]
+
+    # List
+    r = client.get("/topologies")
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) >= 1
+    assert any(row["id"] == tid for row in rows)
+
+    # Get one
+    r = client.get(f"/topologies/{tid}")
+    assert r.status_code == 200
+    assert r.json()["id"] == tid
+
+
+def test_nodes_and_links_flow(client):
+    r = client.post("/topologies", json=TOPOLOGY_BODY)
+    tid = r.json()["id"]
+
+    n1 = {
+        "name": "node-a",
+        "node_type": NodeType.GENERIC.value,
+        "image": "nginx:latest",
+        "ip_address": "10.0.0.1",
+        "config": {"cpu": "1"},
+    }
+    n2 = {
+        "name": "node-b",
+        "node_type": NodeType.HOST.value,
+        "image": None,
+        "ip_address": "10.0.0.2",
+        "config": None,
+    }
+
+    ra = client.post(f"/topologies/{tid}/nodes", json=n1)
+    assert ra.status_code == 201
+    id_a = ra.json()["id"]
+    assert ra.json()["topology_id"] == tid
+
+    rb = client.post(f"/topologies/{tid}/nodes", json=n2)
+    assert rb.status_code == 201
+    id_b = rb.json()["id"]
+
+    lr = client.get(f"/topologies/{tid}/nodes")
+    assert lr.status_code == 200
+    nodes = lr.json()
+    assert len(nodes) == 2
+    names = {n["name"] for n in nodes}
+    assert names == {"node-a", "node-b"}
+
+    link_body = {
+        "source_node_id": id_a,
+        "target_node_id": id_b,
+        "network_name": "net0",
+        "cidr": "10.0.0.0/24",
+        "config": {"mtu": 1500},
+    }
+    rl = client.post(f"/topologies/{tid}/links", json=link_body)
+    assert rl.status_code == 201
+    lj = rl.json()
+    assert lj["topology_id"] == tid
+    assert lj["source_node_id"] == id_a
+    assert lj["target_node_id"] == id_b
+
+    ll = client.get(f"/topologies/{tid}/links")
+    assert ll.status_code == 200
+    links = ll.json()
+    assert len(links) == 1
+    assert links[0]["network_name"] == "net0"
+
+
+def test_create_node_unknown_topology_returns_404(client):
+    missing = uuid.uuid4()
+    r = client.post(
+        f"/topologies/{missing}/nodes",
+        json={
+            "name": "orphan",
+            "node_type": NodeType.GENERIC.value,
+            "image": None,
+            "ip_address": None,
+            "config": None,
+        },
+    )
+    assert r.status_code == 404
+
+
+def test_link_wrong_topology_returns_404(client):
+    """Nodes from topology B cannot be linked under topology A path."""
+    ra = client.post("/topologies", json={**TOPOLOGY_BODY, "name": "A"})
+    rb = client.post("/topologies", json={**TOPOLOGY_BODY, "name": "B"})
+    id_a = ra.json()["id"]
+    id_b = rb.json()["id"]
+
+    na = client.post(
+        f"/topologies/{id_b}/nodes",
+        json={
+            "name": "on-b",
+            "node_type": NodeType.GENERIC.value,
+            "image": None,
+            "ip_address": None,
+            "config": None,
+        },
+    )
+    nid = na.json()["id"]
+
+    # Same node twice would be invalid graphically but DB allows — use two nodes on B
+    nb = client.post(
+        f"/topologies/{id_b}/nodes",
+        json={
+            "name": "on-b-2",
+            "node_type": NodeType.GENERIC.value,
+            "image": None,
+            "ip_address": None,
+            "config": None,
+        },
+    )
+    nid2 = nb.json()["id"]
+
+    r = client.post(
+        f"/topologies/{id_a}/links",
+        json={
+            "source_node_id": nid,
+            "target_node_id": nid2,
+            "network_name": "x",
+            "cidr": None,
+            "config": None,
+        },
+    )
+    assert r.status_code == 404
+    assert r.json()["detail"] == "Node not found"

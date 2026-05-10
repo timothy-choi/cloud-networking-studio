@@ -15,8 +15,9 @@ class Settings(BaseSettings):
 
     app_name: str = "Cloud Networking Studio"
     environment: str = "development"
+    # Default matches docker-compose (Postgres published on host port 5433). Override via .env.
     database_url: str = (
-        "postgresql://cns_user:cns_password@localhost:5432/cloud_networking_studio"
+        "postgresql://cns_user:cns_password@localhost:5433/cloud_networking_studio"
     )
 
 

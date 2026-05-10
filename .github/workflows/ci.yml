@@ -50,4 +50,4 @@ jobs:
         env:
           DATABASE_URL: postgresql://cns_user:cns_password@localhost:5432/cloud_networking_studio_test
         run: |
-          pytest
+          pytest tests/ -v

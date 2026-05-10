@@ -7,6 +7,7 @@ from uuid import UUID
 
 from app.models.deployment import DeploymentEventLevel
 from app.providers.runtime_types import (
+    ProviderHealingResult,
     ProviderReconciliationResult,
     ProviderRuntimeSnapshot,
     ProviderRuntimeStats,
@@ -54,3 +55,7 @@ class RuntimeProvider(ABC):
         desired_node_ids: frozenset[UUID],
     ) -> ProviderReconciliationResult:
         """Compare desired node set vs actual containers/networks; report drift only."""
+
+    @abstractmethod
+    def heal_restart_stopped(self, topology_id: UUID) -> ProviderHealingResult:
+        """Restart managed containers that exist but are not running (provider-specific)."""

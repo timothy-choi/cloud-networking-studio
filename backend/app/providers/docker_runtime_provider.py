@@ -13,6 +13,7 @@ from docker.errors import APIError, ImageNotFound, NotFound
 from app.models.deployment import DeploymentEventLevel
 from app.providers.runtime_provider import ProviderEvent, RuntimeProvider
 from app.providers.runtime_types import (
+    ProviderHealingResult,
     ProviderReconciliationResult,
     ProviderRuntimeSnapshot,
     ProviderRuntimeStats,
@@ -149,6 +150,10 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
             stopped_containers=(),
             summary_lines=lines,
         )
+
+    def heal_restart_stopped(self, topology_id: UUID) -> ProviderHealingResult:
+        _ = topology_id
+        return ProviderHealingResult()
 
 
 class DockerRuntimeProvider(RuntimeProvider):
@@ -483,6 +488,40 @@ class DockerRuntimeProvider(RuntimeProvider):
             stopped_containers=tuple(stopped),
             summary_lines=tuple(lines),
         )
+
+    def heal_restart_stopped(self, topology_id: UUID) -> ProviderHealingResult:
+        flt = _topology_runtime_filters(topology_id)
+        restarted: list[tuple[str, str]] = []
+        errors: list[str] = []
+        try:
+            ctrs = list(self._client.containers.list(all=True, filters=flt))
+        except APIError as exc:
+            return ProviderHealingResult(errors=(str(exc),))
+        for c in ctrs:
+            rec = _container_record(c)
+            if rec.node_id is None:
+                continue
+            if rec.running:
+                continue
+            try:
+                c.start()
+                restarted.append((rec.container_id, rec.name))
+            except APIError as exc:
+                errors.append(f"{rec.name}: {exc.explanation}")
+        return ProviderHealingResult(
+            restarted=tuple(restarted),
+            errors=tuple(errors),
+        )
+
+    def start_container_by_id(self, container_id: str) -> None:
+        """Start a container by engine id (optional helper for tooling/tests)."""
+        try:
+            ctr = self._client.containers.get(container_id)
+            ctr.start()
+        except NotFound as exc:
+            raise exc
+        except APIError:
+            raise
 
 
 def _topology_runtime_filters(topology_id: UUID) -> dict[str, list[str]]:

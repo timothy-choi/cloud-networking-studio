@@ -14,6 +14,7 @@ from app.models.deployment import (
     DeploymentEventLevel,
     DeploymentStatus,
 )
+from app.models.traffic_test import TrafficTest, TrafficTestResult, TrafficTestStatus, TrafficTestType
 
 __all__ = [
     "Deployment",
@@ -25,4 +26,8 @@ __all__ = [
     "TopologyLink",
     "TopologyNode",
     "TopologyStatus",
+    "TrafficTest",
+    "TrafficTestResult",
+    "TrafficTestStatus",
+    "TrafficTestType",
 ]

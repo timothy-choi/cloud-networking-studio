@@ -75,3 +75,12 @@ class ProviderHealingResult:
     """(container_id, display_name)."""
     skipped: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProviderExecResult:
+    """Output from ``docker exec`` / equivalent runtime exec."""
+
+    exit_code: int
+    stdout: str
+    stderr: str

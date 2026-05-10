@@ -13,6 +13,7 @@ from docker.errors import APIError, ImageNotFound, NotFound
 from app.models.deployment import DeploymentEventLevel
 from app.providers.runtime_provider import ProviderEvent, RuntimeProvider
 from app.providers.runtime_types import (
+    ProviderExecResult,
     ProviderHealingResult,
     ProviderReconciliationResult,
     ProviderRuntimeSnapshot,
@@ -154,6 +155,26 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
     def heal_restart_stopped(self, topology_id: UUID) -> ProviderHealingResult:
         _ = topology_id
         return ProviderHealingResult()
+
+    def find_container_id_for_node(
+        self, topology_id: UUID, node_id: UUID
+    ) -> str | None:
+        _ = (topology_id, node_id)
+        return "fake-container-id"
+
+    def exec_in_node_container(
+        self,
+        topology_id: UUID,
+        node_id: UUID,
+        argv: list[str],
+    ) -> ProviderExecResult | None:
+        _ = (topology_id, node_id)
+        cmd_s = " ".join(argv)
+        return ProviderExecResult(0, f"simulated exec OK\n{cmd_s}\n", "")
+
+    def resolve_node_ipv4(self, topology_id: UUID, node_id: UUID) -> str | None:
+        _ = (topology_id, node_id)
+        return "10.200.0.10"
 
 
 class DockerRuntimeProvider(RuntimeProvider):
@@ -522,6 +543,68 @@ class DockerRuntimeProvider(RuntimeProvider):
             raise exc
         except APIError:
             raise
+
+    def find_container_id_for_node(
+        self, topology_id: UUID, node_id: UUID
+    ) -> str | None:
+        ctr = _find_managed_container(self._client, topology_id, node_id)
+        return ctr.id if ctr else None
+
+    def exec_in_node_container(
+        self,
+        topology_id: UUID,
+        node_id: UUID,
+        argv: list[str],
+    ) -> ProviderExecResult | None:
+        ctr = _find_managed_container(self._client, topology_id, node_id)
+        if ctr is None:
+            return None
+        try:
+            raw = ctr.exec_run(argv, demux=True)
+        except APIError as exc:
+            expl = getattr(exc, "explanation", None) or str(exc)
+            return ProviderExecResult(1, "", expl)
+        return _normalize_exec_run(raw)
+
+    def resolve_node_ipv4(self, topology_id: UUID, node_id: UUID) -> str | None:
+        ctr = _find_managed_container(self._client, topology_id, node_id)
+        if ctr is None:
+            return None
+        rec = _container_record(ctr)
+        net_name = topology_network_name(topology_id)
+        ip = rec.ipv4_by_network.get(net_name)
+        if ip:
+            return ip
+        for _iface, addr in rec.ipv4_by_network.items():
+            if addr:
+                return addr
+        return None
+
+
+def _normalize_exec_run(raw) -> ProviderExecResult:
+    """Normalize docker-py ``ExecResult`` or legacy tuple."""
+    if hasattr(raw, "exit_code"):
+        ec = raw.exit_code
+        out = raw.output
+    elif isinstance(raw, tuple) and len(raw) >= 2:
+        ec, out = raw[0], raw[1]
+    else:
+        return ProviderExecResult(1, "", "unexpected exec response")
+
+    if isinstance(out, tuple) and len(out) >= 2:
+        so_b, se_b = out[0] or b"", out[1] or b""
+    elif isinstance(out, tuple) and len(out) == 1:
+        so_b, se_b = out[0] or b"", b""
+    else:
+        so_b = out if isinstance(out, (bytes, bytearray)) else b""
+        se_b = b""
+
+    def dec(x) -> str:
+        if isinstance(x, (bytes, bytearray)):
+            return bytes(x).decode("utf-8", errors="replace")
+        return str(x) if x is not None else ""
+
+    return ProviderExecResult(int(ec) if ec is not None else -1, dec(so_b), dec(se_b))
 
 
 def _topology_runtime_filters(topology_id: UUID) -> dict[str, list[str]]:

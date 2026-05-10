@@ -132,7 +132,10 @@ def run_ping_test(
             traffic_test_id=tt.id,
             exit_code=1,
             stdout="",
-            stderr="could not resolve target node IPv4 from runtime",
+            stderr=(
+                "could not resolve IPv4 on the CNS topology network "
+                "(default bridge addresses are not used for traffic tests)"
+            ),
             latency_ms=None,
             success=False,
         )
@@ -141,7 +144,7 @@ def run_ping_test(
             session,
             deployment_id,
             DeploymentEventLevel.WARNING,
-            "Traffic test failed: could not resolve target IPv4",
+            "Traffic test failed: no CNS topology network IPv4 for target (not using 172.17.x)",
         )
         session.flush()
         return tt
@@ -254,7 +257,10 @@ def run_http_test(
                 traffic_test_id=tt.id,
                 exit_code=1,
                 stdout="",
-                stderr="could not resolve target node IPv4 from runtime",
+                stderr=(
+                "could not resolve IPv4 on the CNS topology network "
+                "(default bridge addresses are not used for traffic tests)"
+            ),
                 latency_ms=None,
                 success=False,
             )
@@ -263,7 +269,7 @@ def run_http_test(
             session,
             deployment_id,
             DeploymentEventLevel.WARNING,
-            "HTTP traffic test failed: could not resolve target IPv4",
+            "HTTP traffic test failed: no CNS topology network IPv4 for target (not using 172.17.x)",
         )
         session.flush()
         return tt

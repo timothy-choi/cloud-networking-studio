@@ -60,6 +60,105 @@ def _resolve_image(plan_node_image: str | None) -> str:
     return (plan_node_image or "").strip() or "alpine:latest"
 
 
+def _default_bridge_network_name() -> str:
+    """Docker's built-in bridge is always named ``bridge``."""
+    return "bridge"
+
+
+def _raw_ipv4_map_from_networks(nets: dict) -> dict[str, str]:
+    """All non-empty IPv4 addresses keyed by Docker network attachment name."""
+    out: dict[str, str] = {}
+    for nname, nc in (nets or {}).items():
+        if not isinstance(nc, dict):
+            continue
+        ip = (nc.get("IPAddress") or "").strip()
+        if ip:
+            out[str(nname)] = ip
+    return out
+
+
+def _labeled_topology_network_ids(
+    client: docker.DockerClient, topology_id: UUID
+) -> frozenset[str]:
+    """Network IDs for bridge networks labeled as this topology."""
+    try:
+        nets = client.networks.list(filters=_topology_runtime_filters(topology_id))
+    except APIError:
+        return frozenset()
+    ids: set[str] = set()
+    for n in nets:
+        nid = n.attrs.get("Id")
+        if nid:
+            ids.add(nid)
+    return frozenset(ids)
+
+
+def _pick_cns_ipv4(
+    nets: dict,
+    topology_id: UUID,
+    labeled_net_ids: frozenset[str],
+) -> str | None:
+    """IPv4 on the CNS topology attachment — never the default ``bridge``-only IP."""
+    preferred_key = topology_network_name(topology_id)
+    pref_cfg = nets.get(preferred_key)
+    if isinstance(pref_cfg, dict):
+        ip = (pref_cfg.get("IPAddress") or "").strip()
+        if ip:
+            return ip
+
+    for net_key, cfg in nets.items():
+        if not isinstance(cfg, dict):
+            continue
+        if net_key == _default_bridge_network_name():
+            continue
+        nid = cfg.get("NetworkID")
+        if nid and nid in labeled_net_ids:
+            ip = (cfg.get("IPAddress") or "").strip()
+            if ip:
+                return ip
+    return None
+
+
+def _runtime_ipv4_display_map(
+    nets: dict,
+    topology_id: UUID,
+    labeled_net_ids: frozenset[str],
+) -> dict[str, str]:
+    """Prefer CNS topology network keys for API/runtime views; omit stray bridge when possible."""
+    raw = _raw_ipv4_map_from_networks(nets)
+    pref = topology_network_name(topology_id)
+    ordered: dict[str, str] = {}
+
+    if pref in raw:
+        ordered[pref] = raw[pref]
+
+    for key, ip in raw.items():
+        if key == pref or key == _default_bridge_network_name():
+            continue
+        cfg = nets.get(key)
+        nid = (cfg or {}).get("NetworkID") if isinstance(cfg, dict) else None
+        if nid and nid in labeled_net_ids:
+            ordered[key] = ip
+
+    if not ordered:
+        # Misconfiguration: surface whatever we have (often only bridge).
+        return dict(raw)
+    return ordered
+
+
+def _disconnect_default_bridge(
+    client: docker.DockerClient, container_id: str
+) -> None:
+    """Detach from Docker's default bridge so containers are not dual-homed on 172.17.0.0/16."""
+    try:
+        bridge = client.networks.get(_default_bridge_network_name())
+        bridge.disconnect(container_id, force=True)
+    except NotFound:
+        pass
+    except APIError:
+        pass
+
+
 def _ipam_from_cidr(subnet_cidr: str | None):
     """Return docker.types.IPAMConfig or None."""
     if not subnet_cidr:
@@ -73,6 +172,36 @@ def _ipam_from_cidr(subnet_cidr: str | None):
         return IPAMConfig(driver="default", pool_configs=[pool])
     except (ValueError, TypeError):
         return None
+
+
+class DockerProviderAttachmentError(RuntimeError):
+    """Container was not attached to the CNS topology network or IP verification failed."""
+
+
+def _verify_cns_network_attachment(
+    nets: dict,
+    net_name: str,
+    expected_ipv4: str | None,
+) -> str:
+    """Verify ``docker inspect`` Networks contains the topology network and optional static IP."""
+    cfg = nets.get(net_name)
+    if not isinstance(cfg, dict):
+        raise DockerProviderAttachmentError(
+            "Failed to attach container to CNS network: "
+            f"network {net_name!r} missing from inspect Networks "
+            f"(have {sorted(nets)!r})"
+        )
+    ip = (cfg.get("IPAddress") or "").strip()
+    if not ip:
+        raise DockerProviderAttachmentError(
+            f"Failed to attach container to CNS network: no IPv4 on {net_name!r}"
+        )
+    if expected_ipv4 and ip != expected_ipv4.strip():
+        raise DockerProviderAttachmentError(
+            "Failed to attach container to CNS network: "
+            f"expected IP {expected_ipv4!r}, inspect has {ip!r} on {net_name!r}"
+        )
+    return ip
 
 
 class FakeDockerRuntimeProvider(RuntimeProvider):
@@ -219,13 +348,66 @@ class DockerRuntimeProvider(RuntimeProvider):
             )
             raise
 
-        API_VER = getattr(
-            __import__("docker.constants", fromlist=["DEFAULT_DOCKER_API_VERSION"]),
-            "DEFAULT_DOCKER_API_VERSION",
-            "1.43",
-        )
-        from docker.types import EndpointConfig, NetworkingConfig
+        try:
+            deploy_events = self._deploy_nodes_on_network(plan, net_name)
+        except Exception:
+            _rollback_topology_deploy(self._client, plan.topology_id)
+            raise
+        events.extend(deploy_events)
 
+        events.append(
+            (
+                DeploymentEventLevel.INFO,
+                "Deployment completed successfully",
+            )
+        )
+        return events
+
+    def _make_cns_networking_config(self, net_name: str, ipv4: str | None):
+        """Build Docker Engine networking_config for the topology bridge network."""
+        api = self._client.api
+        if ipv4:
+            ep = api.create_endpoint_config(ipv4_address=ipv4.strip())
+        else:
+            ep = api.create_endpoint_config()
+        return api.create_networking_config({net_name: ep})
+
+    def _create_container_on_cns_network(
+        self,
+        image_ref: str,
+        cname: str,
+        cmd: list[str] | None,
+        labels: dict[str, str],
+        net_name: str,
+        ipv4: str | None,
+    ):
+        """Create on the CNS bridge using only ``networking_config`` (low-level API).
+
+        High-level ``containers.create(..., network=..., networking_config=...)`` sets
+        ``HostConfig.NetworkMode`` to the network name, which can ignore endpoint
+        ``IPv4Address``; the engine then assigns the next pool IP (e.g. ``.2``).
+        """
+        api = self._client.api
+        net_cfg = self._make_cns_networking_config(net_name, ipv4)
+        resp = api.create_container(
+            image_ref,
+            command=cmd,
+            name=cname,
+            labels=labels,
+            networking_config=net_cfg,
+            detach=True,
+        )
+        cid = resp["Id"]
+        api.start(cid)
+        return self._client.containers.get(cid)
+
+    def _deploy_nodes_on_network(
+        self,
+        plan: DeploymentPlan,
+        net_name: str,
+    ) -> list[ProviderEvent]:
+        """Create containers on ``net_name`` at create-time via ``networking_config``."""
+        events: list[ProviderEvent] = []
         for pn in plan.nodes:
             cname = container_name(pn.id, pn.name)
             image_ref = _resolve_image(pn.image)
@@ -246,93 +428,93 @@ class DockerRuntimeProvider(RuntimeProvider):
                     )
                 )
 
-            ep_cfg = (
-                EndpointConfig(API_VER, ipv4_address=pn.ip_address.strip())
-                if pn.ip_address
-                else EndpointConfig(API_VER)
+            try_static = bool(pn.ip_address and str(pn.ip_address).strip())
+            expect_exact_ip = (
+                pn.ip_address.strip() if try_static else None
             )
-            net_cfg = NetworkingConfig({net_name: ep_cfg})
+
+            ipv4_for_cfg = pn.ip_address.strip() if try_static else None
 
             try:
-                container = self._client.containers.create(
-                    image=image_ref,
-                    name=cname,
-                    command=cmd,
-                    detach=True,
-                    labels=_container_labels(plan.topology_id, pn.id),
-                    networking_config=net_cfg,
-                )
                 events.append(
                     (
                         DeploymentEventLevel.INFO,
-                        f"Creating container: {cname}",
+                        f"Creating container on {net_name}: {cname}",
                     )
                 )
-                if pn.ip_address:
-                    events.append(
-                        (
-                            DeploymentEventLevel.INFO,
-                            f"Assigned IP: {pn.ip_address} -> {cname}",
-                        )
-                    )
+                container = self._create_container_on_cns_network(
+                    image_ref,
+                    cname,
+                    cmd,
+                    _container_labels(plan.topology_id, pn.id),
+                    net_name,
+                    ipv4_for_cfg,
+                )
+                events.append(
+                    (DeploymentEventLevel.INFO, f"Container started: {cname}"),
+                )
             except APIError as exc:
-                if pn.ip_address:
-                    events.append(
-                        (
-                            DeploymentEventLevel.WARNING,
-                            f"Create with static IP failed for {cname}, retrying "
-                            f"without fixed address: {exc.explanation}",
-                        )
-                    )
-                    fallback_cfg = NetworkingConfig(
-                        {net_name: EndpointConfig(API_VER)}
-                    )
-                    container = self._client.containers.create(
-                        image=image_ref,
-                        name=cname,
-                        command=cmd,
-                        detach=True,
-                        labels=_container_labels(plan.topology_id, pn.id),
-                        networking_config=fallback_cfg,
-                    )
-                    events.append(
-                        (
-                            DeploymentEventLevel.INFO,
-                            f"Creating container: {cname}",
-                        )
-                    )
-                else:
-                    events.append(
-                        (
-                            DeploymentEventLevel.ERROR,
-                            f"Container create failed for {cname}: {exc.explanation}",
-                        )
-                    )
-                    raise
+                msg = (
+                    "Docker networking_config / container create failed "
+                    f"({net_name}, {cname}): {exc.explanation}"
+                )
+                events.append((DeploymentEventLevel.ERROR, msg))
+                raise DockerProviderAttachmentError(msg) from exc
 
             try:
-                container.start()
-                events.append(
-                    (
-                        DeploymentEventLevel.INFO,
-                        f"Container started: {cname}",
-                    )
-                )
+                container.reload()
             except APIError as exc:
+                msg = (
+                    "Failed to verify CNS network attachment: "
+                    f"reload failed for {cname}: {exc.explanation}"
+                )
+                events.append((DeploymentEventLevel.ERROR, msg))
+                raise DockerProviderAttachmentError(msg) from exc
+
+            nets_post = (
+                (container.attrs.get("NetworkSettings") or {}).get("Networks") or {}
+            )
+
+            try:
+                verified_ip = _verify_cns_network_attachment(
+                    nets_post,
+                    net_name,
+                    expect_exact_ip if try_static else None,
+                )
+            except DockerProviderAttachmentError as exc:
                 events.append(
-                    (
-                        DeploymentEventLevel.ERROR,
-                        f"Container start failed for {cname}: {exc.explanation}",
-                    )
+                    (DeploymentEventLevel.ERROR, str(exc)),
                 )
                 raise
 
-        events.append(
-            (
-                DeploymentEventLevel.INFO,
-                "Deployment completed successfully",
+            events.append(
+                (
+                    DeploymentEventLevel.INFO,
+                    f"CNS network attached: {cname} -> {verified_ip}",
+                )
             )
-        )
+            events.append(
+                (
+                    DeploymentEventLevel.INFO,
+                    f"Verified CNS IP: {verified_ip} ({cname})",
+                )
+            )
+
+            labeled_ids_deploy = _labeled_topology_network_ids(
+                self._client, plan.topology_id
+            )
+            display_ips = _runtime_ipv4_display_map(
+                nets_post, plan.topology_id, labeled_ids_deploy
+            )
+            ip_summary = ", ".join(f"{k}={v}" for k, v in display_ips.items())
+            if ip_summary:
+                events.append(
+                    (
+                        DeploymentEventLevel.INFO,
+                        f"CNS runtime IPs: {ip_summary}",
+                    )
+                )
+
         return events
 
     def destroy(self, topology_id: UUID, deployment_id: UUID) -> list[ProviderEvent]:
@@ -419,8 +601,11 @@ class DockerRuntimeProvider(RuntimeProvider):
             ctrs_raw = list(self._client.containers.list(all=True, filters=flt))
         except APIError:
             pass
+        labeled_ids = _labeled_topology_network_ids(self._client, topology_id)
         nets = tuple(_network_record(n) for n in nets_raw)
-        ctrs = tuple(_container_record(c) for c in ctrs_raw)
+        ctrs = tuple(
+            _container_record(c, topology_id, labeled_ids) for c in ctrs_raw
+        )
         return ProviderRuntimeSnapshot(networks=nets, containers=ctrs)
 
     def fetch_logs_for_node(
@@ -473,10 +658,12 @@ class DockerRuntimeProvider(RuntimeProvider):
         except APIError:
             ctrs = []
 
+        labeled_ids = _labeled_topology_network_ids(self._client, topology_id)
+
         by_node: dict[UUID, RuntimeContainerRecord] = {}
         stopped: list[tuple[str, str]] = []
         for c in ctrs:
-            rec = _container_record(c)
+            rec = _container_record(c, topology_id, labeled_ids)
             if rec.node_id is not None:
                 by_node[rec.node_id] = rec
                 if not rec.running:
@@ -518,14 +705,16 @@ class DockerRuntimeProvider(RuntimeProvider):
             ctrs = list(self._client.containers.list(all=True, filters=flt))
         except APIError as exc:
             return ProviderHealingResult(errors=(str(exc),))
+        labeled_ids = _labeled_topology_network_ids(self._client, topology_id)
         for c in ctrs:
-            rec = _container_record(c)
+            rec = _container_record(c, topology_id, labeled_ids)
             if rec.node_id is None:
                 continue
             if rec.running:
                 continue
             try:
                 c.start()
+                _disconnect_default_bridge(self._client, c.id)
                 restarted.append((rec.container_id, rec.name))
             except APIError as exc:
                 errors.append(f"{rec.name}: {exc.explanation}")
@@ -570,15 +759,13 @@ class DockerRuntimeProvider(RuntimeProvider):
         ctr = _find_managed_container(self._client, topology_id, node_id)
         if ctr is None:
             return None
-        rec = _container_record(ctr)
-        net_name = topology_network_name(topology_id)
-        ip = rec.ipv4_by_network.get(net_name)
-        if ip:
-            return ip
-        for _iface, addr in rec.ipv4_by_network.items():
-            if addr:
-                return addr
-        return None
+        try:
+            ctr.reload()
+        except APIError:
+            pass
+        labeled_ids = _labeled_topology_network_ids(self._client, topology_id)
+        nets = (ctr.attrs.get("NetworkSettings") or {}).get("Networks") or {}
+        return _pick_cns_ipv4(nets, topology_id, labeled_ids)
 
 
 def _normalize_exec_run(raw) -> ProviderExecResult:
@@ -659,7 +846,11 @@ def _network_record(net) -> RuntimeNetworkRecord:
     )
 
 
-def _container_record(ctr) -> RuntimeContainerRecord:
+def _container_record(
+    ctr,
+    topology_id: UUID | None = None,
+    labeled_net_ids: frozenset[str] | None = None,
+) -> RuntimeContainerRecord:
     attrs = ctr.attrs
     cid = attrs.get("Id") or ""
     st = attrs.get("State") or {}
@@ -674,14 +865,20 @@ def _container_record(ctr) -> RuntimeContainerRecord:
             node_uuid = UUID(str(raw_nid))
         except ValueError:
             node_uuid = None
+    if topology_id is None:
+        raw_tid = labels.get("cns.topology_id")
+        if raw_tid:
+            try:
+                topology_id = UUID(str(raw_tid))
+            except ValueError:
+                topology_id = None
+
     nets = (attrs.get("NetworkSettings") or {}).get("Networks") or {}
-    ipv4_map: dict[str, str] = {}
-    for nname, nc in nets.items():
-        if not isinstance(nc, dict):
-            continue
-        ip = nc.get("IPAddress") or ""
-        if ip:
-            ipv4_map[str(nname)] = ip
+    if topology_id is not None and labeled_net_ids is not None:
+        ipv4_map = _runtime_ipv4_display_map(nets, topology_id, labeled_net_ids)
+    else:
+        ipv4_map = _raw_ipv4_map_from_networks(nets)
+
     name = attrs.get("Name") or ""
     if isinstance(name, str) and name.startswith("/"):
         name = name[1:]
@@ -797,6 +994,25 @@ def _remove_network_if_exists(client: docker.DockerClient, name: str) -> None:
         pass
     except APIError:
         pass
+
+
+def _rollback_topology_deploy(client: docker.DockerClient, topology_id: UUID) -> None:
+    """Best-effort removal of CNS-labeled containers and topology network after a failed deploy."""
+    tid = str(topology_id)
+    try:
+        ctrs = client.containers.list(
+            all=True,
+            filters={"label": [f"cns.topology_id={tid}"]},
+        )
+    except APIError:
+        ctrs = []
+    for ctr in ctrs:
+        try:
+            ctr.stop(timeout=15)
+            ctr.remove()
+        except (APIError, NotFound):
+            pass
+    _remove_network_if_exists(client, topology_network_name(topology_id))
 
 
 def runtime_provider_for_topology(runtime_target: str) -> RuntimeProvider:

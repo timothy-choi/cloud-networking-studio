@@ -1,4 +1,4 @@
-"""Deployment orchestration routes — persistence + simulated provider execution."""
+"""Deployment orchestration routes — persistence + runtime provider execution."""
 
 from __future__ import annotations
 
@@ -12,17 +12,11 @@ from sqlalchemy.orm import Session, selectinload
 from app.db.session import get_db
 from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLevel, DeploymentStatus
 from app.models.topology import Topology
-from app.providers.docker_runtime_provider import FakeDockerRuntimeProvider
-from app.providers.runtime_provider import RuntimeProvider
+from app.providers.docker_runtime_provider import runtime_provider_for_topology
 from app.schemas.deployment import DeploymentEventResponse, DeploymentResponse
 from app.services.deployment_planner import build_deployment_plan
 
 router = APIRouter(tags=["deployments"])
-
-
-def _get_runtime_provider() -> RuntimeProvider:
-    """FastAPI dependency hook for future DI (real Docker/K8s providers)."""
-    return FakeDockerRuntimeProvider()
 
 
 def _topology_or_404(db: Session, topology_id: UUID) -> Topology:
@@ -53,6 +47,15 @@ def _deployment_or_404(db: Session, deployment_id: UUID) -> Deployment:
     return dep
 
 
+def _load_deployment_full(db: Session, deployment_id: UUID) -> Deployment:
+    stmt = (
+        select(Deployment)
+        .where(Deployment.id == deployment_id)
+        .options(selectinload(Deployment.events))
+    )
+    return db.execute(stmt).scalar_one()
+
+
 @router.post(
     "/topologies/{topology_id}/deploy",
     response_model=DeploymentResponse,
@@ -61,10 +64,10 @@ def _deployment_or_404(db: Session, deployment_id: UUID) -> Deployment:
 def deploy_topology(
     topology_id: UUID,
     db: Session = Depends(get_db),
-    provider: RuntimeProvider = Depends(_get_runtime_provider),
 ) -> Deployment:
-    """Simulate a deployment run and persist events (no real containers)."""
+    """Run deployment against the topology's runtime target (real Docker when target is docker)."""
     topo = _topology_or_404(db, topology_id)
+    provider = runtime_provider_for_topology(topo.runtime_target)
 
     deployment = Deployment(
         topology_id=topology_id,
@@ -78,13 +81,27 @@ def deploy_topology(
     deployment.status = DeploymentStatus.PROVISIONING
 
     plan = build_deployment_plan(topo)
-    messages = provider.deploy(plan)
 
-    for msg in messages:
+    try:
+        rows = provider.deploy(plan)
+    except Exception as exc:
+        deployment.status = DeploymentStatus.FAILED
+        deployment.finished_at = datetime.utcnow()
         db.add(
             DeploymentEvent(
                 deployment_id=deployment.id,
-                level=DeploymentEventLevel.INFO,
+                level=DeploymentEventLevel.ERROR,
+                message=f"Deployment failed: {exc}",
+            )
+        )
+        db.commit()
+        return _load_deployment_full(db, deployment.id)
+
+    for level, msg in rows:
+        db.add(
+            DeploymentEvent(
+                deployment_id=deployment.id,
+                level=level,
                 message=msg,
             )
         )
@@ -93,13 +110,43 @@ def deploy_topology(
     deployment.finished_at = datetime.utcnow()
     db.commit()
 
-    stmt = (
-        select(Deployment)
-        .where(Deployment.id == deployment.id)
-        .options(selectinload(Deployment.events))
-    )
-    deployment = db.execute(stmt).scalar_one()
-    return deployment
+    return _load_deployment_full(db, deployment.id)
+
+
+@router.post(
+    "/deployments/{deployment_id}/destroy",
+    response_model=DeploymentResponse,
+)
+def destroy_deployment(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+) -> Deployment:
+    """Remove Docker resources labeled for this topology and mark deployment stopped."""
+    dep = _deployment_or_404(db, deployment_id)
+    topo = db.get(Topology, dep.topology_id)
+    if topo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topology not found",
+        )
+
+    provider = runtime_provider_for_topology(dep.runtime_target)
+    rows = provider.destroy(topo.id, dep.id)
+
+    for level, msg in rows:
+        db.add(
+            DeploymentEvent(
+                deployment_id=dep.id,
+                level=level,
+                message=msg,
+            )
+        )
+
+    dep.status = DeploymentStatus.STOPPED
+    dep.finished_at = datetime.utcnow()
+    db.commit()
+
+    return _load_deployment_full(db, deployment_id)
 
 
 @router.get("/deployments/{deployment_id}", response_model=DeploymentResponse)

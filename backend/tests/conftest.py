@@ -15,6 +15,9 @@ _DEFAULT_TEST_DATABASE_URL = (
 if not os.environ.get("GITHUB_ACTIONS"):
     os.environ["DATABASE_URL"] = _DEFAULT_TEST_DATABASE_URL
 
+# Integration tests must never require a local Docker daemon.
+os.environ["CNS_USE_FAKE_DOCKER"] = "1"
+
 import pytest
 from fastapi.testclient import TestClient
 

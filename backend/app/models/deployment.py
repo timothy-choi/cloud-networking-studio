@@ -25,6 +25,7 @@ class DeploymentStatus(str, enum.Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    STOPPED = "stopped"
 
 
 class DeploymentEventLevel(str, enum.Enum):

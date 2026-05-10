@@ -15,7 +15,6 @@ class Settings(BaseSettings):
 
     app_name: str = "Cloud Networking Studio"
     environment: str = "development"
-    # Matches docker-compose postgres defaults for local development.
     database_url: str = (
         "postgresql://cns_user:cns_password@localhost:5432/cloud_networking_studio"
     )

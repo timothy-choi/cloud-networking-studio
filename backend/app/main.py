@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.api.controller import router as controller_router
 from app.api.deployments import router as deployments_router
+from app.api.failure_injections import router as failure_injections_router
 from app.api.runtime import router as runtime_router
 from app.api.topologies import router as topologies_router
 from app.api.traffic_tests import router as traffic_tests_router
@@ -29,6 +30,7 @@ app.include_router(deployments_router)
 app.include_router(runtime_router)
 app.include_router(controller_router)
 app.include_router(traffic_tests_router)
+app.include_router(failure_injections_router)
 
 
 @app.get("/health")

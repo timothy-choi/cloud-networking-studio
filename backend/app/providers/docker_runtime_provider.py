@@ -305,6 +305,15 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
         _ = (topology_id, node_id)
         return "10.200.0.10"
 
+    def stop_node_container(self, topology_id: UUID, node_id: UUID) -> None:
+        _ = (topology_id, node_id)
+
+    def restart_node_container(self, topology_id: UUID, node_id: UUID) -> None:
+        _ = (topology_id, node_id)
+
+    def kill_node_container(self, topology_id: UUID, node_id: UUID) -> None:
+        _ = (topology_id, node_id)
+
 
 class DockerRuntimeProvider(RuntimeProvider):
     """Real Docker engine orchestration for bridge networks + containers."""
@@ -766,6 +775,33 @@ class DockerRuntimeProvider(RuntimeProvider):
         labeled_ids = _labeled_topology_network_ids(self._client, topology_id)
         nets = (ctr.attrs.get("NetworkSettings") or {}).get("Networks") or {}
         return _pick_cns_ipv4(nets, topology_id, labeled_ids)
+
+    def stop_node_container(self, topology_id: UUID, node_id: UUID) -> None:
+        ctr = _find_managed_container(self._client, topology_id, node_id)
+        if ctr is None:
+            raise LookupError("runtime container not found for node")
+        try:
+            ctr.stop(timeout=15)
+        except APIError as exc:
+            raise RuntimeError(exc.explanation or str(exc)) from exc
+
+    def restart_node_container(self, topology_id: UUID, node_id: UUID) -> None:
+        ctr = _find_managed_container(self._client, topology_id, node_id)
+        if ctr is None:
+            raise LookupError("runtime container not found for node")
+        try:
+            ctr.restart(timeout=15)
+        except APIError as exc:
+            raise RuntimeError(exc.explanation or str(exc)) from exc
+
+    def kill_node_container(self, topology_id: UUID, node_id: UUID) -> None:
+        ctr = _find_managed_container(self._client, topology_id, node_id)
+        if ctr is None:
+            raise LookupError("runtime container not found for node")
+        try:
+            ctr.kill()
+        except APIError as exc:
+            raise RuntimeError(exc.explanation or str(exc)) from exc
 
 
 def _normalize_exec_run(raw) -> ProviderExecResult:

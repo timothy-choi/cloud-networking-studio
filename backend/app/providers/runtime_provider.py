@@ -79,3 +79,15 @@ class RuntimeProvider(ABC):
     @abstractmethod
     def resolve_node_ipv4(self, topology_id: UUID, node_id: UUID) -> str | None:
         """IPv4 address for the node on the topology attachment (best effort)."""
+
+    @abstractmethod
+    def stop_node_container(self, topology_id: UUID, node_id: UUID) -> None:
+        """Stop the runtime workload for ``node_id`` (Docker stop / equivalent)."""
+
+    @abstractmethod
+    def restart_node_container(self, topology_id: UUID, node_id: UUID) -> None:
+        """Restart the runtime workload for ``node_id``."""
+
+    @abstractmethod
+    def kill_node_container(self, topology_id: UUID, node_id: UUID) -> None:
+        """Force-stop the runtime workload for ``node_id`` (SIGKILL / equivalent)."""

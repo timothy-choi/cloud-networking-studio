@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.controller import router as controller_router
 from app.api.deployments import router as deployments_router
@@ -76,6 +77,17 @@ app.include_router(runtime_router)
 app.include_router(controller_router)
 app.include_router(traffic_tests_router)
 app.include_router(failure_injections_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get(

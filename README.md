@@ -62,7 +62,7 @@ flowchart LR
 
 ## Screenshots & UI
 
-The current repository is **API-first**. A browser UI is planned (see [docs/frontend-mvp-and-observability.md](docs/frontend-mvp-and-observability.md)).
+The current repository is **API-first** with an optional **React dashboard** in `frontend/` (topology overview, graph, deploy/runtime controls).
 
 **Placeholder slots for your portfolio / README visuals:**
 
@@ -84,6 +84,7 @@ The current repository is **API-first**. A browser UI is planned (see [docs/fron
 - **PostgreSQL** (local or Docker; repo defaults use port **5433** — see [docker-compose.yml](docker-compose.yml))
 - **Docker Engine** (for real networks, containers, traffic, and failure injection)
 - **`curl`** and **`jq`** (for the demo script)
+- **Node.js 20+** and **npm** (for the web UI in `frontend/`)
 
 ### Database
 
@@ -102,6 +103,31 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 - **OpenAPI UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
 - **Health:** `GET /health`
+
+### Frontend (dashboard)
+
+The React dashboard talks to the API over **`fetch`**. Configure the backend URL (defaults match local dev):
+
+```bash
+cd frontend
+cp .env.example .env   # optional — defaults to http://localhost:8000
+npm install
+npm run dev
+```
+
+Then open **http://localhost:5174**. The FastAPI app enables **CORS** for `http://localhost:5174` and `http://127.0.0.1:5174` so browser requests succeed during development.
+
+Keep the backend running on port **8000** while using the UI.
+
+**Production build:**
+
+```bash
+cd frontend
+npm run build
+npm run preview   # optional — serves dist/
+```
+
+**What the UI covers:** dashboard with health + topology list, topology detail with React Flow graph, deploy/teardown, runtime JSON, deployment events, ping/HTTP traffic tests, stop-node failure injection, reconcile, and heal — aligned with existing REST endpoints.
 
 ### Automated demo (recommended)
 

@@ -18,6 +18,7 @@ cloud-networking-studio/
 │   ├── tests/             # Pytest suite
 │   └── requirements.txt
 ├── docs/                  # Architecture and onboarding (you are here)
+├── frontend/              # Vite + React + TypeScript dashboard (Tailwind, React Flow)
 ├── scripts/               # Demo and helper shell scripts (do not break paths casually)
 ├── docker-compose.yml     # Local Postgres (published port 5433 by default)
 └── README.md
@@ -35,6 +36,7 @@ cloud-networking-studio/
 | Business logic | `backend/app/services/` |
 | Docker / provider behavior | `backend/app/providers/` |
 | Cross-cutting config | `backend/app/core/config.py` |
+| Build dashboard UI | `frontend/` |
 | E2E demo | `scripts/demo_full_flow.sh` |
 
 ---

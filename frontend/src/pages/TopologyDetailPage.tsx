@@ -102,6 +102,15 @@ export function TopologyDetailPage() {
 
   const nodeNameById = useMemo(() => new Map(nodes.map((n) => [n.id, n.name])), [nodes]);
 
+  const latestEventAt = useMemo(() => {
+    if (!events.length) return null;
+    let maxIso = events[0].created_at;
+    for (const e of events) {
+      if (new Date(e.created_at) > new Date(maxIso)) maxIso = e.created_at;
+    }
+    return maxIso;
+  }, [events]);
+
   async function wrap(label: string, fn: () => Promise<void>) {
     setBusy(label);
     setOpsNote(null);
@@ -186,8 +195,9 @@ export function TopologyDetailPage() {
       {topology && (
         <RuntimeMetricsPanel
           runtime={runtime}
-          deploymentUpdatedHint={fmtClock(lastUpdatedAt)}
-          eventsUpdatedHint={fmtClock(eventsUpdatedAt)}
+          lastRuntimePollAt={fmtClock(lastUpdatedAt)}
+          lastEventsPollAt={fmtClock(eventsUpdatedAt)}
+          latestEventAt={latestEventAt}
         />
       )}
 

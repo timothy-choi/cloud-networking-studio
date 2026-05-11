@@ -110,6 +110,16 @@ def test_ping_command_from_service_targets_cns_ip(client, monkeypatch):
             "config": None,
         },
     ).json()["id"]
+    client.post(
+        f"/topologies/{tid}/links",
+        json={
+            "source_node_id": na,
+            "target_node_id": nb,
+            "network_name": "lab-net",
+            "cidr": "10.0.0.0/24",
+            "config": None,
+        },
+    )
     client.post(f"/topologies/{tid}/deploy")
     r = client.post(
         f"/topologies/{tid}/traffic-tests/ping",

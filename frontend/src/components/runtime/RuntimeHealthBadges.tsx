@@ -52,9 +52,15 @@ export function RuntimeHealthBadges({ topologyStatus, deploymentStatus, runtimeT
 
   const depLabel = deploymentStatus ?? 'none';
   let depVariant: 'green' | 'yellow' | 'red' | 'slate' = 'slate';
-  if (deploymentStatus === 'succeeded' || deploymentStatus === 'running') depVariant = 'green';
-  else if (deploymentStatus === 'failed' || deploymentStatus === 'stopped') depVariant = 'red';
-  else if (deploymentStatus === 'pending' || deploymentStatus === 'provisioning') depVariant = 'yellow';
+  if (deploymentStatus === 'succeeded') depVariant = 'green';
+  else if (deploymentStatus === 'failed') depVariant = 'red';
+  else if (deploymentStatus === 'stopped') depVariant = 'slate';
+  else if (
+    deploymentStatus === 'pending' ||
+    deploymentStatus === 'deploying' ||
+    deploymentStatus === 'stopping'
+  )
+    depVariant = 'yellow';
 
   return (
     <div className="flex flex-wrap items-center gap-2">

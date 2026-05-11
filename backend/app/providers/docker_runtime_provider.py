@@ -355,6 +355,7 @@ class DockerRuntimeProvider(RuntimeProvider):
                     f"Docker network creation failed: {exc.explanation}",
                 )
             )
+            _rollback_topology_deploy(self._client, plan.topology_id)
             raise
 
         try:

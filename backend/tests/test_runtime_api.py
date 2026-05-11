@@ -83,6 +83,16 @@ def test_deployment_reconcile_reports_drift_with_fake_provider(client):
             "config": None,
         },
     ).json()["id"]
+    client.post(
+        f"/topologies/{tid}/links",
+        json={
+            "source_node_id": na,
+            "target_node_id": nb,
+            "network_name": "lab-net",
+            "cidr": "10.0.0.0/24",
+            "config": None,
+        },
+    )
     dep = client.post(f"/topologies/{tid}/deploy").json()
     did = dep["id"]
 

@@ -2,11 +2,10 @@
 
 export type DeploymentStatus =
   | 'pending'
-  | 'provisioning'
-  | 'running'
+  | 'deploying'
   | 'succeeded'
   | 'failed'
-  | 'cancelled'
+  | 'stopping'
   | 'stopped';
 
 export type DeploymentEventLevel = 'debug' | 'info' | 'warning' | 'error';

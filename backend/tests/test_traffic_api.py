@@ -38,6 +38,16 @@ def _two_nodes(client):
             "config": None,
         },
     ).json()
+    client.post(
+        f"/topologies/{tid}/links",
+        json={
+            "source_node_id": a["id"],
+            "target_node_id": b["id"],
+            "network_name": "lab-net",
+            "cidr": "10.0.0.0/24",
+            "config": None,
+        },
+    )
     return tid, a["id"], b["id"]
 
 

@@ -41,6 +41,16 @@ def _topology_and_two_nodes(client):
             "config": None,
         },
     ).json()
+    client.post(
+        f"/topologies/{tid}/links",
+        json={
+            "source_node_id": na["id"],
+            "target_node_id": nb["id"],
+            "network_name": "lab-net",
+            "cidr": "10.0.0.0/24",
+            "config": None,
+        },
+    )
     return tid, uuid.UUID(na["id"]), uuid.UUID(nb["id"])
 
 

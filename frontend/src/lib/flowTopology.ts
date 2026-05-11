@@ -61,13 +61,13 @@ export function deriveNodeRuntimePresentation(
   const rip = runtimePrimaryIp(nodeId, runtime);
   const c = runtime?.containers?.find((x) => x.node_id === nodeId);
   const ds = runtime?.deployment_status ?? null;
-  const inDeploy = ds === 'pending' || ds === 'provisioning';
+  const inDeploy = ds === 'pending' || ds === 'deploying' || ds === 'stopping';
   const busyOps = controllerBusy === 'reconcile' || controllerBusy === 'heal' || controllerBusy === 'deploy';
 
   const rawStatus = c
     ? String(c.state_status ?? c.status ?? (c.running ? 'running' : 'exited'))
     : inDeploy
-      ? 'provisioning'
+      ? 'deploying'
       : 'not deployed';
 
   if (c && !c.running) {

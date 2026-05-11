@@ -65,3 +65,22 @@ class ProviderRuntimeStats:
     memory_limit_bytes: int | None = None
     network_rx_bytes: int | None = None
     network_tx_bytes: int | None = None
+
+
+@dataclass(frozen=True)
+class ProviderHealingResult:
+    """Outcome of attempting to restart stopped managed containers."""
+
+    restarted: tuple[tuple[str, str], ...] = ()
+    """(container_id, display_name)."""
+    skipped: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProviderExecResult:
+    """Output from ``docker exec`` / equivalent runtime exec."""
+
+    exit_code: int
+    stdout: str
+    stderr: str

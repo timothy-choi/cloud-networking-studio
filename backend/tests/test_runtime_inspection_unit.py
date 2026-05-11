@@ -7,7 +7,10 @@ from unittest.mock import MagicMock
 
 import docker
 
-from app.providers.docker_runtime_provider import DockerRuntimeProvider
+from app.providers.docker_runtime_provider import (
+    DockerRuntimeProvider,
+    topology_network_name,
+)
 
 
 def test_inspect_topology_filters_labels_and_returns_records():
@@ -18,7 +21,7 @@ def test_inspect_topology_filters_labels_and_returns_records():
     mock_net = MagicMock()
     mock_net.attrs = {
         "Id": "abc123full",
-        "Name": "cns-topology-test",
+        "Name": topology_network_name(tid),
         "Driver": "bridge",
         "Scope": "local",
         "Labels": {"cns.topology_id": str(tid), "cns.managed": "true"},
@@ -26,6 +29,7 @@ def test_inspect_topology_filters_labels_and_returns_records():
     }
     mock_client.networks.list.return_value = [mock_net]
 
+    net_key = topology_network_name(tid)
     mock_ctr = MagicMock()
     mock_ctr.status = "running"
     mock_ctr.attrs = {
@@ -43,7 +47,16 @@ def test_inspect_topology_filters_labels_and_returns_records():
         "State": {"Running": True, "Status": "running", "StartedAt": "2020-01-01"},
         "Created": "2020-01-01",
         "NetworkSettings": {
-            "Networks": {"cns-topology-aaa": {"IPAddress": "10.1.0.5"}}
+            "Networks": {
+                net_key: {
+                    "IPAddress": "10.1.0.5",
+                    "NetworkID": "abc123full",
+                },
+                "bridge": {
+                    "IPAddress": "172.17.0.3",
+                    "NetworkID": "bridgelegacy",
+                },
+            }
         },
     }
     mock_client.containers.list.return_value = [mock_ctr]
@@ -51,7 +64,7 @@ def test_inspect_topology_filters_labels_and_returns_records():
     prov = DockerRuntimeProvider(client=mock_client)
     snap = prov.inspect_topology_runtime(tid)
 
-    mock_client.networks.list.assert_called_once()
+    mock_client.networks.list.assert_called()
     mock_client.containers.list.assert_called_once()
     flt = mock_client.containers.list.call_args.kwargs["filters"]
     assert "cns.topology_id=" in flt["label"][0]
@@ -61,7 +74,52 @@ def test_inspect_topology_filters_labels_and_returns_records():
     assert snap.networks[0].subnet_hints == ("10.1.0.0/24",)
     assert len(snap.containers) == 1
     assert snap.containers[0].node_id == nid
-    assert snap.containers[0].ipv4_by_network.get("cns-topology-aaa") == "10.1.0.5"
+    assert snap.containers[0].ipv4_by_network.get(net_key) == "10.1.0.5"
+    assert "bridge" not in snap.containers[0].ipv4_by_network
+
+
+def test_inspect_topology_returns_static_style_cns_subnet_ips():
+    mock_client = MagicMock()
+    tid = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    nid = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+    mock_net = MagicMock()
+    mock_net.attrs = {
+        "Id": "net80full00",
+        "Name": topology_network_name(tid),
+        "Driver": "bridge",
+        "Labels": {"cns.topology_id": str(tid), "cns.managed": "true"},
+        "IPAM": {"Driver": "default", "Config": [{"Subnet": "10.80.0.0/24"}]},
+    }
+    mock_client.networks.list.return_value = [mock_net]
+
+    net_key = topology_network_name(tid)
+    mock_ctr = MagicMock()
+    mock_ctr.status = "running"
+    mock_ctr.attrs = {
+        "Config": {
+            "Labels": {
+                "cns.topology_id": str(tid),
+                "cns.node_id": str(nid),
+                "cns.managed": "true",
+            },
+        },
+        "State": {"Running": True},
+        "NetworkSettings": {
+            "Networks": {
+                net_key: {
+                    "IPAddress": "10.80.0.10",
+                    "NetworkID": "net80full00",
+                },
+            }
+        },
+    }
+    mock_client.containers.list.return_value = [mock_ctr]
+
+    snap = DockerRuntimeProvider(client=mock_client).inspect_topology_runtime(tid)
+
+    assert snap.containers[0].ipv4_by_network.get(net_key) == "10.80.0.10"
+    assert snap.networks[0].subnet_hints == ("10.80.0.0/24",)
 
 
 def test_fetch_logs_returns_none_when_missing_container():

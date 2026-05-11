@@ -60,6 +60,8 @@ def _load_deployment_full(db: Session, deployment_id: UUID) -> Deployment:
     "/topologies/{topology_id}/deploy",
     response_model=DeploymentResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Deploy topology",
+    response_description="New deployment with nested audit events from the runtime provider.",
 )
 def deploy_topology(
     topology_id: UUID,
@@ -116,6 +118,8 @@ def deploy_topology(
 @router.post(
     "/deployments/{deployment_id}/destroy",
     response_model=DeploymentResponse,
+    summary="Destroy deployment",
+    response_description="Deployment marked stopped after provider teardown; related events appended.",
 )
 def destroy_deployment(
     deployment_id: UUID,
@@ -149,7 +153,11 @@ def destroy_deployment(
     return _load_deployment_full(db, deployment_id)
 
 
-@router.get("/deployments/{deployment_id}", response_model=DeploymentResponse)
+@router.get(
+    "/deployments/{deployment_id}",
+    response_model=DeploymentResponse,
+    summary="Get deployment",
+)
 def get_deployment(
     deployment_id: UUID,
     db: Session = Depends(get_db),
@@ -171,6 +179,8 @@ def get_deployment(
 @router.get(
     "/deployments/{deployment_id}/events",
     response_model=list[DeploymentEventResponse],
+    summary="List deployment events",
+    response_description="Append-only audit timeline for provisioning, inspection, and remediation.",
 )
 def list_deployment_events(
     deployment_id: UUID,

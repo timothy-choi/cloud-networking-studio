@@ -53,6 +53,7 @@ def _deployment_http(session, deployment_id: UUID):
 @router.get(
     "/topologies/{topology_id}/runtime",
     response_model=RuntimeTopologyResponse,
+    summary="Topology runtime snapshot",
 )
 def get_topology_runtime(
     topology_id: UUID,
@@ -66,6 +67,7 @@ def get_topology_runtime(
 @router.get(
     "/deployments/{deployment_id}/runtime",
     response_model=RuntimeDeploymentResponse,
+    summary="Deployment runtime snapshot",
 )
 def get_deployment_runtime(
     deployment_id: UUID,
@@ -79,6 +81,7 @@ def get_deployment_runtime(
 @router.get(
     "/nodes/{node_id}/logs",
     response_model=RuntimeLogsResponse,
+    summary="Fetch container logs for node",
 )
 def get_node_logs(
     node_id: UUID,
@@ -105,6 +108,7 @@ def get_node_logs(
 @router.get(
     "/nodes/{node_id}/stats",
     response_model=RuntimeStatsResponse,
+    summary="Container stats for node",
 )
 def get_node_stats(
     node_id: UUID,
@@ -130,6 +134,8 @@ def get_node_stats(
 @router.post(
     "/deployments/{deployment_id}/reconcile",
     response_model=ReconciliationResponse,
+    summary="Reconcile deployment runtime",
+    response_description="Structured drift findings versus Docker actuals; persists summary deployment events.",
 )
 def reconcile_deployment_route(
     deployment_id: UUID,

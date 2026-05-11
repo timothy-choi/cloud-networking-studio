@@ -14,15 +14,28 @@ from app.models.deployment import (
     DeploymentEventLevel,
     DeploymentStatus,
 )
+from app.models.traffic_test import TrafficTest, TrafficTestResult, TrafficTestStatus, TrafficTestType
+from app.models.failure_injection import (
+    FailureInjection,
+    FailureInjectionFailureType,
+    FailureInjectionStatus,
+)
 
 __all__ = [
     "Deployment",
     "DeploymentEvent",
     "DeploymentEventLevel",
     "DeploymentStatus",
+    "FailureInjection",
+    "FailureInjectionFailureType",
+    "FailureInjectionStatus",
     "NodeType",
     "Topology",
     "TopologyLink",
     "TopologyNode",
     "TopologyStatus",
+    "TrafficTest",
+    "TrafficTestResult",
+    "TrafficTestStatus",
+    "TrafficTestType",
 ]

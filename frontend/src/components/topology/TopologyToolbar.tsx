@@ -24,6 +24,11 @@ export interface TopologyToolbarProps {
   onDeleteSelection: () => void;
   onFit: () => void;
   templates: TopologyTemplateAction[];
+  /** Click two nodes to connect (fallback when handle-drag is awkward). */
+  linkMode?: boolean;
+  linkDraftSourceId?: string | null;
+  linkDraftSourceName?: string | null;
+  onToggleLinkMode?: () => void;
 }
 
 function Btn({
@@ -74,6 +79,10 @@ export function TopologyToolbar({
   onDeleteSelection,
   onFit,
   templates,
+  linkMode = false,
+  linkDraftSourceId = null,
+  linkDraftSourceName = null,
+  onToggleLinkMode,
 }: TopologyToolbarProps) {
   const d = busy !== null || locked;
   const clutter = nodeCount >= 16;
@@ -102,6 +111,24 @@ export function TopologyToolbar({
           Switch
         </Btn>
       </div>
+
+      {onToggleLinkMode ? (
+        <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-2">
+          <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-cns-inverse-label">
+            Connect
+          </span>
+          <Btn variant={linkMode ? 'primary' : 'default'} disabled={d} onClick={onToggleLinkMode}>
+            {linkMode ? 'Link mode on' : 'Link mode'}
+          </Btn>
+          {linkMode ? (
+            <span className="max-w-[14rem] text-[10px] leading-snug text-cns-inverse-muted">
+              {linkDraftSourceId
+                ? `Source: ${linkDraftSourceName ?? linkDraftSourceId.slice(0, 8)}… — click target node`
+                : 'Click source node, then target node'}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-2">
         <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-cns-inverse-label">Layout</span>

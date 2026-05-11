@@ -15,6 +15,7 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
 
 import { formatApiError } from '../../api/client';
 import { deployTopology } from '../../api/deployments';
@@ -26,7 +27,9 @@ import {
   type CnsFlowNodeData,
   deriveNodeRuntimePresentation,
   gridPositions,
+  pickNextLinkCidr,
   readEditorPosition,
+  stubLinkForFlow,
   topologyLinksToFlowEdges,
   topologyNodesToFlowNodes,
 } from '../../lib/flowTopology';
@@ -49,7 +52,7 @@ const CnsEditorNode = memo(function CnsEditorNode({
   const v = data.visual;
   const accent =
     selected
-      ? 'ring-2 ring-sky-400 ring-offset-2 ring-offset-zinc-950'
+      ? 'ring-2 ring-sky-400 shadow-[0_0_0_1px_rgba(56,189,248,0.35)]'
       : v === 'running'
         ? 'shadow-[0_0_26px_rgba(34,197,94,0.38)] ring-1 ring-emerald-500/75'
         : v === 'stopped'
@@ -60,9 +63,15 @@ const CnsEditorNode = memo(function CnsEditorNode({
 
   return (
     <div
-      className={`min-w-[200px] max-w-[280px] rounded-xl border border-zinc-700/90 bg-zinc-950/95 px-4 py-3 shadow-xl backdrop-blur-sm ${accent}`}
+      className={`relative min-w-[200px] max-w-[280px] overflow-visible rounded-xl border border-zinc-700/90 bg-zinc-950/95 px-4 py-3 shadow-xl backdrop-blur-sm ${accent}`}
     >
-      <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-zinc-500 !bg-zinc-700" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="in"
+        isConnectable
+        className="!z-[60] !h-4 !w-4 !min-h-[16px] !min-w-[16px] !border-2 !border-sky-500 !bg-zinc-900 !pointer-events-auto hover:!border-sky-300 hover:!bg-zinc-800"
+      />
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="text-[15px] font-semibold leading-snug tracking-tight text-zinc-50">{data.title}</div>
@@ -93,7 +102,13 @@ const CnsEditorNode = memo(function CnsEditorNode({
           <div className="font-mono text-[11px] text-cns-graph-mono">intent {data.intentIp}</div>
         ) : null}
       </div>
-      <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-zinc-500 !bg-zinc-700" />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="out"
+        isConnectable
+        className="!z-[60] !h-4 !w-4 !min-h-[16px] !min-w-[16px] !border-2 !border-sky-500 !bg-zinc-900 !pointer-events-auto hover:!border-sky-300 hover:!bg-zinc-800"
+      />
     </div>
   );
 });
@@ -129,6 +144,8 @@ function TopologyWorkspaceInner({
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [linkMode, setLinkMode] = useState(false);
+  const [linkDraftSourceId, setLinkDraftSourceId] = useState<string | null>(null);
   const { selectedNodeId, selectedEdgeId, setSelectedNodeId, setSelectedEdgeId, onSelectionChange } =
     useTopologyEditor();
 
@@ -192,6 +209,11 @@ function TopologyWorkspaceInner({
     [links, selectedEdgeId],
   );
 
+  const linkDraftSourceName = useMemo(() => {
+    if (!linkDraftSourceId) return null;
+    return nodes.find((n) => n.id === linkDraftSourceId)?.name ?? null;
+  }, [linkDraftSourceId, nodes]);
+
   const run = useCallback(
     async (label: string, fn: () => Promise<unknown>) => {
       setBusy(label);
@@ -222,30 +244,91 @@ function TopologyWorkspaceInner({
     });
   }, [rfNodes, run, topologyId]);
 
-  const onConnect = useCallback(
-    async (c: Connection) => {
-      if (!c.source || !c.target) return;
-      const exists = links.some(
-        (l) =>
-          (l.source_node_id === c.source && l.target_node_id === c.target) ||
-          (l.source_node_id === c.target && l.target_node_id === c.source),
-      );
-      if (exists) {
+  const createLinkBetweenNodes = useCallback(
+    async (sourceId: string, targetId: string) => {
+      if (sourceId === targetId) {
+        setNote('Cannot link a node to itself.');
+        return;
+      }
+      const duplicate =
+        links.some(
+          (l) =>
+            (l.source_node_id === sourceId && l.target_node_id === targetId) ||
+            (l.source_node_id === targetId && l.target_node_id === sourceId),
+        ) ||
+        rfEdges.some(
+          (e) =>
+            (e.source === sourceId && e.target === targetId) ||
+            (e.source === targetId && e.target === sourceId),
+        );
+      if (duplicate) {
         setNote('Link already exists between these nodes.');
         return;
       }
-      await run('connect', async () => {
+
+      const shortId =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID().replace(/-/g, '').slice(0, 10)
+          : Date.now().toString(36);
+      const networkName = `link-net-${shortId}`;
+      const cidr = pickNextLinkCidr(links);
+      const pendingId = `pending-${sourceId}-${targetId}-${Date.now()}`;
+      const newEdge = topologyLinksToFlowEdges(
+        [stubLinkForFlow(pendingId, sourceId, targetId, networkName, cidr)],
+        runtime?.deployment_status ?? null,
+      )[0];
+
+      setRfEdges((eds) => [...eds, newEdge]);
+      setBusy('connect');
+      setNote(null);
+      try {
         await topoApi.createLink(topologyId, {
-          source_node_id: c.source,
-          target_node_id: c.target,
-          network_name: `net-${Date.now().toString(36)}`,
-          cidr: '10.250.0.0/24',
+          source_node_id: sourceId,
+          target_node_id: targetId,
+          network_name: networkName,
+          cidr,
           config: null,
         });
-      });
+        await onRefresh();
+        setSuccessMsg('Link created');
+        window.setTimeout(() => setSuccessMsg(null), 4200);
+      } catch (e) {
+        setRfEdges((eds) => eds.filter((ed) => ed.id !== pendingId));
+        setNote(formatApiError(e));
+      } finally {
+        setBusy(null);
+      }
     },
-    [links, topologyId, run],
+    [links, rfEdges, onRefresh, runtime?.deployment_status, setRfEdges, topologyId],
   );
+
+  const onConnect = useCallback(
+    (c: Connection) => {
+      if (!c.source || !c.target) return;
+      void createLinkBetweenNodes(c.source, c.target);
+    },
+    [createLinkBetweenNodes],
+  );
+
+  const onNodeClick = useCallback(
+    (_evt: MouseEvent, node: Node) => {
+      if (!linkMode || globalBusy || busy !== null) return;
+      if (!linkDraftSourceId) {
+        setLinkDraftSourceId(node.id);
+        return;
+      }
+      if (linkDraftSourceId === node.id) return;
+      const src = linkDraftSourceId;
+      setLinkDraftSourceId(null);
+      setLinkMode(false);
+      void createLinkBetweenNodes(src, node.id);
+    },
+    [linkMode, linkDraftSourceId, globalBusy, busy, createLinkBetweenNodes],
+  );
+
+  const onPaneClick = useCallback(() => {
+    if (linkMode) setLinkDraftSourceId(null);
+  }, [linkMode]);
 
   const addNodeOfType = async (nodeType: TopologyNodeResponse['node_type']) => {
     const defaults: Record<string, { image: string | null }> = {
@@ -413,6 +496,16 @@ function TopologyWorkspaceInner({
         onResetDemoLab={() => void resetDemoLab()}
         onDeleteSelection={() => void deleteSelection()}
         onFit={() => fitView({ padding: 0.18, duration: 280 })}
+        linkMode={linkMode}
+        linkDraftSourceId={linkDraftSourceId}
+        linkDraftSourceName={linkDraftSourceName}
+        onToggleLinkMode={() => {
+          setLinkMode((m) => {
+            const next = !m;
+            if (!next) setLinkDraftSourceId(null);
+            return next;
+          });
+        }}
         templates={[
           {
             id: 'client-server',
@@ -470,10 +563,16 @@ function TopologyWorkspaceInner({
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={(c) => void onConnect(c)}
+                onNodeClick={onNodeClick}
+                onPaneClick={onPaneClick}
                 onSelectionChange={onSelectionChange}
                 nodesDraggable
                 nodesConnectable
+                edgesFocusable
                 elementsSelectable
+                connectOnClick
+                connectionRadius={28}
+                connectionLineStyle={{ stroke: '#38bdf8', strokeWidth: 2.25 }}
                 selectNodesOnDrag={false}
                 panOnDrag
                 zoomOnScroll
@@ -514,14 +613,15 @@ function TopologyWorkspaceInner({
                 />
                 <Panel
                   position="top-right"
-                  className="m-2 max-w-[14rem] rounded-md bg-zinc-950/85 px-2 py-1 text-[10px] leading-tight text-cns-inverse-muted shadow-md backdrop-blur-sm"
+                  className="m-2 max-w-[16rem] rounded-md bg-zinc-950/90 px-2 py-1.5 text-[10px] leading-snug text-cns-inverse-muted shadow-md backdrop-blur-sm"
                 >
-                  Del remove · ⌘S save · ⌘D duplicate · F fit
+                  Drag a handle to another node to link · Link mode = two clicks · Del remove · ⌘S save · F fit
                 </Panel>
               </ReactFlow>
             </div>
             <p className="border-t border-zinc-700/80 px-3 py-2 text-center text-[11px] leading-snug text-cns-muted">
-              Drag nodes to reposition · Scroll or pinch to zoom · Drag the empty canvas to pan
+              Drag nodes to reposition · Drag from a node&apos;s handle to another to create a link · Scroll or pinch to
+              zoom · Drag empty canvas to pan
             </p>
           </div>
         }

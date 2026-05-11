@@ -162,6 +162,42 @@ export function topologyNodesToFlowNodes(
   });
 }
 
+/** Stub link row for building a React Flow edge before the API returns a persisted id. */
+export function stubLinkForFlow(
+  id: string,
+  sourceId: string,
+  targetId: string,
+  networkName: string,
+  cidr: string | null,
+): TopologyLinkResponse {
+  return {
+    id,
+    topology_id: '',
+    source_node_id: sourceId,
+    target_node_id: targetId,
+    network_name: networkName,
+    cidr,
+    config: null,
+  };
+}
+
+/** Next 10.x.0.0/24 for lab links — scans existing CIDRs and picks a free-ish octet (200–240). */
+export function pickNextLinkCidr(links: TopologyLinkResponse[]): string {
+  const re = /^10\.(\d+)\.0\.0\/24$/;
+  let maxOct = 199;
+  for (const l of links) {
+    const c = l.cidr?.trim();
+    if (!c) continue;
+    const m = re.exec(c);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n)) maxOct = Math.max(maxOct, n);
+    }
+  }
+  const next = Math.min(Math.max(maxOct + 1, 200), 240);
+  return `10.${next}.0.0/24`;
+}
+
 export function topologyLinksToFlowEdges(
   links: TopologyLinkResponse[],
   deploymentStatus: RuntimeTopologyResponse['deployment_status'],

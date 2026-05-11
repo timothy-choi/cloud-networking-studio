@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import type {
   TopologyLinkResponse,
@@ -28,6 +28,10 @@ function TopologyMetaForm({
 }) {
   const [topoName, setTopoName] = useState(topology.name);
   const [topoDesc, setTopoDesc] = useState(topology.description ?? '');
+  useEffect(() => {
+    setTopoName(topology.name);
+    setTopoDesc(topology.description ?? '');
+  }, [topology.id, topology.name, topology.description]);
   return (
     <form
       className="mt-2 space-y-2"
@@ -77,6 +81,16 @@ function NodeEditForm({
   const [metaJson, setMetaJson] = useState(
     node.config && Object.keys(node.config).length ? JSON.stringify(node.config, null, 2) : '{}',
   );
+
+  useEffect(() => {
+    setNodeName(node.name);
+    setNodeType(node.node_type);
+    setImage(node.image ?? '');
+    setIp(node.ip_address ?? '');
+    setMetaJson(
+      node.config && Object.keys(node.config).length ? JSON.stringify(node.config, null, 2) : '{}',
+    );
+  }, [node]);
 
   return (
     <form
@@ -171,6 +185,14 @@ function LinkEditForm({
   const [linkMetaJson, setLinkMetaJson] = useState(
     link.config && Object.keys(link.config).length ? JSON.stringify(link.config, null, 2) : '{}',
   );
+
+  useEffect(() => {
+    setLinkName(link.network_name);
+    setCidr(link.cidr ?? '');
+    setLinkMetaJson(
+      link.config && Object.keys(link.config).length ? JSON.stringify(link.config, null, 2) : '{}',
+    );
+  }, [link]);
 
   return (
     <form

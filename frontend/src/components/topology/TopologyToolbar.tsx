@@ -12,6 +12,9 @@ export interface TopologyToolbarProps {
   locked?: boolean;
   nodeCount: number;
   hasSelection: boolean;
+  deployBlocked?: boolean;
+  deployBlockReasons?: string[];
+  deployWarnings?: string[];
   onAddHost: () => void;
   onAddService: () => void;
   onAddRouter: () => void;
@@ -36,11 +39,13 @@ function Btn({
   onClick,
   disabled,
   variant = 'default',
+  title,
 }: {
   children: ReactNode;
   onClick: () => void;
   disabled?: boolean;
   variant?: 'default' | 'primary' | 'danger' | 'subtle';
+  title?: string;
 }) {
   const cls =
     variant === 'primary'
@@ -54,6 +59,7 @@ function Btn({
     <button
       type="button"
       disabled={disabled}
+      title={title}
       onClick={onClick}
       className={`rounded-md border px-2.5 py-1.5 text-xs font-medium shadow-sm disabled:cursor-not-allowed disabled:border-zinc-600 disabled:bg-zinc-950/75 disabled:text-zinc-300 disabled:saturate-75 ${cls}`}
     >
@@ -67,6 +73,9 @@ export function TopologyToolbar({
   locked = false,
   nodeCount,
   hasSelection,
+  deployBlocked = false,
+  deployBlockReasons = [],
+  deployWarnings = [],
   onAddHost,
   onAddService,
   onAddRouter,
@@ -86,13 +95,13 @@ export function TopologyToolbar({
 }: TopologyToolbarProps) {
   const d = busy !== null || locked;
   const clutter = nodeCount >= 16;
+  const deployDisabled = d || deployBlocked;
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-zinc-700/80 bg-gradient-to-b from-zinc-900 to-zinc-950 p-3 shadow-lg">
       {clutter ? (
         <div className="rounded-md border border-amber-800/50 bg-amber-950/35 px-2.5 py-2 text-[11px] leading-snug text-amber-100">
-          Large topology ({nodeCount} nodes). Consider clearing unused templates or resetting the demo lab to reduce
-          clutter before deploy.
+          Large topology ({nodeCount} nodes). Consider removing unused nodes or using auto layout before deploy.
         </div>
       ) : null}
 
@@ -142,9 +151,9 @@ export function TopologyToolbar({
           Delete selected
         </Btn>
         <label className="ml-auto flex items-center gap-2 text-[11px] text-cns-inverse-muted">
-          <span className="hidden sm:inline">Template</span>
+          <span className="hidden sm:inline">Use template</span>
           <select
-            className="max-w-[12rem] rounded-md border border-zinc-600 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100"
+            className="max-w-[13rem] rounded-md border border-zinc-600 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100"
             disabled={d}
             defaultValue=""
             onChange={(e) => {
@@ -155,7 +164,7 @@ export function TopologyToolbar({
               t?.run();
             }}
           >
-            <option value="">Quick create…</option>
+            <option value="">Optional — append pattern…</option>
             {templates.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.label}
@@ -167,17 +176,38 @@ export function TopologyToolbar({
 
       <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-2">
         <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-cns-inverse-label">Topology</span>
-        <Btn disabled={d} onClick={onSaveTopology}>
-          Save topology
+        <Btn disabled={d} onClick={onSaveTopology} title="Writes canvas positions to the API. Use inspector Apply to save name, image, IP, and link CIDR edits.">
+          Save layout
         </Btn>
-        <Btn variant="primary" disabled={d} onClick={onDeploy}>
-          Deploy topology
+        {deployBlocked && deployBlockReasons.length > 0 ? (
+          <div className="w-full rounded-md border border-amber-800/50 bg-amber-950/40 px-2 py-1.5 text-[10px] leading-snug text-amber-100">
+            <span className="font-semibold">Deploy blocked:</span> {deployBlockReasons.join(' ')}
+          </div>
+        ) : null}
+        {!deployBlocked && deployWarnings.length > 0 ? (
+          <div className="w-full rounded-md border border-sky-900/40 bg-sky-950/30 px-2 py-1.5 text-[10px] leading-snug text-sky-100">
+            <span className="font-semibold">Before deploy:</span> {deployWarnings.join(' ')}
+          </div>
+        ) : null}
+        <Btn
+          variant="primary"
+          disabled={deployDisabled}
+          onClick={onDeploy}
+          title={
+            deployBlocked
+              ? deployBlockReasons.join(' ')
+              : deployWarnings.length
+                ? 'Deploy enabled — review warnings above.'
+                : undefined
+          }
+        >
+          Deploy to runtime
         </Btn>
         <Btn variant="danger" disabled={d} onClick={onClear}>
           Clear all
         </Btn>
-        <Btn variant="subtle" disabled={d} onClick={onResetDemoLab}>
-          Reset demo lab
+        <Btn variant="subtle" disabled={d} onClick={onResetDemoLab} title="Replaces graph with a small sample (host + service + link)">
+          Replace with sample lab
         </Btn>
         {busy ? (
           <span className="ml-auto font-mono text-[10px] text-sky-400/90">Working: {busy}…</span>

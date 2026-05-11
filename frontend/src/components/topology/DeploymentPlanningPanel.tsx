@@ -1,3 +1,4 @@
+import { computeDeployReadiness } from '../../lib/deployReadiness';
 import type { TopologyLinkResponse, TopologyNodeResponse } from '../../types/topology';
 
 function parseIPv4(addr: string): number | null {
@@ -101,9 +102,11 @@ export function DeploymentPlanningPanel({
   const fragmented =
     nodes.length >= 4 && graphComps > 1 ? `Graph has ${graphComps} disconnected islands.` : null;
 
+  const { deployable, blockingReasons, warnings: deployWarnings } = computeDeployReadiness(nodes, links);
+
   const readiness: { ok: boolean; text: string }[] = [
     { ok: nodes.length > 0, text: 'At least one node is defined.' },
-    { ok: links.length > 0, text: 'At least one link connects workloads (recommended for multi-node labs).' },
+    { ok: nodes.length <= 1 || links.length > 0, text: 'Multi-node labs include at least one link.' },
     { ok: ipDup.length === 0, text: 'No duplicate intent IPv4 addresses on nodes.' },
     { ok: cidrOverlaps.length === 0, text: 'No overlapping IPv4 link subnets (best-effort check).' },
     {
@@ -116,7 +119,7 @@ export function DeploymentPlanningPanel({
     },
   ];
 
-  const ready = readiness.every((r) => r.ok);
+  const ready = readiness.every((r) => r.ok) && deployable;
 
   return (
     <div className="rounded-xl border border-zinc-700/80 bg-zinc-950/60 p-4">
@@ -150,6 +153,20 @@ export function DeploymentPlanningPanel({
         >
           {ready ? 'Ready to deploy (intent checks passed)' : 'Review warnings before deploying'}
         </div>
+        {!deployable && blockingReasons.length > 0 ? (
+          <ul className="mt-2 space-y-1 text-[10px] text-amber-100">
+            {blockingReasons.map((b) => (
+              <li key={b}>• {b}</li>
+            ))}
+          </ul>
+        ) : null}
+        {deployWarnings.length > 0 ? (
+          <ul className="mt-2 space-y-1 text-[10px] text-sky-100/90">
+            {deployWarnings.map((w) => (
+              <li key={w}>○ {w}</li>
+            ))}
+          </ul>
+        ) : null}
       </div>
 
       {ipDup.length > 0 && (
@@ -166,7 +183,7 @@ export function DeploymentPlanningPanel({
       {fragmented ? (
         <div className="mt-3 rounded-md border border-sky-900/40 bg-sky-950/25 px-2 py-2 text-[11px] text-sky-100">
           <div className="font-semibold">Connectivity</div>
-          <p className="mt-1">{fragmented} Consider clearing templates or using auto-layout before deploy.</p>
+          <p className="mt-1">{fragmented} Consider consolidating links or using auto layout before deploy.</p>
         </div>
       ) : null}
 

@@ -20,6 +20,7 @@ import type { MouseEvent } from 'react';
 import { formatApiError } from '../../api/client';
 import { deployTopology } from '../../api/deployments';
 import * as topoApi from '../../api/topologies';
+import { computeDeployReadiness } from '../../lib/deployReadiness';
 import { useTopologyEditor } from '../../hooks/useTopologyEditor';
 import { useTopologySync } from '../../hooks/useTopologySync';
 import { TopologyStudioLayout } from '../../layouts/TopologyStudioLayout';
@@ -151,6 +152,7 @@ function TopologyWorkspaceInner({
 
   const { sig } = useTopologySync(nodes, links);
   const prevSig = useRef<string>('');
+  const deployReadiness = useMemo(() => computeDeployReadiness(nodes, links), [nodes, links]);
 
   /* Full rebuild when persisted graph changes (API). */
   useEffect(() => {
@@ -160,7 +162,11 @@ function TopologyWorkspaceInner({
     prevSig.current = sig;
     setRfNodes(topologyNodesToFlowNodes(nodes, runtime, null));
     setRfEdges(topologyLinksToFlowEdges(links, runtime?.deployment_status ?? null));
-    queueMicrotask(() => fitView({ padding: 0.18, duration: 280 }));
+    queueMicrotask(() => {
+      if (nodes.length > 0) {
+        fitView({ padding: 0.18, duration: 280 });
+      }
+    });
   }, [sig, nodes, links, runtime, setRfNodes, setRfEdges, fitView]);
 
   /* Overlay runtime + controller activity without resetting drag positions. */
@@ -338,9 +344,10 @@ function TopologyWorkspaceInner({
       switch: { image: 'alpine:latest' },
       gateway: { image: 'alpine:latest' },
     };
+    const namePrefix = nodeType === 'generic' ? 'service' : nodeType;
     await run('add-node', async () => {
       await topoApi.createNode(topologyId, {
-        name: `${nodeType}-${Math.random().toString(36).slice(2, 6)}`,
+        name: `${namePrefix}-${Math.random().toString(36).slice(2, 6)}`,
         node_type: nodeType,
         image: defaults[nodeType]?.image ?? null,
         ip_address: null,
@@ -381,7 +388,7 @@ function TopologyWorkspaceInner({
 
   const resetDemoLab = async () => {
     const ok = window.confirm(
-      'Replace this topology with the compact demo lab (host-a, service-b, one link)? All current nodes and links will be removed.',
+      'Replace this topology with a small sample lab (host + service + one link)? All current nodes and links will be removed.',
     );
     if (!ok) return;
     await run('reset-lab', async () => {
@@ -485,13 +492,22 @@ function TopologyWorkspaceInner({
         locked={globalBusy}
         nodeCount={nodes.length}
         hasSelection={Boolean(selectedNodeId || selectedEdgeId)}
+        deployBlocked={!deployReadiness.deployable}
+        deployBlockReasons={deployReadiness.blockingReasons}
+        deployWarnings={deployReadiness.warnings}
         onAddHost={() => void addNodeOfType('host')}
         onAddService={() => void addNodeOfType('generic')}
         onAddRouter={() => void addNodeOfType('router')}
         onAddSwitch={() => void addNodeOfType('switch')}
         onAutoLayout={() => void autoLayout()}
         onSaveTopology={() => void savePositions()}
-        onDeploy={() => run('deploy', () => deployTopology(topologyId))}
+        onDeploy={() => {
+          if (!deployReadiness.deployable) {
+            setNote(deployReadiness.blockingReasons.join(' '));
+            return;
+          }
+          void run('deploy', () => deployTopology(topologyId));
+        }}
         onClear={() => void clearAll()}
         onResetDemoLab={() => void resetDemoLab()}
         onDeleteSelection={() => void deleteSelection()}
@@ -517,7 +533,7 @@ function TopologyWorkspaceInner({
           },
           {
             id: 'web-tier',
-            label: 'Three-tier web app',
+            label: 'Three-tier',
             run: () =>
               run('tpl-web', () =>
                 applyTopologyTemplate(topologyId, 'web-tier'),
@@ -525,7 +541,7 @@ function TopologyWorkspaceInner({
           },
           {
             id: 'lb',
-            label: 'LB + two services',
+            label: 'Load balancer + services',
             run: () =>
               run('tpl-lb', () =>
                 applyTopologyTemplate(topologyId, 'load-balancer'),
@@ -533,7 +549,7 @@ function TopologyWorkspaceInner({
           },
           {
             id: 'rs',
-            label: 'Router / switch',
+            label: 'Router + switch',
             run: () =>
               run('tpl-rs', () =>
                 applyTopologyTemplate(topologyId, 'router-switch'),
@@ -541,7 +557,7 @@ function TopologyWorkspaceInner({
           },
           {
             id: 'mesh',
-            label: 'Service mesh',
+            label: 'Mesh',
             run: () =>
               run('tpl-mesh', () =>
                 applyTopologyTemplate(topologyId, 'mesh'),
@@ -617,6 +633,17 @@ function TopologyWorkspaceInner({
                 >
                   Drag a handle to another node to link · Link mode = two clicks · Del remove · ⌘S save · F fit
                 </Panel>
+                {nodes.length === 0 ? (
+                  <Panel position="top-center" className="m-2 mt-8 max-w-md pointer-events-none">
+                    <div className="rounded-lg border border-zinc-600/80 bg-zinc-950/95 px-4 py-3 text-center shadow-lg backdrop-blur-sm">
+                      <p className="text-sm font-medium text-zinc-100">Empty topology</p>
+                      <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+                        Start by adding nodes with the toolbar, connect them with handles or Link mode, or use{' '}
+                        <span className="font-medium text-zinc-300">Use template</span> to append a starter pattern.
+                      </p>
+                    </div>
+                  </Panel>
+                ) : null}
               </ReactFlow>
             </div>
             <p className="border-t border-zinc-700/80 px-3 py-2 text-center text-[11px] leading-snug text-cns-muted">

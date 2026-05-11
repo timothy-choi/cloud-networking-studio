@@ -1,3 +1,5 @@
+import type { TrafficTestResponse } from '../types/traffic';
+import type { FailureInjectionResponse } from '../types/failure';
 import { apiFetch } from './client';
 import type {
   TopologyCreate,
@@ -6,9 +8,8 @@ import type {
   TopologyNodeCreate,
   TopologyNodeResponse,
   TopologyResponse,
-  RuntimeTopologyResponse,
-  TrafficTestResponse,
-} from '../types/api';
+} from '../types/topology';
+import type { RuntimeTopologyResponse } from '../types/runtime';
 
 export async function listTopologies(): Promise<TopologyResponse[]> {
   return apiFetch<TopologyResponse[]>('/topologies');
@@ -55,6 +56,14 @@ export async function createLink(
 
 export async function getTopologyRuntime(topologyId: string): Promise<RuntimeTopologyResponse> {
   return apiFetch<RuntimeTopologyResponse>(`/topologies/${topologyId}/runtime`);
+}
+
+export async function listTopologyTrafficTests(topologyId: string): Promise<TrafficTestResponse[]> {
+  return apiFetch<TrafficTestResponse[]>(`/topologies/${topologyId}/traffic-tests`);
+}
+
+export async function listTopologyFailures(topologyId: string): Promise<FailureInjectionResponse[]> {
+  return apiFetch<FailureInjectionResponse[]>(`/topologies/${topologyId}/failures`);
 }
 
 export async function runPingTest(

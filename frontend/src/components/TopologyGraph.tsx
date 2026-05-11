@@ -1,46 +1,84 @@
 import '@xyflow/react/dist/style.css';
-import { useEffect, useMemo } from 'react';
+import { memo, useEffect, useMemo } from 'react';
 import {
   Background,
   Controls,
-  MiniMap,
-  ReactFlow,
+  Handle,
   MarkerType,
+  MiniMap,
+  Position,
+  ReactFlow,
   useEdgesState,
   useNodesState,
   type Edge,
   type Node,
+  type NodeProps,
 } from '@xyflow/react';
 
-import type { TopologyLinkResponse, TopologyNodeResponse } from '../types/api';
+import { deploymentWorkloadLive, nodeWorkloadStatus } from '../lib/runtimeHealth';
+import type { RuntimeTopologyResponse } from '../types/runtime';
+import type { TopologyLinkResponse, TopologyNodeResponse } from '../types/topology';
+
+export type CnsNodeData = {
+  title: string;
+  subtitle: string;
+  ip: string | null;
+  status: 'running' | 'stopped' | 'unknown';
+};
+
+const CnsGraphNode = memo(function CnsGraphNode({ data }: NodeProps<Node<CnsNodeData>>) {
+  const ring =
+    data.status === 'running'
+      ? 'shadow-emerald-500/20 ring-emerald-500/60'
+      : data.status === 'stopped'
+        ? 'shadow-red-500/25 ring-red-500/70'
+        : 'ring-zinc-600';
+
+  return (
+    <div className={`min-w-[150px] rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 shadow-xl ring-2 ${ring}`}>
+      <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-zinc-500 !bg-zinc-600" />
+      <div className="text-[13px] font-semibold leading-tight text-zinc-50">{data.title}</div>
+      <div className="text-[10px] uppercase tracking-wide text-zinc-500">{data.subtitle}</div>
+      {data.ip ? <div className="mt-1 font-mono text-[11px] text-emerald-400/95">{data.ip}</div> : null}
+      <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">{data.status}</div>
+      <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-zinc-500 !bg-zinc-600" />
+    </div>
+  );
+});
+
+const nodeTypes = { cnsNode: CnsGraphNode };
 
 interface TopologyGraphProps {
   nodes: TopologyNodeResponse[];
   links: TopologyLinkResponse[];
+  runtime: RuntimeTopologyResponse | null;
 }
 
-export function TopologyGraph({ nodes: topoNodes, links }: TopologyGraphProps) {
+export function TopologyGraph({ nodes: topoNodes, links, runtime }: TopologyGraphProps) {
+  const deploymentStatus = runtime?.deployment_status ?? null;
+  const animateEdges = deploymentWorkloadLive(deploymentStatus);
+
   const initialNodes = useMemo(() => {
     const n = topoNodes.length;
     return topoNodes.map((node, i) => {
       const angle = (2 * Math.PI * i) / Math.max(n, 1);
-      const radius = 160;
-      const x = 240 + radius * Math.cos(angle);
-      const y = 200 + radius * Math.sin(angle);
-      const lines = [
-        node.name,
-        node.node_type,
-        node.ip_address ? node.ip_address : undefined,
-      ].filter(Boolean);
+      const radius = 175;
+      const x = 260 + radius * Math.cos(angle);
+      const y = 220 + radius * Math.sin(angle);
+      const ws = nodeWorkloadStatus(node.id, runtime);
       return {
         id: node.id,
+        type: 'cnsNode',
         position: { x, y },
         data: {
-          label: lines.join('\n'),
+          title: node.name,
+          subtitle: node.node_type,
+          ip: node.ip_address,
+          status: ws,
         },
-      };
-    }) satisfies Node[];
-  }, [topoNodes]);
+      } satisfies Node<CnsNodeData>;
+    });
+  }, [topoNodes, runtime]);
 
   const initialEdges = useMemo(
     () =>
@@ -49,10 +87,15 @@ export function TopologyGraph({ nodes: topoNodes, links }: TopologyGraphProps) {
         source: link.source_node_id,
         target: link.target_node_id,
         label: link.cidr ?? link.network_name,
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#71717a' },
-        style: { stroke: '#71717a', strokeWidth: 1.5 },
+        animated: animateEdges,
+        markerEnd: { type: MarkerType.ArrowClosed, color: animateEdges ? '#34d399' : '#71717a' },
+        style: {
+          stroke: animateEdges ? '#34d399' : '#52525b',
+          strokeWidth: animateEdges ? 2 : 1.5,
+        },
+        labelStyle: { fill: '#a1a1aa', fontSize: 11 },
       })) satisfies Edge[],
-    [links],
+    [links, animateEdges],
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -75,10 +118,11 @@ export function TopologyGraph({ nodes: topoNodes, links }: TopologyGraphProps) {
   }
 
   return (
-    <div className="h-[440px] w-full overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950 shadow-inner dark:border-zinc-700">
+    <div className="h-[460px] w-full overflow-hidden rounded-lg border border-zinc-200 bg-zinc-950 shadow-inner dark:border-zinc-700">
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         fitView
@@ -93,7 +137,7 @@ export function TopologyGraph({ nodes: topoNodes, links }: TopologyGraphProps) {
         <MiniMap
           className="rounded border border-zinc-600 bg-zinc-900/95 shadow-lg"
           maskColor="rgba(24,24,27,0.85)"
-          nodeColor={() => '#52525b'}
+          nodeColor={(n) => (n.type === 'cnsNode' ? '#059669' : '#52525b')}
         />
       </ReactFlow>
     </div>

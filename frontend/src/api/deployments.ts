@@ -1,10 +1,6 @@
 import { apiFetch } from './client';
-import type {
-  DeploymentEventResponse,
-  DeploymentResponse,
-  HealingResponse,
-  ReconciliationResponse,
-} from '../types/api';
+import type { DeploymentEventResponse, DeploymentResponse } from '../types/deployment';
+import type { HealingResponse, ReconciliationResponse } from '../types/runtime';
 
 export async function deployTopology(topologyId: string): Promise<DeploymentResponse> {
   return apiFetch<DeploymentResponse>(`/topologies/${topologyId}/deploy`, {

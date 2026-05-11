@@ -2,9 +2,11 @@ import type { TrafficTestResponse } from '../../types/traffic';
 
 interface Props {
   tests: TrafficTestResponse[];
+  /** Omit duplicate page-level title when nested under Traffic validation. */
+  embedded?: boolean;
 }
 
-export function TrafficTestHistory({ tests }: Props) {
+export function TrafficTestHistory({ tests, embedded }: Props) {
   const sorted = [...tests].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   );
@@ -12,15 +14,17 @@ export function TrafficTestHistory({ tests }: Props) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/80">
       <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Traffic test history</h3>
-        <p className="text-xs text-zinc-500">Ping & HTTP runs · auto-refreshed</p>
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+          {embedded ? 'All traffic runs' : 'Traffic test history'}
+        </h3>
+        <p className="text-xs text-cns-muted">Ping & HTTP runs · auto-refreshed</p>
       </div>
-      <div className="max-h-64 overflow-auto">
+      <div className="max-h-[min(320px,40vh)] overflow-auto md:max-h-72">
         {sorted.length === 0 ? (
-          <p className="p-4 text-sm text-zinc-500">No traffic tests yet.</p>
+          <p className="p-4 text-sm text-cns-muted">No traffic tests yet.</p>
         ) : (
           <table className="w-full text-left text-xs">
-            <thead className="sticky top-0 bg-zinc-50 font-semibold text-zinc-600 dark:bg-zinc-950 dark:text-zinc-400">
+            <thead className="sticky top-0 bg-zinc-50 font-semibold text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
               <tr>
                 <th className="px-3 py-2">Time</th>
                 <th className="px-3 py-2">Type</th>
@@ -32,7 +36,7 @@ export function TrafficTestHistory({ tests }: Props) {
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
               {sorted.map((t) => (
                 <tr key={t.id} className="font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
-                  <td className="whitespace-nowrap px-3 py-2 text-zinc-500">{formatTs(t.created_at)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-cns-muted">{formatTs(t.created_at)}</td>
                   <td className="px-3 py-2 uppercase">{t.test_type}</td>
                   <td className="px-3 py-2">
                     <span

@@ -62,7 +62,7 @@ export function RuntimeHealthBadges({ topologyStatus, deploymentStatus, runtimeT
       <Pill label={`Deployment: ${depLabel}`} variant={depVariant} />
       <Pill label={t.text} variant={t.variant} />
       {pollLive && (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/5 px-2 py-0.5 text-[11px] text-zinc-500 dark:bg-white/5 dark:text-zinc-400">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/5 px-2 py-0.5 text-[11px] text-zinc-700 dark:bg-white/5 dark:text-zinc-300">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />

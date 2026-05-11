@@ -17,8 +17,19 @@ export class ApiError extends Error {
 }
 
 export function getApiBase(): string {
-  const raw = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
-  return raw.replace(/\/$/, '');
+  const raw = import.meta.env.VITE_API_BASE_URL as string | undefined;
+  if (raw !== undefined && raw.trim() !== '') {
+    return raw.replace(/\/$/, '');
+  }
+  // `vite` dev server: same-origin `/api` proxied to FastAPI (see vite.config.ts).
+  if (import.meta.env.DEV) {
+    return '/api';
+  }
+  // `vite preview` (default port 4173): same proxy as dev.
+  if (typeof window !== 'undefined' && window.location.port === '4173') {
+    return '/api';
+  }
+  return 'http://localhost:8000';
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -64,7 +75,17 @@ export function formatApiError(err: unknown): string {
     if (d?.detail != null) return JSON.stringify(d.detail);
     return err.message;
   }
-  if (err instanceof Error) return err.message;
+  if (err instanceof Error) {
+    const m = err.message;
+    if (
+      m === 'Failed to fetch' ||
+      m.includes('NetworkError') ||
+      m.includes('Load failed')
+    ) {
+      return `${m} — cannot reach ${getApiBase()}. Start the API on port 8000 (see README), or keep using dev defaults so Vite proxies /api → 127.0.0.1:8000.`;
+    }
+    return m;
+  }
   return String(err);
 }
 

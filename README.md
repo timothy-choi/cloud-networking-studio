@@ -110,12 +110,12 @@ The React dashboard talks to the API over **`fetch`**. Configure the backend URL
 
 ```bash
 cd frontend
-cp .env.example .env   # optional — defaults to http://localhost:8000
+cp .env.example .env   # optional — defaults use Vite proxy (/api → http://127.0.0.1:8000)
 npm install
 npm run dev
 ```
 
-Then open **http://localhost:5174**. The FastAPI app enables **CORS** for `http://localhost:5174` and `http://127.0.0.1:5174` so browser requests succeed during development.
+Then open **http://localhost:5174**. During **`npm run dev`**, the UI calls **`/api/...`** on the same origin and **Vite proxies** those requests to FastAPI on port **8000**, which avoids common browser issues with cross-origin `fetch` to `http://localhost:8000`. Keep the backend running (`uvicorn ... --port 8000`). The FastAPI app still enables **CORS** for direct calls from `http://localhost:5174` if you set `VITE_API_BASE_URL=http://127.0.0.1:8000` instead.
 
 Keep the backend running on port **8000** while using the UI.
 
@@ -127,7 +127,22 @@ npm run build
 npm run preview   # optional — serves dist/
 ```
 
-**What the UI covers:** dashboard with health + topology list, topology detail with React Flow graph, deploy/teardown, runtime JSON, deployment events, ping/HTTP traffic tests, stop-node failure injection, reconcile, and heal — aligned with existing REST endpoints.
+**What the UI covers:** dashboard with health + topology list, topology detail with **interactive React Flow topology studio** (add nodes/links, drag, templates, save layout to `editor_position`, inspector, deployment planning), deploy/teardown, runtime JSON, deployment events, ping/HTTP traffic tests, stop-node failure injection, reconcile, and heal — aligned with existing REST endpoints.
+
+### Topology studio (visual builder)
+
+Open any topology from the dashboard. The **Topology studio** pane is an editable React Flow canvas:
+
+- **Add nodes** from the toolbar (host, service, router, switch) or **Quick create** templates (client/server, multi-tier web, load balancer, router/switch, full mesh).
+- **Drag** nodes; **connect** handles to create links (default subnet is filled in—edit in the inspector).
+- **Save topology** persists node positions into each node’s `config.editor_position` (merged via PATCH) so layout survives refresh.
+- **Inspector** (right): rename the topology, edit node fields (name, type, image, intent IP, config JSON), and link fields (network name, CIDR, metadata JSON).
+- **Deployment planning** summarizes counts, duplicate intent IPs, overlapping IPv4 subnets (best effort), and simple readiness checks.
+- **Keyboard:** Delete/Backspace removes the selected link or node; **⌘/Ctrl+S** saves layout; **⌘/Ctrl+D** duplicates the selected node; **F** zooms to fit.
+- **Deploy topology** in the toolbar calls the same `POST /topologies/{id}/deploy` as **Runtime controls** below—use either entry point.
+
+Runtime polling continues to light up **workload / runtime IP / link animation** on the graph without discarding local drag positions.
+
 
 ### Automated demo (recommended)
 

@@ -33,6 +33,7 @@ def _topology_or_404(db: Session, topology_id: UUID) -> Topology:
     "/topologies/{topology_id}/failures/stop-node",
     response_model=FailureInjectionResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Inject stop container failure",
 )
 def inject_stop_node(
     topology_id: UUID,
@@ -65,6 +66,7 @@ def inject_stop_node(
     "/topologies/{topology_id}/failures/restart-node",
     response_model=FailureInjectionResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Inject restart container failure",
 )
 def inject_restart_node(
     topology_id: UUID,
@@ -97,6 +99,7 @@ def inject_restart_node(
     "/topologies/{topology_id}/failures/kill-node",
     response_model=FailureInjectionResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Inject kill container failure",
 )
 def inject_kill_node(
     topology_id: UUID,
@@ -128,6 +131,7 @@ def inject_kill_node(
 @router.get(
     "/failures/{failure_id}",
     response_model=FailureInjectionResponse,
+    summary="Get failure injection",
 )
 def get_failure_injection(
     failure_id: UUID,
@@ -145,6 +149,7 @@ def get_failure_injection(
 @router.get(
     "/topologies/{topology_id}/failures",
     response_model=list[FailureInjectionResponse],
+    summary="List topology failure injections",
 )
 def list_topology_failures(
     topology_id: UUID,

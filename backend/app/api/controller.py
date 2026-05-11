@@ -19,7 +19,11 @@ from app.services import runtime_controller as controller_svc
 router = APIRouter(tags=["controller"])
 
 
-@router.get("/controller/status", response_model=ControllerStatusResponse)
+@router.get(
+    "/controller/status",
+    response_model=ControllerStatusResponse,
+    summary="Controller status",
+)
 def get_controller_status(db: Session = Depends(get_db)) -> ControllerStatusResponse:
     snap = controller_svc.get_controller_status(db)
     return ControllerStatusResponse(
@@ -32,7 +36,11 @@ def get_controller_status(db: Session = Depends(get_db)) -> ControllerStatusResp
     )
 
 
-@router.post("/controller/run-once", response_model=ControllerRunOnceResponse)
+@router.post(
+    "/controller/run-once",
+    response_model=ControllerRunOnceResponse,
+    summary="Run controller reconcile sweep",
+)
 def post_controller_run_once(db: Session = Depends(get_db)) -> ControllerRunOnceResponse:
     summary = controller_svc.run_controller_once(db)
     db.commit()
@@ -48,6 +56,8 @@ def post_controller_run_once(db: Session = Depends(get_db)) -> ControllerRunOnce
 @router.post(
     "/deployments/{deployment_id}/heal",
     response_model=HealingResponse,
+    summary="Heal deployment",
+    response_description="Attempts provider-specific recovery (restarts, recreate paths) after drift.",
 )
 def post_deployment_heal(
     deployment_id: UUID,

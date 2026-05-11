@@ -105,9 +105,24 @@ class StoppedContainerRef(BaseModel):
 class ReconciliationResponse(BaseModel):
     """Drift detection output — remediation is not performed automatically."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "deployment_id": "550e8400-e29b-41d4-a716-446655440001",
+                "topology_id": "550e8400-e29b-41d4-a716-446655440000",
+                "missing_network": False,
+                "missing_node_ids": [],
+                "stopped_containers": [
+                    {"container_id": "a1b2c3d4e5f6", "name": "cns-node-770e8400abc-demo-service"}
+                ],
+                "summary_lines": ["stopped=1 missing_nodes=0"],
+            }
+        }
+    )
+
     deployment_id: UUID
     topology_id: UUID
-    missing_network: bool
-    missing_node_ids: list[UUID]
+    missing_network: bool = Field(description="True when the managed Docker network is absent.")
+    missing_node_ids: list[UUID] = Field(description="Nodes without backing containers.")
     stopped_containers: list[StoppedContainerRef]
-    summary_lines: list[str]
+    summary_lines: list[str] = Field(description="Compact machine-oriented summaries for logs.")

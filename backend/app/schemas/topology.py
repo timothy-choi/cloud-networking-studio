@@ -12,21 +12,68 @@ from app.models.topology import NodeType, TopologyStatus
 class TopologyCreate(BaseModel):
     """Payload for creating a topology definition."""
 
-    name: str = Field(..., min_length=1, max_length=255)
-    description: str | None = None
-    runtime_target: str = Field(..., max_length=64)
-    networking_mode: str = Field(..., max_length=64)
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "edge-demo",
+                "description": "Host + service on shared bridge",
+                "runtime_target": "docker",
+                "networking_mode": "docker_bridge",
+                "status": "draft",
+                "config": None,
+            }
+        }
+    )
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Human-readable name shown in UIs and deployment events.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Optional longer description; not interpreted by the runtime provider.",
+    )
+    runtime_target: str = Field(
+        ...,
+        max_length=64,
+        description="Runtime key (e.g. `docker`) used by `runtime_provider_for_topology`.",
+    )
+    networking_mode: str = Field(
+        ...,
+        max_length=64,
+        description="How overlay/bridge networking should be interpreted when planning deploy.",
+    )
     status: TopologyStatus | None = Field(
         default=None,
         description="Defaults to draft when omitted.",
     )
-    config: dict[str, Any] | None = None
+    config: dict[str, Any] | None = Field(
+        default=None,
+        description="Opaque JSON bag for future planner hints.",
+    )
 
 
 class TopologyResponse(BaseModel):
     """Topology row returned from the API."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "name": "edge-demo",
+                "description": "Host + service on shared bridge",
+                "status": "draft",
+                "runtime_target": "docker",
+                "networking_mode": "docker_bridge",
+                "config": None,
+                "created_at": "2025-01-15T10:00:00Z",
+                "updated_at": "2025-01-15T10:00:00Z",
+            }
+        },
+    )
 
     id: UUID
     name: str

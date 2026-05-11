@@ -33,6 +33,7 @@ def _topology_or_404(db: Session, topology_id: UUID) -> Topology:
     "/topologies/{topology_id}/traffic-tests/ping",
     response_model=TrafficTestResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Run ICMP ping traffic test",
 )
 def create_ping_traffic_test(
     topology_id: UUID,
@@ -66,6 +67,7 @@ def create_ping_traffic_test(
     "/topologies/{topology_id}/traffic-tests/http",
     response_model=TrafficTestResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Run HTTP traffic test",
 )
 def create_http_traffic_test(
     topology_id: UUID,
@@ -104,6 +106,7 @@ def create_http_traffic_test(
 @router.get(
     "/traffic-tests/{traffic_test_id}",
     response_model=TrafficTestResponse,
+    summary="Get traffic test",
 )
 def get_traffic_test(
     traffic_test_id: UUID,
@@ -121,6 +124,7 @@ def get_traffic_test(
 @router.get(
     "/topologies/{topology_id}/traffic-tests",
     response_model=list[TrafficTestResponse],
+    summary="List topology traffic tests",
 )
 def list_topology_traffic_tests(
     topology_id: UUID,

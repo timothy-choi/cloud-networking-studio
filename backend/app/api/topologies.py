@@ -39,6 +39,7 @@ def _get_topology_or_404(db: Session, topology_id: UUID) -> Topology:
     "",
     response_model=TopologyResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Create topology",
 )
 def create_topology(
     body: TopologyCreate,
@@ -59,14 +60,22 @@ def create_topology(
     return topo
 
 
-@router.get("", response_model=list[TopologyResponse])
+@router.get(
+    "",
+    response_model=list[TopologyResponse],
+    summary="List topologies",
+)
 def list_topologies(db: Session = Depends(get_db)) -> list[Topology]:
     """List topologies, newest first."""
     stmt = select(Topology).order_by(Topology.created_at.desc())
     return list(db.scalars(stmt).all())
 
 
-@router.get("/{topology_id}", response_model=TopologyResponse)
+@router.get(
+    "/{topology_id}",
+    response_model=TopologyResponse,
+    summary="Get topology",
+)
 def get_topology(
     topology_id: UUID,
     db: Session = Depends(get_db),
@@ -85,6 +94,7 @@ def get_topology(
     "/{topology_id}/nodes",
     response_model=TopologyNodeResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Create topology node",
 )
 def create_topology_node(
     topology_id: UUID,
@@ -107,7 +117,11 @@ def create_topology_node(
     return node
 
 
-@router.get("/{topology_id}/nodes", response_model=list[TopologyNodeResponse])
+@router.get(
+    "/{topology_id}/nodes",
+    response_model=list[TopologyNodeResponse],
+    summary="List topology nodes",
+)
 def list_topology_nodes(
     topology_id: UUID,
     db: Session = Depends(get_db),
@@ -122,6 +136,7 @@ def list_topology_nodes(
     "/{topology_id}/links",
     response_model=TopologyLinkResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Create topology link",
 )
 def create_topology_link(
     topology_id: UUID,
@@ -158,7 +173,11 @@ def create_topology_link(
     return link
 
 
-@router.get("/{topology_id}/links", response_model=list[TopologyLinkResponse])
+@router.get(
+    "/{topology_id}/links",
+    response_model=list[TopologyLinkResponse],
+    summary="List topology links",
+)
 def list_topology_links(
     topology_id: UUID,
     db: Session = Depends(get_db),

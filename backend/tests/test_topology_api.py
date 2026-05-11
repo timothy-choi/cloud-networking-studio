@@ -155,3 +155,79 @@ def test_link_wrong_topology_returns_404(client):
     )
     assert r.status_code == 404
     assert r.json()["detail"] == "Node not found"
+
+
+def test_patch_delete_nodes_and_links(client):
+    r = client.post("/topologies", json=TOPOLOGY_BODY)
+    tid = r.json()["id"]
+
+    na = client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "a",
+            "node_type": NodeType.GENERIC.value,
+            "image": None,
+            "ip_address": None,
+            "config": {"editor_position": {"x": 10, "y": 20}},
+        },
+    )
+    assert na.status_code == 201
+    id_a = na.json()["id"]
+
+    pu = client.patch(
+        f"/topologies/{tid}/nodes/{id_a}",
+        json={"name": "a-renamed", "config": {"editor_position": {"x": 50, "y": 60}}},
+    )
+    assert pu.status_code == 200
+    assert pu.json()["name"] == "a-renamed"
+    assert pu.json()["config"]["editor_position"]["x"] == 50
+
+    nb = client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "b",
+            "node_type": NodeType.HOST.value,
+            "image": None,
+            "ip_address": None,
+            "config": None,
+        },
+    )
+    id_b = nb.json()["id"]
+
+    lk = client.post(
+        f"/topologies/{tid}/links",
+        json={
+            "source_node_id": id_a,
+            "target_node_id": id_b,
+            "network_name": "n1",
+            "cidr": "10.1.0.0/24",
+            "config": None,
+        },
+    )
+    lid = lk.json()["id"]
+
+    pl = client.patch(
+        f"/topologies/{tid}/links/{lid}",
+        json={"network_name": "n1-renamed", "cidr": "10.2.0.0/24"},
+    )
+    assert pl.status_code == 200
+    assert pl.json()["network_name"] == "n1-renamed"
+
+    dl = client.delete(f"/topologies/{tid}/links/{lid}")
+    assert dl.status_code == 204
+
+    dn = client.delete(f"/topologies/{tid}/nodes/{id_a}")
+    assert dn.status_code == 204
+
+    nodes = client.get(f"/topologies/{tid}/nodes").json()
+    assert len(nodes) == 1
+    assert nodes[0]["id"] == id_b
+
+
+def test_patch_topology_metadata(client):
+    r = client.post("/topologies", json=TOPOLOGY_BODY)
+    tid = r.json()["id"]
+    pr = client.patch(f"/topologies/{tid}", json={"name": "Renamed", "description": "x"})
+    assert pr.status_code == 200
+    assert pr.json()["name"] == "Renamed"
+    assert pr.json()["description"] == "x"

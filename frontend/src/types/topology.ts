@@ -60,3 +60,34 @@ export interface TopologyLinkCreate {
   cidr?: string | null;
   config?: Record<string, unknown> | null;
 }
+
+/** Persisted in `TopologyNode.config.editor_position` for React Flow layout. */
+export interface EditorPosition {
+  x: number;
+  y: number;
+}
+
+export interface TopologyUpdate {
+  name?: string;
+  description?: string | null;
+  status?: TopologyStatus;
+  runtime_target?: string;
+  networking_mode?: string;
+  config?: Record<string, unknown> | null;
+}
+
+export interface TopologyNodeUpdate {
+  name?: string;
+  node_type?: NodeType;
+  image?: string | null;
+  ip_address?: string | null;
+  config?: Record<string, unknown> | null;
+}
+
+export interface TopologyLinkUpdate {
+  network_name?: string;
+  cidr?: string | null;
+  config?: Record<string, unknown> | null;
+}
+
+export const EDITOR_POSITION_KEY = 'editor_position' as const;

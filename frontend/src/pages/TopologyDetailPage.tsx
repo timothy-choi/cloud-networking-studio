@@ -13,7 +13,7 @@ import { FailureHistory } from '../components/failures/FailureHistory';
 import { RuntimeHealthBadges } from '../components/runtime/RuntimeHealthBadges';
 import { RuntimeMetricsPanel } from '../components/runtime/RuntimeMetricsPanel';
 import { Spinner } from '../components/Spinner';
-import { TopologyGraph } from '../components/TopologyGraph';
+import { TopologyWorkspace } from '../components/topology/TopologyWorkspace';
 import { TrafficTestHistory } from '../components/traffic/TrafficTestHistory';
 import { useDeploymentEvents } from '../hooks/useDeploymentEvents';
 import { useFailures } from '../hooks/useFailures';
@@ -353,8 +353,18 @@ export function TopologyDetailPage() {
 
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Workload graph</h2>
-          <TopologyGraph nodes={nodes} links={links} runtime={runtime} />
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Topology studio</h2>
+          <p className="text-xs text-zinc-500">
+            Edit the graph, persist layout with Save topology, then deploy from here or Runtime controls.
+          </p>
+          <TopologyWorkspace
+            topologyId={id}
+            topology={topology ?? null}
+            nodes={nodes}
+            links={links}
+            runtime={runtime}
+            onRefresh={refreshLive}
+          />
         </section>
 
         <section className="space-y-3">

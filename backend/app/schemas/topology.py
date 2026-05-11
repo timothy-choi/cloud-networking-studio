@@ -132,3 +132,32 @@ class TopologyLinkResponse(BaseModel):
     network_name: str
     cidr: str | None
     config: dict[str, Any] | None
+
+
+class TopologyUpdate(BaseModel):
+    """Partial update for topology metadata."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    status: TopologyStatus | None = None
+    runtime_target: str | None = Field(default=None, max_length=64)
+    networking_mode: str | None = Field(default=None, max_length=64)
+    config: dict[str, Any] | None = None
+
+
+class TopologyNodeUpdate(BaseModel):
+    """Partial update for a topology node (including merged config / UI positions)."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    node_type: NodeType | None = None
+    image: str | None = Field(default=None, max_length=512)
+    ip_address: str | None = Field(default=None, max_length=64)
+    config: dict[str, Any] | None = None
+
+
+class TopologyLinkUpdate(BaseModel):
+    """Partial update for a topology link."""
+
+    network_name: str | None = Field(default=None, max_length=255)
+    cidr: str | None = Field(default=None, max_length=64)
+    config: dict[str, Any] | None = None

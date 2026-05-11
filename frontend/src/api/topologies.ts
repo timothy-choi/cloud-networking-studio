@@ -5,9 +5,12 @@ import type {
   TopologyCreate,
   TopologyLinkCreate,
   TopologyLinkResponse,
+  TopologyLinkUpdate,
   TopologyNodeCreate,
   TopologyNodeResponse,
+  TopologyNodeUpdate,
   TopologyResponse,
+  TopologyUpdate,
 } from '../types/topology';
 import type { RuntimeTopologyResponse } from '../types/runtime';
 
@@ -105,6 +108,47 @@ export async function injectStopNode(
       target_node_id: body.target_node_id,
       description: body.description ?? null,
     }),
+  });
+}
+
+export async function patchTopology(topologyId: string, body: TopologyUpdate): Promise<TopologyResponse> {
+  return apiFetch<TopologyResponse>(`/topologies/${topologyId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function patchNode(
+  topologyId: string,
+  nodeId: string,
+  body: TopologyNodeUpdate,
+): Promise<TopologyNodeResponse> {
+  return apiFetch<TopologyNodeResponse>(`/topologies/${topologyId}/nodes/${nodeId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteNode(topologyId: string, nodeId: string): Promise<void> {
+  await apiFetch(`/topologies/${topologyId}/nodes/${nodeId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function patchLink(
+  topologyId: string,
+  linkId: string,
+  body: TopologyLinkUpdate,
+): Promise<TopologyLinkResponse> {
+  return apiFetch<TopologyLinkResponse>(`/topologies/${topologyId}/links/${linkId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteLink(topologyId: string, linkId: string): Promise<void> {
+  await apiFetch(`/topologies/${topologyId}/links/${linkId}`, {
+    method: 'DELETE',
   });
 }
 

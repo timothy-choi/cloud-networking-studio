@@ -2,14 +2,35 @@ import type { RuntimeTopologyResponse } from '../../types/runtime';
 
 interface RuntimeMetricsPanelProps {
   runtime: RuntimeTopologyResponse | null;
-  deploymentUpdatedHint?: string | null;
-  eventsUpdatedHint?: string | null;
+  /** Last successful runtime bundle poll (local clock). */
+  lastRuntimePollAt?: string | null;
+  /** Last successful deployment-events poll (local clock). */
+  lastEventsPollAt?: string | null;
+  /** Newest `created_at` from the loaded event stream (API data). */
+  latestEventAt?: string | null;
+}
+
+function fmtIso(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      hour12: false,
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
 }
 
 export function RuntimeMetricsPanel({
   runtime,
-  deploymentUpdatedHint,
-  eventsUpdatedHint,
+  lastRuntimePollAt,
+  lastEventsPollAt,
+  latestEventAt,
 }: RuntimeMetricsPanelProps) {
   const containers = runtime?.containers ?? [];
   const running = containers.filter((c) => c.running).length;
@@ -22,8 +43,8 @@ export function RuntimeMetricsPanel({
       <MetricCard label="Running" value={running} tone={running > 0 ? 'ok' : 'muted'} />
       <MetricCard label="Stopped" value={stopped} tone={stopped > 0 ? 'warn' : 'muted'} />
       <MetricCard label="Networks" value={nets} />
-      <MetricCard label="Deploy updated" value={deploymentUpdatedHint ?? '—'} small />
-      <MetricCard label="Events updated" value={eventsUpdatedHint ?? '—'} small />
+      <MetricCard label="Latest event" value={fmtIso(latestEventAt)} small />
+      <MetricCard label="Poll: runtime / events" value={`${lastRuntimePollAt ?? '—'} · ${lastEventsPollAt ?? '—'}`} small />
     </div>
   );
 }

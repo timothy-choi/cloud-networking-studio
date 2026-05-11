@@ -1,8 +1,6 @@
-/**
- * Typed fetch helper + API base from Vite env.
- */
+/** Typed fetch helper + API base from Vite env. */
 
-import type { ControllerStatusResponse, HealthResponse } from '../types/api';
+import type { ControllerStatusResponse, HealthResponse } from '../types/health';
 
 export class ApiError extends Error {
   readonly status: number;

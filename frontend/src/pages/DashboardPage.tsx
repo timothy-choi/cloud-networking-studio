@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { formatApiError, getControllerStatus, getHealth } from '../api/client';
 import { createDemoTopology, listTopologies } from '../api/topologies';
-import type { ControllerStatusResponse, HealthResponse, TopologyResponse } from '../types/api';
+import { Spinner } from '../components/Spinner';
+import { usePolling } from '../hooks/usePolling';
+import type { ControllerStatusResponse, HealthResponse, TopologyResponse } from '../types';
 
 function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -26,10 +28,12 @@ export function DashboardPage() {
   const [topologies, setTopologies] = useState<TopologyResponse[]>([]);
   const [listErr, setListErr] = useState<string | null>(null);
   const [demoLoading, setDemoLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const refresh = useCallback(async () => {
     setHealthErr(null);
     setListErr(null);
+    setRefreshing(true);
     try {
       const [h, c, t] = await Promise.all([
         getHealth(),
@@ -47,14 +51,12 @@ export function DashboardPage() {
       } catch (e2) {
         setListErr(formatApiError(e2));
       }
+    } finally {
+      setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      void refresh();
-    });
-  }, [refresh]);
+  usePolling(refresh, 10_000, true);
 
   async function onCreateDemo() {
     setDemoLoading(true);
@@ -74,12 +76,14 @@ export function DashboardPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-          Platform overview
-        </h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            Platform overview
+          </h1>
+          {refreshing && <Spinner className="h-5 w-5 text-zinc-400" />}
+        </div>
         <p className="mt-1 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
-          Design topologies, deploy to Docker, run probes, inject failures, and reconcile drift — all from the
-          control plane API.
+          Live control plane — topologies auto-refresh every 10s. Open a topology for full runtime observability.
         </p>
       </div>
 
@@ -90,7 +94,9 @@ export function DashboardPage() {
             {health ? (
               <StatusBadge ok={healthy} label={healthy ? 'Reachable' : 'Degraded'} />
             ) : (
-              <span className="text-sm text-zinc-500">Checking…</span>
+              <span className="flex items-center gap-2 text-sm text-zinc-500">
+                <Spinner className="h-4 w-4" /> Checking…
+              </span>
             )}
           </div>
           {health && (
@@ -132,9 +138,11 @@ export function DashboardPage() {
         <button
           type="button"
           onClick={() => void refresh()}
-          className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          disabled={refreshing}
+          className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
         >
-          Refresh
+          {refreshing ? <Spinner className="h-4 w-4" /> : null}
+          Refresh now
         </button>
       </div>
 

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLevel
 from app.models.topology import Topology, TopologyNode
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
+from app.services.deployment_queries import latest_deployment_for_topology
 from app.providers.runtime_types import (
     ProviderReconciliationResult,
     ProviderRuntimeSnapshot,
@@ -23,16 +24,6 @@ from app.schemas.runtime import (
     RuntimeStatsResponse,
     RuntimeTopologyResponse,
 )
-
-
-def _latest_deployment(session: Session, topology_id: UUID) -> Deployment | None:
-    stmt = (
-        select(Deployment)
-        .where(Deployment.topology_id == topology_id)
-        .order_by(Deployment.created_at.desc())
-        .limit(1)
-    )
-    return session.execute(stmt).scalar_one_or_none()
 
 
 def _snapshot_to_networks(snap: ProviderRuntimeSnapshot) -> list[RuntimeNetworkResponse]:
@@ -96,7 +87,7 @@ def record_runtime_inspection_event(
     snap: ProviderRuntimeSnapshot,
     source: str,
 ) -> None:
-    dep = _latest_deployment(session, topology_id)
+    dep = latest_deployment_for_topology(session, topology_id)
     if dep is None:
         return
     msg = (
@@ -115,7 +106,7 @@ def record_runtime_inspection_event(
 def record_logs_requested_event(
     session: Session, topology_id: UUID, node_id: UUID, tail: int
 ) -> None:
-    dep = _latest_deployment(session, topology_id)
+    dep = latest_deployment_for_topology(session, topology_id)
     if dep is None:
         return
     session.add(
@@ -130,7 +121,7 @@ def record_logs_requested_event(
 def record_stats_requested_event(
     session: Session, topology_id: UUID, node_id: UUID
 ) -> None:
-    dep = _latest_deployment(session, topology_id)
+    dep = latest_deployment_for_topology(session, topology_id)
     if dep is None:
         return
     session.add(
@@ -158,7 +149,7 @@ def build_topology_runtime(
             select(TopologyNode).where(TopologyNode.topology_id == topology_id)
         ).all()
     )
-    latest = _latest_deployment(session, topology_id)
+    latest = latest_deployment_for_topology(session, topology_id)
     mapping, states = _node_mappings(nodes, snap)
     if emit_inspection_event:
         record_runtime_inspection_event(

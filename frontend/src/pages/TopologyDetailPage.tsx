@@ -36,7 +36,7 @@ function Badge({ children }: { children: ReactNode }) {
 
 function deployAllowsDestroy(status: DeploymentStatus | null): boolean {
   if (!status) return false;
-  return status !== 'stopped' && status !== 'cancelled';
+  return status !== 'stopped';
 }
 
 function fmtClock(ts: number | null): string {

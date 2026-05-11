@@ -35,11 +35,11 @@ export function deriveControlPlanePhase(
   if (ds === 'failed') {
     return { phase: 'failed', shortLabel: 'Failed', description: 'Last deployment failed.' };
   }
-  if (ds === 'stopped' || ds === 'cancelled') {
-    return { phase: 'stopped', shortLabel: 'Stopped', description: 'Deployment is stopped or cancelled.' };
+  if (ds === 'stopped') {
+    return { phase: 'stopped', shortLabel: 'Stopped', description: 'Deployment is stopped.' };
   }
-  if (ds === 'pending' || ds === 'provisioning') {
-    return { phase: 'deploying', shortLabel: 'Deploying', description: 'Runtime is provisioning resources.' };
+  if (ds === 'pending' || ds === 'deploying' || ds === 'stopping') {
+    return { phase: 'deploying', shortLabel: 'Deploying', description: 'Runtime deployment in progress.' };
   }
 
   if (!runtime?.latest_deployment_id && topologyStatus === 'draft' && nodeCount === 0) {
@@ -58,7 +58,7 @@ export function deriveControlPlanePhase(
     return { phase: 'degraded', shortLabel: 'Degraded', description: 'One or more containers are not running.' };
   }
 
-  if (ds === 'running' || ds === 'succeeded') {
+  if (ds === 'succeeded') {
     return {
       phase: 'healthy',
       shortLabel: 'Healthy',

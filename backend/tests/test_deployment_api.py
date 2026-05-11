@@ -74,6 +74,9 @@ def test_deploy_creates_deployment_and_events(client):
     assert times == sorted(times)
 
     text = " ".join(e["message"] for e in evlist)
+    assert "Deployment pending" in text
+    assert "Topology validation passed" in text
+    assert "Deployment deploying" in text
     assert "Node container creation scheduled: host-a" in text
     assert "Node container creation scheduled: service-b" in text
     assert "Link scheduled: host-a -> service-b (net0)" in text

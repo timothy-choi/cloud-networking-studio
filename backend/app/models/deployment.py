@@ -20,11 +20,10 @@ class DeploymentStatus(str, enum.Enum):
     """Coarse-grained state machine for a deployment attempt."""
 
     PENDING = "pending"
-    PROVISIONING = "provisioning"
-    RUNNING = "running"
+    DEPLOYING = "deploying"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+    STOPPING = "stopping"
     STOPPED = "stopped"
 
 

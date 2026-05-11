@@ -51,12 +51,8 @@ def _docker_managed_filter():
 
 
 def _active_status_filter():
-    return Deployment.status.in_(
-        (
-            DeploymentStatus.SUCCEEDED,
-            DeploymentStatus.RUNNING,
-        )
-    )
+    """Deployments the controller should reconcile (live desired state at runtime)."""
+    return Deployment.status == DeploymentStatus.SUCCEEDED
 
 
 def get_controller_status(session: Session) -> ControllerStatusSnapshot:

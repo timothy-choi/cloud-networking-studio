@@ -8,17 +8,21 @@ import {
   reconcileDeployment,
 } from '../api/deployments';
 import { injectStopNode, runHttpTest, runPingTest } from '../api/topologies';
+import { CollapsibleSection } from '../components/ui/CollapsibleSection';
+import { DeploymentLifecycleTimeline } from '../components/deployment/DeploymentLifecycleTimeline';
+import { DeploymentPhaseStrip } from '../components/deployment/DeploymentPhaseStrip';
 import { DeploymentEventStream } from '../components/events/DeploymentEventStream';
 import { FailureHistory } from '../components/failures/FailureHistory';
 import { RuntimeHealthBadges } from '../components/runtime/RuntimeHealthBadges';
 import { RuntimeMetricsPanel } from '../components/runtime/RuntimeMetricsPanel';
 import { Spinner } from '../components/Spinner';
 import { TopologyWorkspace } from '../components/topology/TopologyWorkspace';
-import { TrafficTestHistory } from '../components/traffic/TrafficTestHistory';
+import { TrafficValidationSection } from '../components/traffic/TrafficValidationSection';
 import { useDeploymentEvents } from '../hooks/useDeploymentEvents';
 import { useFailures } from '../hooks/useFailures';
 import { useTopologyRuntime } from '../hooks/useTopologyRuntime';
 import { useTrafficTests } from '../hooks/useTrafficTests';
+import { deriveControlPlanePhase } from '../lib/deploymentUiPhase';
 import { deriveRuntimeHealth, hasStoppedContainers } from '../lib/runtimeHealth';
 import type { DeploymentStatus } from '../types/deployment';
 
@@ -41,6 +45,22 @@ function fmtClock(ts: number | null): string {
     return new Date(ts).toLocaleTimeString(undefined, { hour12: false });
   } catch {
     return '—';
+  }
+}
+
+function fmtWhenIso(iso: string | null): string {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      hour12: false,
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  } catch {
+    return iso;
   }
 }
 
@@ -74,6 +94,7 @@ export function TopologyDetailPage() {
 
   const [busy, setBusy] = useState<string | null>(null);
   const [opsNote, setOpsNote] = useState<string | null>(null);
+  const [pageToast, setPageToast] = useState<string | null>(null);
 
   const refreshLive = useCallback(async () => {
     await Promise.all([refetch(), refetchEvents(), refetchTraffic(), refetchFailures()]);
@@ -111,12 +132,20 @@ export function TopologyDetailPage() {
     return maxIso;
   }, [events]);
 
+  const phaseInfo = useMemo(
+    () => deriveControlPlanePhase(runtime, topology?.status ?? 'draft', busy, nodes.length),
+    [runtime, topology?.status, busy, nodes.length],
+  );
+
   async function wrap(label: string, fn: () => Promise<void>) {
     setBusy(label);
     setOpsNote(null);
+    setPageToast(null);
     try {
       await fn();
       await refreshLive();
+      setPageToast(`${label.replace(/-/g, ' ')} completed`);
+      window.setTimeout(() => setPageToast(null), 4200);
     } catch (e) {
       setOpsNote(formatApiError(e));
     } finally {
@@ -129,7 +158,7 @@ export function TopologyDetailPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 pb-10 max-w-full min-w-0 overflow-x-hidden">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link to="/" className="text-xs font-medium text-emerald-700 hover:underline dark:text-emerald-400">
@@ -139,9 +168,14 @@ export function TopologyDetailPage() {
             <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
               {topology?.name ?? 'Topology'}
             </h1>
+            {degraded ? (
+              <span className="rounded-full bg-red-600 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white shadow-sm">
+                Runtime degraded
+              </span>
+            ) : null}
             {loading && <Spinner className="h-5 w-5" />}
           </div>
-          <p className="font-mono text-xs text-zinc-500">{id}</p>
+          <p className="font-mono text-xs text-cns-muted">{id}</p>
           {topology && (
             <div className="mt-3">
               <RuntimeHealthBadges
@@ -158,7 +192,7 @@ export function TopologyDetailPage() {
             type="button"
             onClick={() => void refreshLive()}
             disabled={busy !== null}
-            className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+            className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 cns-disabled-control dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
           >
             {busy ? <Spinner className="h-4 w-4" /> : null}
             Refresh now
@@ -183,11 +217,20 @@ export function TopologyDetailPage() {
           {opsNote}
         </div>
       )}
+      {pageToast && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100">
+          {pageToast}
+        </div>
+      )}
 
       {degraded && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-100">
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border-l-4 border-red-500 bg-gradient-to-r from-red-50 to-amber-50 px-4 py-3 text-sm text-red-950 shadow-sm dark:border-red-400 dark:from-red-950/50 dark:to-amber-950/30 dark:text-red-100"
+        >
           <span>
-            <strong>Degraded:</strong> one or more containers are stopped. Run reconcile, then heal.
+            <strong className="font-semibold">Stopped containers detected.</strong> Reconcile to restore intent, then run{' '}
+            <strong className="font-semibold">Heal deployment</strong> (highlighted below).
           </span>
         </div>
       )}
@@ -204,21 +247,21 @@ export function TopologyDetailPage() {
       {topology && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/80">
-            <div className="text-xs uppercase tracking-wide text-zinc-500">Topology record</div>
+            <div className="text-xs uppercase tracking-wide text-cns-label">Topology record</div>
             <div className="mt-1">
               <Badge>{topology.status}</Badge>
             </div>
           </div>
           <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/80">
-            <div className="text-xs uppercase tracking-wide text-zinc-500">Runtime target</div>
+            <div className="text-xs uppercase tracking-wide text-cns-label">Runtime target</div>
             <div className="mt-1 text-sm font-medium">{topology.runtime_target}</div>
           </div>
           <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/80">
-            <div className="text-xs uppercase tracking-wide text-zinc-500">Networking mode</div>
+            <div className="text-xs uppercase tracking-wide text-cns-label">Networking mode</div>
             <div className="mt-1 text-sm font-medium">{topology.networking_mode}</div>
           </div>
           <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/80">
-            <div className="text-xs uppercase tracking-wide text-zinc-500">Latest deployment</div>
+            <div className="text-xs uppercase tracking-wide text-cns-label">Latest deployment</div>
             <div className="mt-1 truncate font-mono text-xs">
               {deploymentStatus ?? '—'}{' '}
               {deploymentId ? `· ${deploymentId.slice(0, 8)}…` : ''}
@@ -228,34 +271,43 @@ export function TopologyDetailPage() {
       )}
 
       <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/80">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Runtime controls</h2>
-        <p className="mt-0.5 text-xs text-zinc-500">
-          Live polling keeps runtime, events, traffic, and failures fresh every few seconds.
+        <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Runtime actions</h2>
+        <p className="mt-0.5 text-xs text-cns-muted">
+          Deploy, validate traffic, inject failures, and reconcile or heal the active deployment. Live polling keeps data fresh.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
             disabled={busy !== null}
+            title={busy !== null ? 'Wait for the current action to finish.' : undefined}
             onClick={() =>
               wrap('deploy', async () => {
                 await deployTopology(id);
               })
             }
-            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 cns-disabled-control dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
           >
             Deploy topology
           </button>
           <button
             type="button"
             disabled={busy !== null}
+            title={busy !== null ? 'Wait for the current action to finish.' : undefined}
             onClick={() => wrap('refresh', refreshLive)}
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 cns-disabled-control dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
           >
             Refresh runtime
           </button>
           <button
             type="button"
             disabled={busy !== null || !hostTarget}
+            title={
+              busy !== null
+                ? 'Wait for the current action to finish.'
+                : !hostTarget
+                  ? 'Need at least two nodes (default pair host-a -> service-b when present).'
+                  : undefined
+            }
             onClick={() =>
               wrap('ping', async () => {
                 await runPingTest(id, {
@@ -265,13 +317,20 @@ export function TopologyDetailPage() {
                 });
               })
             }
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 cns-disabled-control dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
           >
             Run ping test
           </button>
           <button
             type="button"
             disabled={busy !== null || !hostTarget}
+            title={
+              busy !== null
+                ? 'Wait for the current action to finish.'
+                : !hostTarget
+                  ? 'Need at least two nodes for HTTP source/target.'
+                  : undefined
+            }
             onClick={() =>
               wrap('http', async () => {
                 await runHttpTest(id, {
@@ -282,13 +341,20 @@ export function TopologyDetailPage() {
                 });
               })
             }
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 cns-disabled-control dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
           >
             Run HTTP test
           </button>
           <button
             type="button"
             disabled={busy !== null || !serviceNode}
+            title={
+              busy !== null
+                ? 'Wait for the current action to finish.'
+                : !serviceNode
+                  ? 'Need a service/workload node to stop.'
+                  : undefined
+            }
             onClick={() =>
               wrap('stop', async () => {
                 await injectStopNode(id, {
@@ -297,33 +363,49 @@ export function TopologyDetailPage() {
                 });
               })
             }
-            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/60"
+            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 cns-disabled-control dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/60"
           >
             Stop service node
           </button>
           <button
             type="button"
             disabled={busy !== null || !deploymentId}
+            title={
+              busy !== null
+                ? 'Wait for the current action to finish.'
+                : !deploymentId
+                  ? 'Deploy the topology first so there is an active deployment.'
+                  : undefined
+            }
             onClick={() =>
               wrap('reconcile', async () => {
                 await reconcileDeployment(deploymentId!);
               })
             }
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 cns-disabled-control dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
           >
             Reconcile
           </button>
           <button
             type="button"
             disabled={busy !== null || !deploymentId}
+            title={
+              busy !== null
+                ? 'Wait for the current action to finish.'
+                : !deploymentId
+                  ? 'Deploy the topology first — heal applies to the latest deployment.'
+                  : degraded
+                    ? 'Runs orchestrator heal — recommended when workloads are stopped.'
+                    : undefined
+            }
             onClick={() =>
               wrap('heal', async () => {
                 await healDeployment(deploymentId!);
               })
             }
-            className={`rounded-lg border px-4 py-2 text-sm font-semibold shadow-sm disabled:opacity-50 ${
+            className={`rounded-lg border px-4 py-2 text-sm font-semibold shadow-sm cns-disabled-control motion-safe:transition ${
               degraded
-                ? 'border-amber-500 bg-amber-400 text-amber-950 ring-2 ring-amber-400/80 hover:bg-amber-300 dark:border-amber-400 dark:bg-amber-500 dark:text-zinc-950 dark:hover:bg-amber-400'
+                ? 'motion-safe:animate-pulse border-amber-500 bg-amber-400 text-amber-950 ring-4 ring-amber-400/90 hover:bg-amber-300 dark:border-amber-400 dark:bg-amber-500 dark:text-zinc-950 dark:ring-amber-300/80 dark:hover:bg-amber-400'
                 : 'border-emerald-600/40 bg-emerald-50 text-emerald-950 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/60'
             }`}
           >
@@ -333,104 +415,159 @@ export function TopologyDetailPage() {
             <button
               type="button"
               disabled={busy !== null}
+              title={busy !== null ? 'Wait for the current action to finish.' : undefined}
               onClick={() =>
                 wrap('destroy', async () => {
                   await destroyDeployment(deploymentId);
                 })
               }
-              className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-900 hover:bg-red-100 disabled:opacity-50 dark:border-red-900 dark:bg-red-950/50 dark:text-red-200 dark:hover:bg-red-950/80"
+              className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-900 hover:bg-red-100 cns-disabled-control dark:border-red-900 dark:bg-red-950/50 dark:text-red-200 dark:hover:bg-red-950/80"
             >
               Destroy deployment
             </button>
           )}
         </div>
         {busy && (
-          <p className="mt-2 flex items-center gap-2 text-xs text-zinc-500">
+          <p className="mt-2 flex items-center gap-2 text-xs text-cns-muted">
             <Spinner className="h-4 w-4" /> Working: {busy}…
           </p>
         )}
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Topology studio</h2>
-          <p className="text-xs text-zinc-500">
-            Edit the graph, persist layout with Save topology, then deploy from here or Runtime controls.
-          </p>
+      <TrafficValidationSection tests={trafficTests} pollError={trafficPollErr} />
+
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12 xl:items-start xl:gap-6">
+        <div className="min-w-0 space-y-3 xl:col-span-8">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Topology studio</h2>
+            <p className="mt-0.5 text-xs text-cns-muted">
+              Toolbar above the canvas · inspector beside the graph · edit, save, template, then deploy from Runtime actions.
+            </p>
+          </div>
           <TopologyWorkspace
             topologyId={id}
             topology={topology ?? null}
             nodes={nodes}
             links={links}
             runtime={runtime}
+            controllerBusy={busy}
+            globalBusy={busy !== null}
             onRefresh={refreshLive}
           />
-        </section>
+        </div>
 
-        <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Runtime snapshot (JSON)</h2>
-          <div className="max-h-[460px] overflow-auto rounded-xl border border-zinc-200 bg-zinc-950 p-4 font-mono text-[11px] leading-relaxed text-emerald-100/95 dark:border-zinc-700">
-            {runtime ? (
-              <pre className="whitespace-pre-wrap break-all">{JSON.stringify(runtime, null, 2)}</pre>
-            ) : (
-              <span className="text-zinc-500">No runtime snapshot yet.</span>
-            )}
-          </div>
-        </section>
+        <aside className="flex min-w-0 flex-col gap-4 xl:col-span-4">
+          {topology ? (
+            <>
+              <DeploymentPhaseStrip
+                phase={phaseInfo.phase}
+                shortLabel={phaseInfo.shortLabel}
+                description={phaseInfo.description}
+              />
+              <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/80">
+                <h3 className="text-[10px] font-semibold uppercase tracking-wide text-cns-label">Runtime summary</h3>
+                <dl className="mt-3 space-y-2 text-sm">
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-cns-muted">Health</dt>
+                    <dd className="font-medium capitalize text-zinc-900 dark:text-zinc-100">{healthTier}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-cns-muted">Deployment</dt>
+                    <dd className="truncate font-mono text-xs text-zinc-800 dark:text-zinc-200">
+                      {deploymentStatus ?? '—'}
+                      {deploymentId ? ` · ${deploymentId.slice(0, 8)}…` : ''}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-cns-muted">Latest event</dt>
+                    <dd className="text-right font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
+                      {fmtWhenIso(latestEventAt)}
+                    </dd>
+                  </div>
+                </dl>
+                <a
+                  href="#deployment-events"
+                  className="mt-3 inline-block text-xs font-medium text-emerald-700 hover:underline dark:text-emerald-400"
+                >
+                  Full deployment event log ↓
+                </a>
+              </div>
+              <DeploymentEventStream
+                events={events}
+                loading={busy !== null}
+                hideInspectionByDefault
+                variant="compact"
+                listClassName="max-h-52 xl:max-h-64"
+              />
+            </>
+          ) : (
+            <div className="rounded-xl border border-dashed border-zinc-300 p-4 text-sm text-cns-muted dark:border-zinc-700">
+              Load topology data to see control-plane phase and recent deployment events.
+            </div>
+          )}
+        </aside>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="space-y-2">
+      <DeploymentLifecycleTimeline events={events} trafficTests={trafficTests} failures={failures} />
+
+      <div className="grid gap-6 md:grid-cols-2 md:items-start">
+        <div className="min-w-0 space-y-2">
+          {failuresPollErr && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+              Failures poll: {failuresPollErr}
+            </div>
+          )}
+          <FailureHistory failures={failures} nodeNameById={nodeNameById} />
+        </div>
+        <div id="deployment-events" className="min-w-0 space-y-2">
           {eventsPollErr && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
               Events poll: {eventsPollErr}
             </div>
           )}
-          <DeploymentEventStream events={events} loading={busy !== null} />
-        </div>
-        <div className="space-y-2">
-          {trafficPollErr && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-              Traffic poll: {trafficPollErr}
-            </div>
-          )}
-          <TrafficTestHistory tests={trafficTests} />
+          <DeploymentEventStream
+            events={events}
+            loading={busy !== null}
+            hideInspectionByDefault
+            listClassName="max-h-[min(420px,50vh)]"
+          />
         </div>
       </div>
 
-      <div className="space-y-2">
-        {failuresPollErr && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-            Failures poll: {failuresPollErr}
-          </div>
-        )}
-        <FailureHistory failures={failures} nodeNameById={nodeNameById} />
-      </div>
+      <CollapsibleSection title="Raw runtime JSON" defaultOpen={false}>
+        <div className="max-h-[min(520px,70vh)] overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 p-4 font-mono text-[11px] leading-relaxed text-emerald-100/95">
+          {runtime ? (
+            <pre className="whitespace-pre-wrap break-all">{JSON.stringify(runtime, null, 2)}</pre>
+          ) : (
+            <span className="text-cns-muted">No runtime snapshot yet.</span>
+          )}
+        </div>
+      </CollapsibleSection>
 
       <section className="grid gap-4 md:grid-cols-2">
         <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/80">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Nodes</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-cns-label">Nodes</h3>
           <ul className="mt-2 space-y-2 text-sm">
             {nodes.map((n) => (
               <li key={n.id} className="flex justify-between gap-2 border-b border-zinc-100 pb-2 dark:border-zinc-800">
                 <span className="font-medium">{n.name}</span>
-                <span className="font-mono text-xs text-zinc-500">{n.ip_address ?? '—'}</span>
+                <span className="font-mono text-xs text-cns-muted">{n.ip_address ?? '—'}</span>
               </li>
             ))}
-            {nodes.length === 0 && <li className="text-zinc-500">No nodes</li>}
+            {nodes.length === 0 && <li className="text-cns-muted">No nodes</li>}
           </ul>
         </div>
         <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/80">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Links</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-cns-label">Links</h3>
           <ul className="mt-2 space-y-2 text-sm">
             {links.map((l) => (
               <li key={l.id} className="border-b border-zinc-100 pb-2 dark:border-zinc-800">
-                <div className="font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
+                <div className="font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
                   {l.network_name} {l.cidr ? `· ${l.cidr}` : ''}
                 </div>
               </li>
             ))}
-            {links.length === 0 && <li className="text-zinc-500">No links</li>}
+            {links.length === 0 && <li className="text-cns-muted">No links</li>}
           </ul>
         </div>
       </section>

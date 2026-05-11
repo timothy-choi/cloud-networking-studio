@@ -11,7 +11,7 @@ export function useTopologyGraph(
 ) {
   return useMemo(
     () => ({
-      flowNodes: topologyNodesToFlowNodes(nodes, runtime),
+      flowNodes: topologyNodesToFlowNodes(nodes, runtime, null),
       flowEdges: topologyLinksToFlowEdges(links, runtime?.deployment_status ?? null),
     }),
     [nodes, links, runtime],

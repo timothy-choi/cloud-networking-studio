@@ -36,7 +36,7 @@ function TopologyMetaForm({
         void onRenameTopology(topoName, topoDesc.trim() === '' ? null : topoDesc);
       }}
     >
-      <label className="block text-[11px] text-zinc-400">
+      <label className="block text-[11px] text-cns-field-label">
         Name
         <input
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
@@ -44,7 +44,7 @@ function TopologyMetaForm({
           onChange={(ev) => setTopoName(ev.target.value)}
         />
       </label>
-      <label className="block text-[11px] text-zinc-400">
+      <label className="block text-[11px] text-cns-field-label">
         Description
         <textarea
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
@@ -100,7 +100,7 @@ function NodeEditForm({
         });
       }}
     >
-      <label className="block text-[11px] text-zinc-400">
+      <label className="block text-[11px] text-cns-field-label">
         Name
         <input
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
@@ -108,7 +108,7 @@ function NodeEditForm({
           onChange={(ev) => setNodeName(ev.target.value)}
         />
       </label>
-      <label className="block text-[11px] text-zinc-400">
+      <label className="block text-[11px] text-cns-field-label">
         Type
         <select
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
@@ -122,7 +122,7 @@ function NodeEditForm({
           ))}
         </select>
       </label>
-      <label className="block text-[11px] text-zinc-400">
+      <label className="block text-[11px] text-cns-field-label">
         Image
         <input
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
@@ -131,7 +131,7 @@ function NodeEditForm({
           placeholder="nginx:alpine"
         />
       </label>
-      <label className="block text-[11px] text-zinc-400">
+      <label className="block text-[11px] text-cns-field-label">
         Intent IP
         <input
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
@@ -140,7 +140,7 @@ function NodeEditForm({
           placeholder="10.0.0.10"
         />
       </label>
-      <label className="block text-[11px] text-zinc-400">
+      <label className="block text-[11px] text-cns-field-label">
         Config JSON (includes editor layout keys)
         <textarea
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-[11px] leading-snug text-zinc-100"
@@ -192,7 +192,7 @@ function LinkEditForm({
         });
       }}
     >
-      <label className="block text-[11px] text-zinc-400">
+      <label className="block text-[11px] text-cns-field-label">
         Network name
         <input
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
@@ -200,7 +200,7 @@ function LinkEditForm({
           onChange={(ev) => setLinkName(ev.target.value)}
         />
       </label>
-      <label className="block text-[11px] text-zinc-400">
+      <label className="block text-[11px] text-cns-field-label">
         Subnet CIDR
         <input
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
@@ -209,7 +209,7 @@ function LinkEditForm({
           placeholder="10.0.1.0/24"
         />
       </label>
-      <label className="block text-[11px] text-zinc-400">
+      <label className="block text-[11px] text-cns-field-label">
         Link metadata JSON
         <textarea
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-[11px] leading-snug text-zinc-100"
@@ -239,27 +239,27 @@ export function TopologyInspector({
   return (
     <div className="space-y-3 rounded-xl border border-zinc-700/80 bg-zinc-950/80 p-4 shadow-inner">
       <div>
-        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Topology</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-cns-inverse-muted">Topology</h3>
         {topology ? (
           <TopologyMetaForm key={topology.id} topology={topology} onRenameTopology={onRenameTopology} />
         ) : (
-          <p className="mt-1 text-xs text-zinc-500">No topology loaded.</p>
+          <p className="mt-1 text-xs text-cns-inverse-label">No topology loaded.</p>
         )}
       </div>
 
       <div className="border-t border-zinc-800 pt-3">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Node</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-cns-inverse-muted">Node</h3>
         {!selectedNode ? (
-          <p className="mt-1 text-xs text-zinc-500">Select a node on the canvas.</p>
+          <p className="mt-1 text-xs text-cns-inverse-label">Select a node on the canvas.</p>
         ) : (
           <NodeEditForm key={selectedNode.id} node={selectedNode} onPatchNode={onPatchNode} />
         )}
       </div>
 
       <div className="border-t border-zinc-800 pt-3">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Link</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-cns-inverse-muted">Link</h3>
         {!selectedLink ? (
-          <p className="mt-1 text-xs text-zinc-500">Select a link on the canvas.</p>
+          <p className="mt-1 text-xs text-cns-inverse-label">Select a link on the canvas.</p>
         ) : (
           <LinkEditForm key={selectedLink.id} link={selectedLink} onPatchLink={onPatchLink} />
         )}

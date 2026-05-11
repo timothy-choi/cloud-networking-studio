@@ -10,11 +10,11 @@ export function Layout() {
             <Link to="/" className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
               Cloud Networking Studio
             </Link>
-            <span className="hidden text-xs font-medium uppercase tracking-wider text-zinc-500 sm:inline">
+            <span className="hidden text-xs font-medium uppercase tracking-wider text-cns-label sm:inline">
               Control plane
             </span>
           </div>
-          <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+          <div className="font-mono text-[11px] text-cns-muted">
             API{' '}
             <span className="rounded bg-zinc-200 px-1.5 py-0.5 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
               {getApiBase()}

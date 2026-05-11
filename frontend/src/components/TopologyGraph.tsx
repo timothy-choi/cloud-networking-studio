@@ -1,4 +1,3 @@
-import '@xyflow/react/dist/style.css';
 import { memo, useEffect, useMemo } from 'react';
 import {
   Background,
@@ -38,9 +37,9 @@ const CnsGraphNode = memo(function CnsGraphNode({ data }: NodeProps<Node<CnsNode
     <div className={`min-w-[150px] rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 shadow-xl ring-2 ${ring}`}>
       <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-zinc-500 !bg-zinc-600" />
       <div className="text-[13px] font-semibold leading-tight text-zinc-50">{data.title}</div>
-      <div className="text-[10px] uppercase tracking-wide text-zinc-500">{data.subtitle}</div>
+      <div className="text-[10px] uppercase tracking-wide text-cns-graph-secondary">{data.subtitle}</div>
       {data.ip ? <div className="mt-1 font-mono text-[11px] text-emerald-400/95">{data.ip}</div> : null}
-      <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">{data.status}</div>
+      <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-cns-graph-mono">{data.status}</div>
       <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-zinc-500 !bg-zinc-600" />
     </div>
   );
@@ -93,7 +92,7 @@ export function TopologyGraph({ nodes: topoNodes, links, runtime }: TopologyGrap
           stroke: animateEdges ? '#34d399' : '#52525b',
           strokeWidth: animateEdges ? 2 : 1.5,
         },
-        labelStyle: { fill: '#a1a1aa', fontSize: 11 },
+        labelStyle: { fill: '#d4d4d8', fontSize: 11 },
       })) satisfies Edge[],
     [links, animateEdges],
   );
@@ -111,7 +110,7 @@ export function TopologyGraph({ nodes: topoNodes, links, runtime }: TopologyGrap
 
   if (topoNodes.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-100/60 px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
+      <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-100/60 px-4 py-10 text-center text-sm text-cns-muted dark:border-zinc-700 dark:bg-zinc-900/40">
         No nodes in this topology yet.
       </div>
     );

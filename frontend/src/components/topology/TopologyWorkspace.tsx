@@ -24,10 +24,9 @@ import { useTopologySync } from '../../hooks/useTopologySync';
 import { TopologyStudioLayout } from '../../layouts/TopologyStudioLayout';
 import {
   type CnsFlowNodeData,
+  deriveNodeRuntimePresentation,
   gridPositions,
-  nodeWorkloadFromRuntime,
   readEditorPosition,
-  runtimePrimaryIp,
   topologyLinksToFlowEdges,
   topologyNodesToFlowNodes,
 } from '../../lib/flowTopology';
@@ -41,49 +40,60 @@ import { EDITOR_POSITION_KEY } from '../../types/topology';
 import { DeploymentPlanningPanel } from './DeploymentPlanningPanel';
 import { TopologyInspector } from './TopologyInspector';
 import { TopologyToolbar } from './TopologyToolbar';
-import { applyTopologyTemplate } from './templates';
+import { applyTopologyTemplate, resetTopologyToDemoLab } from './templates';
 
 const CnsEditorNode = memo(function CnsEditorNode({
   data,
   selected,
 }: NodeProps<Node<CnsFlowNodeData>>) {
-  const wl = data.workload;
-  const ring = selected
-    ? 'ring-2 ring-sky-400 shadow-sky-500/20'
-    : data.degraded
-      ? 'ring-2 ring-amber-500 shadow-amber-500/25'
-      : wl === 'running'
-        ? 'ring-2 ring-emerald-500/60'
-        : wl === 'stopped'
-          ? 'ring-2 ring-red-500/70'
-          : 'ring-2 ring-zinc-600';
+  const v = data.visual;
+  const accent =
+    selected
+      ? 'ring-2 ring-sky-400 ring-offset-2 ring-offset-zinc-950'
+      : v === 'running'
+        ? 'shadow-[0_0_26px_rgba(34,197,94,0.38)] ring-1 ring-emerald-500/75'
+        : v === 'stopped'
+          ? 'shadow-[0_0_28px_rgba(239,68,68,0.48)] ring-1 ring-red-500/80'
+          : v === 'transition'
+            ? 'shadow-[0_0_24px_rgba(245,158,11,0.42)] ring-1 ring-amber-400/75'
+            : 'ring-1 ring-zinc-600';
 
   return (
-    <div className={`min-w-[158px] rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 shadow-xl ${ring}`}>
-      <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-zinc-500 !bg-zinc-600" />
-      <div className="text-[13px] font-semibold leading-tight text-zinc-50">{data.title}</div>
-      <div className="text-[10px] uppercase tracking-wide text-zinc-500">{data.subtitle}</div>
-      {data.intentIp ? (
-        <div className="mt-1 font-mono text-[11px] text-slate-300">intent {data.intentIp}</div>
-      ) : null}
-      {data.runtimeIp ? (
-        <div className="font-mono text-[11px] text-emerald-400/95">runtime {data.runtimeIp}</div>
-      ) : null}
-      <div className="mt-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide">
+    <div
+      className={`min-w-[200px] max-w-[280px] rounded-xl border border-zinc-700/90 bg-zinc-950/95 px-4 py-3 shadow-xl backdrop-blur-sm ${accent}`}
+    >
+      <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-zinc-500 !bg-zinc-700" />
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-[15px] font-semibold leading-snug tracking-tight text-zinc-50">{data.title}</div>
+          <div className="mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-cns-graph-secondary">{data.subtitle}</div>
+        </div>
         <span
-          className={
-            wl === 'running'
-              ? 'text-emerald-400'
-              : wl === 'stopped'
-                ? 'text-red-400'
-                : 'text-zinc-500'
-          }
-        >
-          {wl}
-        </span>
-        {data.degraded ? <span className="text-amber-400">degraded</span> : null}
+          className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+            v === 'running'
+              ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.9)]'
+              : v === 'stopped'
+                ? 'bg-red-500 shadow-[0_0_10px_rgba(248,113,113,0.9)]'
+                : v === 'transition'
+                  ? 'bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.85)]'
+                  : 'bg-zinc-500'
+          }`}
+          title="runtime state"
+        />
       </div>
-      <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-zinc-500 !bg-zinc-600" />
+      <div className="mt-2 space-y-1 border-t border-zinc-800/80 pt-2 text-[12px] leading-snug">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-cns-graph-secondary">container</span>
+          <span className="font-medium text-zinc-100">{data.statusLabel}</span>
+        </div>
+        {data.runtimeIp ? (
+          <div className="font-mono text-[12px] font-medium text-emerald-400/95">{data.runtimeIp}</div>
+        ) : null}
+        {data.intentIp ? (
+          <div className="font-mono text-[11px] text-cns-graph-mono">intent {data.intentIp}</div>
+        ) : null}
+      </div>
+      <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-zinc-500 !bg-zinc-700" />
     </div>
   );
 });
@@ -96,6 +106,10 @@ interface InnerProps {
   nodes: TopologyNodeResponse[];
   links: TopologyLinkResponse[];
   runtime: RuntimeTopologyResponse | null;
+  /** Runtime controls busy label from parent (reconcile/heal/deploy) for graph overlays. */
+  controllerBusy?: string | null;
+  /** Detail-page action in flight — disables topology toolbar while reconcile/heal/deploy run. */
+  globalBusy?: boolean;
   onRefresh: () => Promise<void>;
 }
 
@@ -105,6 +119,8 @@ function TopologyWorkspaceInner({
   nodes,
   links,
   runtime,
+  controllerBusy = null,
+  globalBusy = false,
   onRefresh,
 }: InnerProps) {
   const { fitView } = useReactFlow();
@@ -112,6 +128,7 @@ function TopologyWorkspaceInner({
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const { selectedNodeId, selectedEdgeId, setSelectedNodeId, setSelectedEdgeId, onSelectionChange } =
     useTopologyEditor();
 
@@ -124,30 +141,27 @@ function TopologyWorkspaceInner({
       return;
     }
     prevSig.current = sig;
-    setRfNodes(topologyNodesToFlowNodes(nodes, runtime));
+    setRfNodes(topologyNodesToFlowNodes(nodes, runtime, null));
     setRfEdges(topologyLinksToFlowEdges(links, runtime?.deployment_status ?? null));
-    queueMicrotask(() => fitView({ padding: 0.2, duration: 200 }));
+    queueMicrotask(() => fitView({ padding: 0.18, duration: 280 }));
   }, [sig, nodes, links, runtime, setRfNodes, setRfEdges, fitView]);
 
-  /* Overlay runtime health without resetting drag positions. */
+  /* Overlay runtime + controller activity without resetting drag positions. */
   useEffect(() => {
     setRfNodes((nds) =>
       nds.map((n) => {
-        const wl = nodeWorkloadFromRuntime(n.id, runtime);
-        const rip = runtimePrimaryIp(n.id, runtime);
+        const pres = deriveNodeRuntimePresentation(n.id, runtime, controllerBusy);
         const d = n.data as CnsFlowNodeData;
         return {
           ...n,
           data: {
             ...d,
-            workload: wl,
-            runtimeIp: rip,
-            degraded: wl === 'stopped',
+            ...pres,
           },
         };
       }),
     );
-  }, [runtime, setRfNodes]);
+  }, [runtime, controllerBusy, setRfNodes]);
 
   useEffect(() => {
     setRfEdges((eds) =>
@@ -182,9 +196,12 @@ function TopologyWorkspaceInner({
     async (label: string, fn: () => Promise<unknown>) => {
       setBusy(label);
       setNote(null);
+      setSuccessMsg(null);
       try {
         await fn();
         await onRefresh();
+        setSuccessMsg(`${label.replace(/-/g, ' ')} completed`);
+        window.setTimeout(() => setSuccessMsg(null), 4500);
       } catch (e) {
         setNote(formatApiError(e));
       } finally {
@@ -265,7 +282,10 @@ function TopologyWorkspaceInner({
   };
 
   const clearAll = async () => {
-    if (!confirm('Delete all links and nodes in this topology?')) return;
+    const ok = window.confirm(
+      'Remove every link and node in this topology? This cannot be undone.\n\nClick OK to continue.',
+    );
+    if (!ok) return;
     await run('clear', async () => {
       for (const l of links) {
         await topoApi.deleteLink(topologyId, l.id);
@@ -273,6 +293,16 @@ function TopologyWorkspaceInner({
       for (const n of nodes) {
         await topoApi.deleteNode(topologyId, n.id);
       }
+    });
+  };
+
+  const resetDemoLab = async () => {
+    const ok = window.confirm(
+      'Replace this topology with the compact demo lab (host-a, service-b, one link)? All current nodes and links will be removed.',
+    );
+    if (!ok) return;
+    await run('reset-lab', async () => {
+      await resetTopologyToDemoLab(topologyId);
     });
   };
 
@@ -358,12 +388,20 @@ function TopologyWorkspaceInner({
   return (
     <div className="flex flex-col gap-3">
       {note && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-950 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100">
           {note}
+        </div>
+      )}
+      {successMsg && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100">
+          {successMsg}
         </div>
       )}
       <TopologyToolbar
         busy={busy}
+        locked={globalBusy}
+        nodeCount={nodes.length}
+        hasSelection={Boolean(selectedNodeId || selectedEdgeId)}
         onAddHost={() => void addNodeOfType('host')}
         onAddService={() => void addNodeOfType('generic')}
         onAddRouter={() => void addNodeOfType('router')}
@@ -372,7 +410,9 @@ function TopologyWorkspaceInner({
         onSaveTopology={() => void savePositions()}
         onDeploy={() => run('deploy', () => deployTopology(topologyId))}
         onClear={() => void clearAll()}
-        onFit={() => fitView({ padding: 0.2, duration: 250 })}
+        onResetDemoLab={() => void resetDemoLab()}
+        onDeleteSelection={() => void deleteSelection()}
+        onFit={() => fitView({ padding: 0.18, duration: 280 })}
         templates={[
           {
             id: 'client-server',
@@ -384,7 +424,7 @@ function TopologyWorkspaceInner({
           },
           {
             id: 'web-tier',
-            label: 'Multi-tier web',
+            label: 'Three-tier web app',
             run: () =>
               run('tpl-web', () =>
                 applyTopologyTemplate(topologyId, 'web-tier'),
@@ -392,7 +432,7 @@ function TopologyWorkspaceInner({
           },
           {
             id: 'lb',
-            label: 'Load balancer',
+            label: 'LB + two services',
             run: () =>
               run('tpl-lb', () =>
                 applyTopologyTemplate(topologyId, 'load-balancer'),
@@ -408,7 +448,7 @@ function TopologyWorkspaceInner({
           },
           {
             id: 'mesh',
-            label: 'Mesh',
+            label: 'Service mesh',
             run: () =>
               run('tpl-mesh', () =>
                 applyTopologyTemplate(topologyId, 'mesh'),
@@ -419,43 +459,70 @@ function TopologyWorkspaceInner({
 
       <TopologyStudioLayout
         canvas={
-          <div className="min-h-[520px] rounded-xl border border-zinc-200 bg-zinc-950 shadow-inner dark:border-zinc-700">
-            <ReactFlow
-              nodes={rfNodes}
-              edges={rfEdges}
-              nodeTypes={nodeTypes}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={(c) => void onConnect(c)}
-              onSelectionChange={onSelectionChange}
-              deleteKeyCode={null}
-              fitView
-              snapToGrid
-              snapGrid={[16, 16]}
-              colorMode="dark"
-              defaultEdgeOptions={{
-                type: 'smoothstep',
-                markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8' },
-              }}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background gap={20} size={1} color="#334155" className="opacity-40" />
-              <Controls
-                className="rounded border border-zinc-600 bg-zinc-900 shadow-lg [&_button]:border-zinc-600 [&_button]:bg-zinc-800 [&_button]:fill-zinc-200"
-                showInteractive={false}
-              />
-              <MiniMap
-                className="rounded border border-zinc-600 bg-zinc-900/95 shadow-lg"
-                maskColor="rgba(15,23,42,0.92)"
-                nodeColor={(n) => {
-                  if (n.type === 'cnsEditor') return '#0ea5e9';
-                  return '#475569';
+          <div className="relative flex w-full flex-col overflow-visible rounded-xl border border-zinc-200 bg-zinc-950 shadow-inner dark:border-zinc-700">
+            {/* Explicit height + xyflow base CSS (.react-flow, viewport, pane) so pan/zoom/drag work */}
+            <div className="relative min-h-[520px] h-[clamp(600px,62vh,880px)] w-full min-w-0 md:min-h-[600px]">
+              <ReactFlow
+                className="h-full w-full"
+                nodes={rfNodes}
+                edges={rfEdges}
+                nodeTypes={nodeTypes}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={(c) => void onConnect(c)}
+                onSelectionChange={onSelectionChange}
+                nodesDraggable
+                nodesConnectable
+                elementsSelectable
+                selectNodesOnDrag={false}
+                panOnDrag
+                zoomOnScroll
+                zoomOnPinch
+                deleteKeyCode={null}
+                fitView
+                snapToGrid
+                snapGrid={[20, 20]}
+                minZoom={0.15}
+                maxZoom={1.85}
+                colorMode="dark"
+                defaultEdgeOptions={{
+                  type: 'smoothstep',
+                  markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8' },
                 }}
-              />
-              <Panel position="top-right" className="rounded-md bg-zinc-900/90 px-2 py-1 text-[10px] text-zinc-400">
-                Del remove · ⌘S save · ⌘D duplicate · F fit
-              </Panel>
-            </ReactFlow>
+                proOptions={{ hideAttribution: true }}
+              >
+                <Background gap={24} size={1} color="#334155" className="opacity-35" />
+                <Controls
+                  position="bottom-left"
+                  className="m-2 rounded border border-zinc-600 bg-zinc-900/95 shadow-lg backdrop-blur-sm [&_button]:border-zinc-600 [&_button]:bg-zinc-800 [&_button]:fill-zinc-200"
+                  showInteractive={false}
+                />
+                <MiniMap
+                  position="bottom-right"
+                  className="m-2 !max-h-[100px] !max-w-[132px] rounded-md border border-zinc-700/50 bg-zinc-950/70 opacity-60 shadow-md"
+                  maskColor="rgba(15,23,42,0.45)"
+                  zoomable
+                  pannable
+                  nodeStrokeWidth={2}
+                  nodeColor={(n) => {
+                    const v = (n.data as CnsFlowNodeData | undefined)?.visual;
+                    if (v === 'running') return '#22c55e';
+                    if (v === 'stopped') return '#ef4444';
+                    if (v === 'transition') return '#f59e0b';
+                    return '#64748b';
+                  }}
+                />
+                <Panel
+                  position="top-right"
+                  className="m-2 max-w-[14rem] rounded-md bg-zinc-950/85 px-2 py-1 text-[10px] leading-tight text-cns-inverse-muted shadow-md backdrop-blur-sm"
+                >
+                  Del remove · ⌘S save · ⌘D duplicate · F fit
+                </Panel>
+              </ReactFlow>
+            </div>
+            <p className="border-t border-zinc-700/80 px-3 py-2 text-center text-[11px] leading-snug text-cns-muted">
+              Drag nodes to reposition · Scroll or pinch to zoom · Drag the empty canvas to pan
+            </p>
           </div>
         }
         sidebar={

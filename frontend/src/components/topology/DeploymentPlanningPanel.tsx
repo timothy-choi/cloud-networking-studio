@@ -28,6 +28,37 @@ function ipv4RangesOverlap(
   return a.start <= b.end && b.start <= a.end;
 }
 
+/** Undirected connected components among topology nodes using links as edges. */
+function countGraphComponents(nodeIds: string[], links: TopologyLinkResponse[]): number {
+  if (nodeIds.length === 0) return 0;
+  const idSet = new Set(nodeIds);
+  const adj = new Map<string, string[]>();
+  for (const id of nodeIds) adj.set(id, []);
+  for (const l of links) {
+    if (!idSet.has(l.source_node_id) || !idSet.has(l.target_node_id)) continue;
+    adj.get(l.source_node_id)!.push(l.target_node_id);
+    adj.get(l.target_node_id)!.push(l.source_node_id);
+  }
+  const seen = new Set<string>();
+  let comps = 0;
+  for (const id of nodeIds) {
+    if (seen.has(id)) continue;
+    comps += 1;
+    const stack = [id];
+    seen.add(id);
+    while (stack.length) {
+      const u = stack.pop()!;
+      for (const v of adj.get(u) ?? []) {
+        if (!seen.has(v)) {
+          seen.add(v);
+          stack.push(v);
+        }
+      }
+    }
+  }
+  return comps;
+}
+
 export interface DeploymentPlanningPanelProps {
   nodes: TopologyNodeResponse[];
   links: TopologyLinkResponse[];
@@ -65,11 +96,20 @@ export function DeploymentPlanningPanel({
     }
   }
 
+  const nodeIds = nodes.map((n) => n.id);
+  const graphComps = countGraphComponents(nodeIds, links);
+  const fragmented =
+    nodes.length >= 4 && graphComps > 1 ? `Graph has ${graphComps} disconnected islands.` : null;
+
   const readiness: { ok: boolean; text: string }[] = [
     { ok: nodes.length > 0, text: 'At least one node is defined.' },
     { ok: links.length > 0, text: 'At least one link connects workloads (recommended for multi-node labs).' },
     { ok: ipDup.length === 0, text: 'No duplicate intent IPv4 addresses on nodes.' },
     { ok: cidrOverlaps.length === 0, text: 'No overlapping IPv4 link subnets (best-effort check).' },
+    {
+      ok: !(nodes.length >= 6 && graphComps > 2),
+      text: 'Topology is not excessively fragmented (many islands increase deploy risk).',
+    },
     {
       ok: topologyStatus !== 'archived',
       text: 'Topology is not archived.',
@@ -80,23 +120,23 @@ export function DeploymentPlanningPanel({
 
   return (
     <div className="rounded-xl border border-zinc-700/80 bg-zinc-950/60 p-4">
-      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Deployment planning</h3>
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-cns-inverse-muted">Deployment planning</h3>
       <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <dt className="text-zinc-500">Nodes</dt>
+        <dt className="text-cns-inverse-label">Nodes</dt>
         <dd className="text-right font-mono text-zinc-200">{nodes.length}</dd>
-        <dt className="text-zinc-500">Links</dt>
+        <dt className="text-cns-inverse-label">Links</dt>
         <dd className="text-right font-mono text-zinc-200">{links.length}</dd>
-        <dt className="text-zinc-500">Subnets (links with CIDR)</dt>
+        <dt className="text-cns-inverse-label">Subnets (links with CIDR)</dt>
         <dd className="text-right font-mono text-zinc-200">{cidrRanges.length}</dd>
-        <dt className="text-zinc-500">Runtime deploy status</dt>
+        <dt className="text-cns-inverse-label">Runtime deploy status</dt>
         <dd className="text-right font-mono text-zinc-200">{deploymentStatus ?? '—'}</dd>
       </dl>
 
       <div className="mt-4 border-t border-zinc-800 pt-3">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Readiness</div>
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-cns-inverse-label">Readiness</div>
         <ul className="mt-2 space-y-1.5 text-[11px]">
           {readiness.map((r) => (
-            <li key={r.text} className={r.ok ? 'text-emerald-400/95' : 'text-amber-300/95'}>
+            <li key={r.text} className={r.ok ? 'text-emerald-300' : 'text-amber-200'}>
               {r.ok ? '✓' : '•'} {r.text}
             </li>
           ))}
@@ -122,6 +162,13 @@ export function DeploymentPlanningPanel({
           </ul>
         </div>
       )}
+
+      {fragmented ? (
+        <div className="mt-3 rounded-md border border-sky-900/40 bg-sky-950/25 px-2 py-2 text-[11px] text-sky-100">
+          <div className="font-semibold">Connectivity</div>
+          <p className="mt-1">{fragmented} Consider clearing templates or using auto-layout before deploy.</p>
+        </div>
+      ) : null}
 
       {cidrOverlaps.length > 0 && (
         <div className="mt-3 rounded-md border border-amber-900/50 bg-amber-950/25 px-2 py-2 text-[11px] text-amber-50">

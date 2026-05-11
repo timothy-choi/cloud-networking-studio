@@ -41,7 +41,7 @@ export function RuntimeMetricsPanel({
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <MetricCard label="Containers" value={containers.length} />
       <MetricCard label="Running" value={running} tone={running > 0 ? 'ok' : 'muted'} />
-      <MetricCard label="Stopped" value={stopped} tone={stopped > 0 ? 'warn' : 'muted'} />
+      <MetricCard label="Stopped" value={stopped} tone={stopped > 0 ? 'warn' : 'muted'} emphasize={stopped > 0} />
       <MetricCard label="Networks" value={nets} />
       <MetricCard label="Latest event" value={fmtIso(latestEventAt)} small />
       <MetricCard label="Poll: runtime / events" value={`${lastRuntimePollAt ?? '—'} · ${lastEventsPollAt ?? '—'}`} small />
@@ -54,11 +54,13 @@ function MetricCard({
   value,
   tone = 'muted',
   small,
+  emphasize,
 }: {
   label: string;
   value: string | number;
   tone?: 'ok' | 'warn' | 'muted';
   small?: boolean;
+  emphasize?: boolean;
 }) {
   const toneCls =
     tone === 'ok'
@@ -67,9 +69,17 @@ function MetricCard({
         ? 'text-amber-600 dark:text-amber-400'
         : 'text-zinc-900 dark:text-zinc-100';
   return (
-    <div className="rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{label}</div>
-      <div className={`mt-0.5 truncate font-mono ${small ? 'text-[11px]' : 'text-lg font-semibold tabular-nums'} ${toneCls}`}>
+    <div
+      className={`rounded-lg border px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60 ${
+        emphasize
+          ? 'border-amber-500/70 bg-amber-50 ring-2 ring-amber-400/40 dark:bg-amber-950/35 dark:ring-amber-500/30'
+          : 'border-zinc-200 bg-zinc-50/80'
+      }`}
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-cns-card-label">{label}</div>
+      <div
+        className={`mt-0.5 truncate font-mono ${small ? 'text-[11px]' : emphasize ? 'text-2xl font-bold tabular-nums' : 'text-lg font-semibold tabular-nums'} ${toneCls}`}
+      >
         {value}
       </div>
     </div>

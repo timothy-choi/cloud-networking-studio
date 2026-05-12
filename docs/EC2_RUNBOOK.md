@@ -185,10 +185,11 @@ From your laptop against the public DNS:
 CNS_BASE_URL="http://ec2-…compute.amazonaws.com" ./scripts/prod_smoke_test.sh
 ```
 
-Optional API write check (creates a **draft** topology, does not deploy):
+The same script always **creates a draft topology** and checks **GET /api/topologies**. To also run a **deploy + destroy** cycle against Docker (needs the backend socket mount), use:
 
 ```bash
-CNS_BASE_URL="http://…" ./scripts/prod_smoke_test.sh --topology
+CNS_BASE_URL="http://…" CNS_HEAVY_SMOKE=1 ./scripts/prod_smoke_test.sh
+# or: ./scripts/prod_smoke_test.sh --heavy
 ```
 
 Open in a browser: `http://<EC2_PUBLIC_DNS_OR_IP>/` — API docs: `/api/docs`.
@@ -284,7 +285,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for security implications.
 
 | Script | Purpose |
 |--------|---------|
-| [scripts/prod_smoke_test.sh](../scripts/prod_smoke_test.sh) | HTTP checks + optional topology POST |
+| [scripts/prod_smoke_test.sh](../scripts/prod_smoke_test.sh) | HTTP checks, topology create/list, optional **heavy** deploy+destroy (`--heavy` / `CNS_HEAVY_SMOKE=1`) |
 | [scripts/prod_logs.sh](../scripts/prod_logs.sh) | `compose ps` + tail backend/frontend logs |
 | [scripts/prod_restart.sh](../scripts/prod_restart.sh) | Restart the prod compose services |
 

@@ -77,26 +77,39 @@ jobs:
       - name: Build
         run: npm run build
 
-  docker-backend:
-    name: Docker (backend image)
+  production-smoke:
+    name: Production stack (compose + smoke)
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build backend image
-        run: docker build -t cns-backend:ci -f backend/Dockerfile ./backend
+    needs: [backend-tests, frontend-build]
+    timeout-minutes: 25
+    env:
+      COMPOSE_PROJECT_NAME: cns-ci
 
-  docker-frontend:
-    name: Docker (frontend image)
-    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Build frontend image
-        run: docker build -t cns-frontend:ci -f frontend/Dockerfile ./frontend
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  compose-config:
-    name: Compose (prod config validation)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate docker-compose.prod.yml
+      - name: Validate compose file
         run: docker compose -f docker-compose.prod.yml config --quiet
+
+      - name: Start production stack
+        run: docker compose -f docker-compose.prod.yml up -d --build
+
+      - name: Wait for stack (HTTP, up to 90s)
+        run: bash scripts/ci_wait_for_stack.sh http://127.0.0.1 90
+
+      - name: Production smoke tests
+        env:
+          CNS_BASE_URL: http://127.0.0.1
+          CNS_HEAVY_SMOKE: "1"
+        run: bash scripts/prod_smoke_test.sh
+
+      - name: Print compose ps and service logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.prod.yml ps -a
+          docker compose -f docker-compose.prod.yml logs --no-color --tail=250 backend frontend caddy postgres
+
+      - name: Tear down production stack
+        if: always()
+        run: docker compose -f docker-compose.prod.yml down -v --remove-orphans || true

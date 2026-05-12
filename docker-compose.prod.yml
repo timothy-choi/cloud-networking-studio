@@ -3,9 +3,8 @@
 #
 # Default URL: http://localhost (port 80). API: http://localhost/api/docs
 #
-# Mount Docker socket on the backend if you need real `runtime_target: docker` deploys on the same host:
-#   volumes:
-#     - /var/run/docker.sock:/var/run/docker.sock
+# The backend mounts the host Docker socket below so `runtime_target: docker` can reach the real engine.
+# Remove that volume if you only need the API/UI without deploy/teardown (see docs/DEPLOYMENT.md).
 
 name: cns-prod
 
@@ -39,6 +38,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://cns_user:cns_password@postgres:5432/cloud_networking_studio}
       CNS_ENVIRONMENT: ${CNS_ENVIRONMENT:-production}
@@ -48,9 +49,6 @@ services:
       postgres:
         condition: service_healthy
     networks: [cns]
-    # Optional: map host Docker for real deployments (uncomment on Linux/EC2 with Docker installed).
-    # volumes:
-    #   - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test:
         [
@@ -93,3 +91,13 @@ services:
         condition: service_healthy
       frontend:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1/api/health | grep -q status && test -n \"$(wget -qO- http://127.0.0.1/ | head -c 1)\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+      start_period: 20s

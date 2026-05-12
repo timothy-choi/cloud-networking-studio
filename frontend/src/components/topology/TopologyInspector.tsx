@@ -10,6 +10,8 @@ import type {
 
 export interface TopologyInspectorProps {
   topology: TopologyResponse | null;
+  /** Used to label link endpoint fields with human-readable node names. */
+  nodes?: TopologyNodeResponse[];
   selectedNode: TopologyNodeResponse | null;
   selectedLink: TopologyLinkResponse | null;
   onPatchNode: (body: TopologyNodeUpdate) => Promise<void>;
@@ -175,9 +177,13 @@ function NodeEditForm({
 
 function LinkEditForm({
   link,
+  sourceNodeName,
+  targetNodeName,
   onPatchLink,
 }: {
   link: TopologyLinkResponse;
+  sourceNodeName?: string | null;
+  targetNodeName?: string | null;
   onPatchLink: TopologyInspectorProps['onPatchLink'];
 }) {
   const [linkName, setLinkName] = useState(link.network_name);
@@ -238,6 +244,14 @@ function LinkEditForm({
         });
       }}
     >
+      {sourceNodeName || targetNodeName ? (
+        <p className="rounded-md border border-zinc-700/80 bg-zinc-900/60 px-2 py-1.5 text-[10px] leading-snug text-zinc-300">
+          On this segment, <span className="font-semibold text-zinc-100">source endpoint IP</span> belongs to{' '}
+          <span className="font-mono text-sky-300/95">{sourceNodeName ?? 'source node'}</span> and{' '}
+          <span className="font-semibold text-zinc-100">target endpoint IP</span> belongs to{' '}
+          <span className="font-mono text-sky-300/95">{targetNodeName ?? 'target node'}</span>.
+        </p>
+      ) : null}
       <label className="block text-[11px] text-cns-field-label">
         Network name
         <input
@@ -274,7 +288,10 @@ function LinkEditForm({
         />
       </label>
       <label className="block text-[11px] text-cns-field-label">
-        Source endpoint IP (this link, source node)
+        Source endpoint IP
+        <span className="mt-0.5 block font-normal normal-case text-[10px] text-zinc-500">
+          Address of {sourceNodeName ?? 'the source node'} on this network
+        </span>
         <input
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
           value={srcEp}
@@ -282,7 +299,10 @@ function LinkEditForm({
         />
       </label>
       <label className="block text-[11px] text-cns-field-label">
-        Target endpoint IP (this link, target node)
+        Target endpoint IP
+        <span className="mt-0.5 block font-normal normal-case text-[10px] text-zinc-500">
+          Address of {targetNodeName ?? 'the target node'} on this network
+        </span>
         <input
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
           value={tgtEp}
@@ -310,12 +330,15 @@ function LinkEditForm({
 
 export function TopologyInspector({
   topology,
+  nodes = [],
   selectedNode,
   selectedLink,
   onPatchNode,
   onPatchLink,
   onRenameTopology,
 }: TopologyInspectorProps) {
+  const linkSrcName = selectedLink ? nodes.find((n) => n.id === selectedLink.source_node_id)?.name : null;
+  const linkTgtName = selectedLink ? nodes.find((n) => n.id === selectedLink.target_node_id)?.name : null;
   return (
     <div className="space-y-3 rounded-xl border border-zinc-700/80 bg-zinc-950/80 p-4 shadow-inner">
       <div>
@@ -341,7 +364,13 @@ export function TopologyInspector({
         {!selectedLink ? (
           <p className="mt-1 text-xs text-cns-inverse-label">Select a link on the canvas.</p>
         ) : (
-          <LinkEditForm key={selectedLink.id} link={selectedLink} onPatchLink={onPatchLink} />
+          <LinkEditForm
+            key={selectedLink.id}
+            link={selectedLink}
+            sourceNodeName={linkSrcName}
+            targetNodeName={linkTgtName}
+            onPatchLink={onPatchLink}
+          />
         )}
       </div>
     </div>

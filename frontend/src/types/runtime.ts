@@ -31,6 +31,10 @@ export interface RuntimeContainerResponse {
   node_id: string | null;
   ipv4_by_network: Record<string, string>;
   network_interfaces?: RuntimeNetworkInterfaceResponse[];
+  routes_lines?: string[];
+  interface_lines?: string[];
+  ip_forward_enabled?: boolean | null;
+  forwarding_role?: string | null;
 }
 
 export interface RuntimeTopologyResponse {

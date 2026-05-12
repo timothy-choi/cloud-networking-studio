@@ -51,6 +51,10 @@ const CnsEditorNode = memo(function CnsEditorNode({
   selected,
 }: NodeProps<Node<CnsFlowNodeData>>) {
   const v = data.visual;
+  const isRouter = data.nodeKind === 'router';
+  const shellBase = isRouter
+    ? 'border-violet-500/80 bg-gradient-to-br from-violet-950/55 via-zinc-950/90 to-zinc-950/95'
+    : 'border-zinc-700/90 bg-zinc-950/95';
   const accent =
     selected
       ? 'ring-2 ring-sky-400 shadow-[0_0_0_1px_rgba(56,189,248,0.35)]'
@@ -64,7 +68,7 @@ const CnsEditorNode = memo(function CnsEditorNode({
 
   return (
     <div
-      className={`relative min-w-[200px] max-w-[280px] overflow-visible rounded-xl border border-zinc-700/90 bg-zinc-950/95 px-4 py-3 shadow-xl backdrop-blur-sm ${accent}`}
+      className={`relative min-w-[200px] max-w-[280px] overflow-visible rounded-xl border px-4 py-3 shadow-xl backdrop-blur-sm ${shellBase} ${accent}`}
     >
       <Handle
         type="target"
@@ -76,7 +80,37 @@ const CnsEditorNode = memo(function CnsEditorNode({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="text-[15px] font-semibold leading-snug tracking-tight text-zinc-50">{data.title}</div>
-          <div className="mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-cns-graph-secondary">{data.subtitle}</div>
+          <div className="mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-cns-graph-secondary">
+            {isRouter ? 'router' : data.subtitle}
+          </div>
+          {isRouter ? (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              <span className="rounded border border-violet-600/60 bg-violet-950/80 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-100">
+                router
+              </span>
+              {data.routerIfaceCount != null ? (
+                <span
+                  className="rounded border border-zinc-600 bg-zinc-900/90 px-1.5 py-0.5 text-[9px] font-medium text-zinc-200"
+                  title="Interfaces observed in the container network namespace"
+                >
+                  ifaces {data.routerIfaceCount}
+                </span>
+              ) : null}
+              {v === 'running' && data.routerIpForward === true ? (
+                <span className="rounded border border-emerald-700/60 bg-emerald-950/70 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-200">
+                  forwarding on
+                </span>
+              ) : null}
+              {data.forwardingRole ? (
+                <span
+                  className="max-w-[9rem] truncate rounded border border-sky-800/50 bg-sky-950/60 px-1.5 py-0.5 text-[9px] font-medium text-sky-100"
+                  title="Provider forwarding role label"
+                >
+                  {data.forwardingRole}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <span
           className={`h-2.5 w-2.5 shrink-0 rounded-full ${
@@ -173,30 +207,42 @@ function TopologyWorkspaceInner({
   useEffect(() => {
     setRfNodes((nds) =>
       nds.map((n) => {
+        const node = nodes.find((x) => x.id === n.id);
         const pres = deriveNodeRuntimePresentation(n.id, runtime, controllerBusy);
+        const ctr = runtime?.containers?.find((c) => c.node_id === n.id);
+        const isRouter = node?.node_type === 'router';
+        const routerIfaceCount = isRouter ? (ctr?.network_interfaces?.length ?? null) : null;
+        const routerIpForward = isRouter ? (ctr?.ip_forward_enabled ?? null) : null;
+        const forwardingRole = isRouter ? (ctr?.forwarding_role ?? null) : null;
         const d = n.data as CnsFlowNodeData;
         return {
           ...n,
           data: {
             ...d,
             ...pres,
+            title: node?.name ?? d.title,
+            subtitle: node?.node_type ?? d.subtitle,
+            nodeKind: node?.node_type ?? d.nodeKind,
+            intentIp: node?.ip_address ?? d.intentIp,
+            routerIfaceCount,
+            routerIpForward,
+            forwardingRole,
           },
         };
       }),
     );
-  }, [runtime, controllerBusy, setRfNodes]);
+  }, [runtime, controllerBusy, nodes, setRfNodes]);
 
   useEffect(() => {
     setRfEdges((eds) =>
       eds.map((e) => {
-        const animate = topologyLinksToFlowEdges(
-          links.filter((l) => l.id === e.id),
-          runtime?.deployment_status ?? null,
-        );
-        const neo = animate[0];
+        const link = links.find((l) => l.id === e.id);
+        if (!link) return e;
+        const neo = topologyLinksToFlowEdges([link], runtime?.deployment_status ?? null)[0];
         return neo
           ? {
               ...e,
+              label: neo.label,
               animated: neo.animated,
               style: neo.style,
               markerEnd: neo.markerEnd,
@@ -563,6 +609,14 @@ function TopologyWorkspaceInner({
                 applyTopologyTemplate(topologyId, 'mesh'),
               ),
           },
+          {
+            id: 'routed',
+            label: 'Routed host → router → service',
+            run: () =>
+              run('tpl-routed', () =>
+                applyTopologyTemplate(topologyId, 'routed-host-router-service'),
+              ),
+          },
         ]}
       />
 
@@ -620,7 +674,9 @@ function TopologyWorkspaceInner({
                   pannable
                   nodeStrokeWidth={2}
                   nodeColor={(n) => {
-                    const v = (n.data as CnsFlowNodeData | undefined)?.visual;
+                    const d = n.data as CnsFlowNodeData | undefined;
+                    if (d?.nodeKind === 'router') return '#8b5cf6';
+                    const v = d?.visual;
                     if (v === 'running') return '#22c55e';
                     if (v === 'stopped') return '#ef4444';
                     if (v === 'transition') return '#f59e0b';
@@ -656,6 +712,7 @@ function TopologyWorkspaceInner({
           <>
             <TopologyInspector
               topology={topology}
+              nodes={nodes}
               selectedNode={selectedNode}
               selectedLink={selectedLink}
               onPatchNode={(body) =>

@@ -200,6 +200,51 @@ export async function applyTopologyTemplate(
       }
       return;
     }
+
+    case 'routed-host-router-service': {
+      const host = await topoApi.createNode(topologyId, {
+        name: 'host-a',
+        node_type: 'host',
+        image: 'alpine:latest',
+        ip_address: '10.72.0.10',
+        config: editorPos(100, 240),
+      });
+      const router = await topoApi.createNode(topologyId, {
+        name: 'router-1',
+        node_type: 'router',
+        image: 'alpine:latest',
+        ip_address: null,
+        config: editorPos(420, 240),
+      });
+      const service = await topoApi.createNode(topologyId, {
+        name: 'service-b',
+        node_type: 'generic',
+        image: 'busybox:1.36',
+        ip_address: '10.73.0.20',
+        config: editorPos(720, 240),
+      });
+      await topoApi.createLink(topologyId, {
+        source_node_id: host.id,
+        target_node_id: router.id,
+        network_name: 'net-a',
+        cidr: '10.72.0.0/24',
+        gateway: '10.72.0.1',
+        source_endpoint_ip: '10.72.0.10',
+        target_endpoint_ip: '10.72.0.1',
+        config: null,
+      });
+      await topoApi.createLink(topologyId, {
+        source_node_id: router.id,
+        target_node_id: service.id,
+        network_name: 'net-b',
+        cidr: '10.73.0.0/24',
+        gateway: '10.73.0.1',
+        source_endpoint_ip: '10.73.0.1',
+        target_endpoint_ip: '10.73.0.20',
+        config: null,
+      });
+      return;
+    }
   }
 }
 

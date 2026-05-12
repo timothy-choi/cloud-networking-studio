@@ -111,6 +111,19 @@ export async function injectStopNode(
   });
 }
 
+export async function injectRestartNode(
+  topologyId: string,
+  body: { target_node_id: string; description?: string | null },
+): Promise<unknown> {
+  return apiFetch(`/topologies/${topologyId}/failures/restart-node`, {
+    method: 'POST',
+    body: JSON.stringify({
+      target_node_id: body.target_node_id,
+      description: body.description ?? null,
+    }),
+  });
+}
+
 export async function patchTopology(topologyId: string, body: TopologyUpdate): Promise<TopologyResponse> {
   return apiFetch<TopologyResponse>(`/topologies/${topologyId}`, {
     method: 'PATCH',

@@ -15,6 +15,8 @@ export interface CnsFlowNodeData extends Record<string, unknown> {
   topologyNodeId: string;
   title: string;
   subtitle: string;
+  /** Persisted topology node_type — drives router styling and badges. */
+  nodeKind: TopologyNodeResponse['node_type'];
   intentIp: string | null;
   runtimeIp: string | null;
   /** Docker / provider status string */
@@ -22,6 +24,10 @@ export interface CnsFlowNodeData extends Record<string, unknown> {
   visual: NodeVisualState;
   workload: FlowWorkloadStatus;
   degraded: boolean;
+  /** Router: NIC count from runtime snapshot (when deployed). */
+  routerIfaceCount: number | null;
+  routerIpForward: boolean | null;
+  forwardingRole: string | null;
 }
 
 export function readEditorPosition(config: Record<string, unknown> | null): { x: number; y: number } | null {
@@ -143,6 +149,11 @@ export function topologyNodesToFlowNodes(
       y: 260 + radius * Math.sin(angle),
     };
     const pres = deriveNodeRuntimePresentation(node.id, runtime, controllerBusy);
+    const ctr = runtime?.containers?.find((x) => x.node_id === node.id);
+    const isRouter = node.node_type === 'router';
+    const routerIfaceCount = isRouter ? (ctr?.network_interfaces?.length ?? null) : null;
+    const routerIpForward = isRouter ? (ctr?.ip_forward_enabled ?? null) : null;
+    const forwardingRole = isRouter ? (ctr?.forwarding_role ?? null) : null;
     return {
       id: node.id,
       type: 'cnsEditor',
@@ -151,12 +162,16 @@ export function topologyNodesToFlowNodes(
         topologyNodeId: node.id,
         title: node.name,
         subtitle: node.node_type,
+        nodeKind: node.node_type,
         intentIp: node.ip_address,
         runtimeIp: pres.runtimeIp,
         statusLabel: pres.statusLabel,
         visual: pres.visual,
         workload: pres.workload,
         degraded: pres.degraded,
+        routerIfaceCount,
+        routerIpForward,
+        forwardingRole,
       },
     };
   });
@@ -213,27 +228,38 @@ export function pickNextLinkCidr(links: TopologyLinkResponse[]): string {
   return `10.${next}.0.0/24`;
 }
 
+/** Edge stroke: distinct colors for common routed lab segment names (net-a / net-b). */
+export function edgeStrokeForLink(link: TopologyLinkResponse): string {
+  const nn = link.network_name.toLowerCase();
+  if (nn.includes('net-a')) return '#06b6d4';
+  if (nn.includes('net-b')) return '#a78bfa';
+  return '#64748b';
+}
+
 export function topologyLinksToFlowEdges(
   links: TopologyLinkResponse[],
   deploymentStatus: RuntimeTopologyResponse['deployment_status'],
 ): Edge[] {
   const animate = deploymentWorkloadLive(deploymentStatus ?? null);
-  return links.map((link) => ({
-    id: link.id,
-    source: link.source_node_id,
-    target: link.target_node_id,
-    label: formatLinkEdgeLabel(link),
-    type: 'smoothstep',
-    animated: animate,
-    markerEnd: { type: MT.ArrowClosed, color: animate ? '#34d399' : '#94a3b8' },
-    style: {
-      stroke: animate ? '#34d399' : '#64748b',
-      strokeWidth: animate ? 2.25 : 2,
-    },
-    labelStyle: { fill: '#cbd5e1', fontSize: 12, fontWeight: 500 },
-    labelBgStyle: { fill: '#0f172a', fillOpacity: 0.92 },
-    labelBgPadding: [6, 4] as [number, number],
-  }));
+  return links.map((link) => {
+    const stroke = edgeStrokeForLink(link);
+    return {
+      id: link.id,
+      source: link.source_node_id,
+      target: link.target_node_id,
+      label: formatLinkEdgeLabel(link),
+      type: 'smoothstep',
+      animated: animate,
+      markerEnd: { type: MT.ArrowClosed, color: animate ? '#34d399' : stroke },
+      style: {
+        stroke: animate ? '#34d399' : stroke,
+        strokeWidth: animate ? 2.25 : 2,
+      },
+      labelStyle: { fill: '#cbd5e1', fontSize: 12, fontWeight: 500 },
+      labelBgStyle: { fill: '#0f172a', fillOpacity: 0.92 },
+      labelBgPadding: [6, 4] as [number, number],
+    };
+  });
 }
 
 /** Simple grid layout — deterministic positions for auto-layout. */

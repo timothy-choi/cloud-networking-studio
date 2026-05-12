@@ -77,8 +77,13 @@ class RuntimeProvider(ABC):
         """Run argv inside the node's container; None if container not found."""
 
     @abstractmethod
-    def resolve_node_ipv4(self, topology_id: UUID, node_id: UUID) -> str | None:
-        """IPv4 address for the node on the topology attachment (best effort)."""
+    def resolve_node_ipv4(
+        self,
+        topology_id: UUID,
+        node_id: UUID,
+        source_node_id: UUID | None = None,
+    ) -> str | None:
+        """IPv4 for traffic tests; ``source_node_id`` disambiguates multi-homed / routed targets."""
 
     @abstractmethod
     def stop_node_container(self, topology_id: UUID, node_id: UUID) -> None:

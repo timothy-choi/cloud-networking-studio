@@ -24,6 +24,7 @@ import { useTopologyRuntime } from '../hooks/useTopologyRuntime';
 import { useTrafficTests } from '../hooks/useTrafficTests';
 import { computeDeployReadiness } from '../lib/deployReadiness';
 import { deriveControlPlanePhase } from '../lib/deploymentUiPhase';
+import { formatLinkEdgeLabel } from '../lib/flowTopology';
 import { deriveRuntimeHealth, hasStoppedContainers } from '../lib/runtimeHealth';
 import type { DeploymentStatus } from '../types/deployment';
 
@@ -554,6 +555,85 @@ export function TopologyDetailPage() {
         </div>
       </div>
 
+      <CollapsibleSection title="Runtime networks & interfaces" defaultOpen>
+        {!runtime ? (
+          <p className="text-xs text-cns-muted">No runtime snapshot yet.</p>
+        ) : (
+          <div className="space-y-4 text-xs text-zinc-800 dark:text-zinc-200">
+            <div>
+              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-cns-label">Networks</h4>
+              <ul className="mt-2 space-y-2">
+                {runtime.networks.map((n) => (
+                  <li
+                    key={n.network_id}
+                    className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1.5 font-mono text-[11px] dark:border-zinc-700 dark:bg-zinc-950/60"
+                  >
+                    <div className="text-zinc-900 dark:text-zinc-100">{n.name}</div>
+                    <div className="text-cns-muted">
+                      {n.driver}
+                      {n.subnet_hints?.length ? ` · ${n.subnet_hints.join(', ')}` : ''}
+                    </div>
+                  </li>
+                ))}
+                {runtime.networks.length === 0 ? (
+                  <li className="text-cns-muted">No provider networks in this snapshot.</li>
+                ) : null}
+              </ul>
+            </div>
+            <div>
+              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-cns-label">Containers</h4>
+              <ul className="mt-2 space-y-3">
+                {runtime.containers.map((c) => (
+                  <li
+                    key={c.container_id}
+                    className="rounded-md border border-zinc-200 bg-white px-2 py-2 dark:border-zinc-700 dark:bg-zinc-900/80"
+                  >
+                    <div className="font-medium text-zinc-900 dark:text-zinc-100">{c.name}</div>
+                    <div className="mt-1 font-mono text-[10px] text-cns-muted">
+                      node {c.node_id ?? '—'} · {c.running ? 'running' : 'stopped'}
+                    </div>
+                    {c.network_interfaces && c.network_interfaces.length > 0 ? (
+                      <table className="mt-2 w-full border-collapse text-left text-[10px]">
+                        <thead>
+                          <tr className="text-cns-muted">
+                            <th className="py-0.5 pr-2 font-normal">IF</th>
+                            <th className="py-0.5 pr-2 font-normal">Docker net</th>
+                            <th className="py-0.5 pr-2 font-normal">IPv4</th>
+                            <th className="py-0.5 font-normal">GW</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {c.network_interfaces.map((i) => (
+                            <tr key={`${c.container_id}-${i.interface}-${i.docker_network}`}>
+                              <td className="py-0.5 pr-2 font-mono text-emerald-700 dark:text-emerald-400">
+                                {i.interface}
+                              </td>
+                              <td className="py-0.5 pr-2 font-mono text-zinc-700 dark:text-zinc-300">
+                                {i.logical_network ?? i.docker_network}
+                              </td>
+                              <td className="py-0.5 pr-2 font-mono">{i.ipv4}</td>
+                              <td className="py-0.5 font-mono text-cns-muted">{i.gateway ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="mt-1 font-mono text-[10px] text-cns-muted">
+                        {Object.keys(c.ipv4_by_network).length
+                          ? Object.entries(c.ipv4_by_network)
+                              .map(([k, v]) => `${k}: ${v}`)
+                              .join(' · ')
+                          : 'No IP bindings recorded.'}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+      </CollapsibleSection>
+
       <CollapsibleSection title="Raw runtime JSON" defaultOpen={false}>
         <div className="max-h-[min(520px,70vh)] overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 p-4 font-mono text-[11px] leading-relaxed text-emerald-100/95">
           {runtime ? (
@@ -582,8 +662,8 @@ export function TopologyDetailPage() {
           <ul className="mt-2 space-y-2 text-sm">
             {links.map((l) => (
               <li key={l.id} className="border-b border-zinc-100 pb-2 dark:border-zinc-800">
-                <div className="font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
-                  {l.network_name} {l.cidr ? `· ${l.cidr}` : ''}
+                <div className="whitespace-pre-line font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
+                  {formatLinkEdgeLabel(l)}
                 </div>
               </li>
             ))}

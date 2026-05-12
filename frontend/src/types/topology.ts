@@ -50,6 +50,10 @@ export interface TopologyLinkResponse {
   target_node_id: string;
   network_name: string;
   cidr: string | null;
+  gateway?: string | null;
+  vlan_tag?: number | null;
+  source_endpoint_ip?: string | null;
+  target_endpoint_ip?: string | null;
   config: Record<string, unknown> | null;
 }
 
@@ -58,6 +62,10 @@ export interface TopologyLinkCreate {
   target_node_id: string;
   network_name: string;
   cidr?: string | null;
+  gateway?: string | null;
+  vlan_tag?: number | null;
+  source_endpoint_ip?: string | null;
+  target_endpoint_ip?: string | null;
   config?: Record<string, unknown> | null;
 }
 
@@ -87,6 +95,10 @@ export interface TopologyNodeUpdate {
 export interface TopologyLinkUpdate {
   network_name?: string;
   cidr?: string | null;
+  gateway?: string | null;
+  vlan_tag?: number | null;
+  source_endpoint_ip?: string | null;
+  target_endpoint_ip?: string | null;
   config?: Record<string, unknown> | null;
 }
 

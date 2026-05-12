@@ -33,6 +33,12 @@ This document ties together persistence, APIs, services, and the Docker-backed r
 2. **Deployment** — `POST /topologies/{id}/deploy` creates a `Deployment`, builds a **deployment plan** from the loaded topology graph, and invokes the provider’s `deploy(plan)`.
 3. **Runtime view** — Services project Docker state (and DB linkage) into API responses for topology-level or deployment-level **runtime** snapshots, plus node logs/stats.
 
+### Multi-network (“segmented”) topologies
+
+When a topology has **more than one distinct link `network_name`**, the planner sets `segmented_networks=True` and the Docker provider provisions **one user-defined bridge per segment** (instead of a single legacy `cns-topology-*` network). **Router** nodes are attached to every adjacent segment, run with `CAP_NET_ADMIN` / `privileged` as required, and enable **`net.ipv4.ip_forward`**. **Leaf** workloads get a **default route toward the router’s NIC on that segment** (from link endpoint / `gateway` intent). Docker’s own **IPAM bridge gateway** is chosen on an address that does **not** collide with any container static IP on that bridge (the bridge binds that IP).
+
+Runtime snapshots expose **`network_interfaces`** per container (synthetic `eth0`, `eth1`, … sorted by Docker network name) so UIs and automation can see **which interface belongs to which segment** alongside `ipv4_by_network` for backward compatibility.
+
 ---
 
 ## Mermaid: topology → runtime mapping
@@ -45,11 +51,11 @@ flowchart TB
     T[Topology]
     N1[Node A]
     N2[Node B]
-    L[Link + CIDR]
+    L2[Link + CIDR + gateway]
     T --> N1
     T --> N2
-    N1 --> L
-    L --> N2
+    N1 --> L2
+    L2 --> N2
   end
   subgraph actual["Actual (Docker)"]
     NET["Bridge network cns-topology-*"]
@@ -61,7 +67,7 @@ flowchart TB
   T -.->|"labels"| NET
   N1 -.->|"1:1 workload"| C1
   N2 -.->|"1:1 workload"| C2
-  L -.->|"subnet / attach"| NET
+  L2 -.->|"subnet / attach"| NET
 ```
 
 ---

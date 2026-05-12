@@ -162,6 +162,17 @@ export function topologyNodesToFlowNodes(
   });
 }
 
+/** Edge / inspector label: logical net, subnet, optional gateway and VLAN. */
+export function formatLinkEdgeLabel(link: TopologyLinkResponse): string {
+  const lines: string[] = [link.network_name];
+  const c = (link.cidr ?? '').trim();
+  if (c) lines.push(c);
+  const gw = (link.gateway ?? '').trim();
+  if (gw) lines.push(`gw ${gw}`);
+  if (link.vlan_tag != null && link.vlan_tag !== undefined) lines.push(`vlan ${link.vlan_tag}`);
+  return lines.join('\n');
+}
+
 /** Stub link row for building a React Flow edge before the API returns a persisted id. */
 export function stubLinkForFlow(
   id: string,
@@ -177,6 +188,10 @@ export function stubLinkForFlow(
     target_node_id: targetId,
     network_name: networkName,
     cidr,
+    gateway: null,
+    vlan_tag: null,
+    source_endpoint_ip: null,
+    target_endpoint_ip: null,
     config: null,
   };
 }
@@ -207,7 +222,7 @@ export function topologyLinksToFlowEdges(
     id: link.id,
     source: link.source_node_id,
     target: link.target_node_id,
-    label: link.cidr ?? link.network_name,
+    label: formatLinkEdgeLabel(link),
     type: 'smoothstep',
     animated: animate,
     markerEnd: { type: MT.ArrowClosed, color: animate ? '#34d399' : '#94a3b8' },

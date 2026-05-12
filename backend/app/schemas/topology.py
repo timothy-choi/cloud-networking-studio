@@ -117,6 +117,10 @@ class TopologyLinkCreate(BaseModel):
     target_node_id: UUID
     network_name: str = Field(..., max_length=255)
     cidr: str | None = Field(default=None, max_length=64)
+    gateway: str | None = Field(default=None, max_length=64)
+    vlan_tag: int | None = Field(default=None, ge=0, le=4094)
+    source_endpoint_ip: str | None = Field(default=None, max_length=64)
+    target_endpoint_ip: str | None = Field(default=None, max_length=64)
     config: dict[str, Any] | None = None
 
 
@@ -131,7 +135,11 @@ class TopologyLinkResponse(BaseModel):
     target_node_id: UUID
     network_name: str
     cidr: str | None
-    config: dict[str, Any] | None
+    gateway: str | None = None
+    vlan_tag: int | None = None
+    source_endpoint_ip: str | None = None
+    target_endpoint_ip: str | None = None
+    config: dict[str, Any] | None = None
 
 
 class TopologyUpdate(BaseModel):
@@ -160,4 +168,8 @@ class TopologyLinkUpdate(BaseModel):
 
     network_name: str | None = Field(default=None, max_length=255)
     cidr: str | None = Field(default=None, max_length=64)
+    gateway: str | None = Field(default=None, max_length=64)
+    vlan_tag: int | None = Field(default=None, ge=0, le=4094)
+    source_endpoint_ip: str | None = Field(default=None, max_length=64)
+    target_endpoint_ip: str | None = Field(default=None, max_length=64)
     config: dict[str, Any] | None = None

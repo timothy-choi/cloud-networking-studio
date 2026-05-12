@@ -182,6 +182,12 @@ function LinkEditForm({
 }) {
   const [linkName, setLinkName] = useState(link.network_name);
   const [cidr, setCidr] = useState(link.cidr ?? '');
+  const [gateway, setGateway] = useState(link.gateway ?? '');
+  const [vlanTag, setVlanTag] = useState(
+    link.vlan_tag != null && link.vlan_tag !== undefined ? String(link.vlan_tag) : '',
+  );
+  const [srcEp, setSrcEp] = useState(link.source_endpoint_ip ?? '');
+  const [tgtEp, setTgtEp] = useState(link.target_endpoint_ip ?? '');
   const [linkMetaJson, setLinkMetaJson] = useState(
     link.config && Object.keys(link.config).length ? JSON.stringify(link.config, null, 2) : '{}',
   );
@@ -189,6 +195,10 @@ function LinkEditForm({
   useEffect(() => {
     setLinkName(link.network_name);
     setCidr(link.cidr ?? '');
+    setGateway(link.gateway ?? '');
+    setVlanTag(link.vlan_tag != null && link.vlan_tag !== undefined ? String(link.vlan_tag) : '');
+    setSrcEp(link.source_endpoint_ip ?? '');
+    setTgtEp(link.target_endpoint_ip ?? '');
     setLinkMetaJson(
       link.config && Object.keys(link.config).length ? JSON.stringify(link.config, null, 2) : '{}',
     );
@@ -207,9 +217,23 @@ function LinkEditForm({
           alert('Link metadata must be valid JSON.');
           return;
         }
+        const vlanTrim = vlanTag.trim();
+        let vlanNum: number | null = null;
+        if (vlanTrim !== '') {
+          const n = Number(vlanTrim);
+          if (!Number.isFinite(n) || n < 0 || n > 4094) {
+            alert('VLAN tag must be empty or an integer 0–4094.');
+            return;
+          }
+          vlanNum = n;
+        }
         void onPatchLink({
           network_name: linkName,
           cidr: cidr.trim() === '' ? null : cidr,
+          gateway: gateway.trim() === '' ? null : gateway.trim(),
+          vlan_tag: vlanNum,
+          source_endpoint_ip: srcEp.trim() === '' ? null : srcEp.trim(),
+          target_endpoint_ip: tgtEp.trim() === '' ? null : tgtEp.trim(),
           config: cfg,
         });
       }}
@@ -229,6 +253,40 @@ function LinkEditForm({
           value={cidr}
           onChange={(ev) => setCidr(ev.target.value)}
           placeholder="10.0.1.0/24"
+        />
+      </label>
+      <label className="block text-[11px] text-cns-field-label">
+        Gateway (segment default route for leaves)
+        <input
+          className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+          value={gateway}
+          onChange={(ev) => setGateway(ev.target.value)}
+          placeholder="10.1.0.1"
+        />
+      </label>
+      <label className="block text-[11px] text-cns-field-label">
+        VLAN tag (optional, documentation)
+        <input
+          className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+          value={vlanTag}
+          onChange={(ev) => setVlanTag(ev.target.value)}
+          placeholder="e.g. 100"
+        />
+      </label>
+      <label className="block text-[11px] text-cns-field-label">
+        Source endpoint IP (this link, source node)
+        <input
+          className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+          value={srcEp}
+          onChange={(ev) => setSrcEp(ev.target.value)}
+        />
+      </label>
+      <label className="block text-[11px] text-cns-field-label">
+        Target endpoint IP (this link, target node)
+        <input
+          className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+          value={tgtEp}
+          onChange={(ev) => setTgtEp(ev.target.value)}
         />
       </label>
       <label className="block text-[11px] text-cns-field-label">

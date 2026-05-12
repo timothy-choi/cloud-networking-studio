@@ -39,7 +39,8 @@ flowchart LR
 
 | Area | What you get |
 |------|----------------|
-| **Topology** | CRUD for topologies, nodes, and links; runtime target and networking mode on the topology |
+| **Topology** | CRUD for topologies, nodes, and links; per-link **CIDR**, **gateway**, **VLAN tag** (doc), and **per-link endpoint IPs** for multi-homed routers |
+| **Multi-network routing** | When links use **more than one** `network_name`, the Docker provider creates **multiple bridge networks**, attaches routers to several segments, enables **IPv4 forwarding**, and applies **static default routes** on leaves |
 | **Deployment** | Deploy topology → real Docker networks/containers; destroy/teardown; deployment status |
 | **Events** | Per-deployment event stream (provision steps, warnings, errors) |
 | **Runtime** | Topology/deployment runtime views, container logs/stats, reconciliation API |
@@ -56,7 +57,7 @@ flowchart LR
 - **Provider abstraction:** runtime behavior is behind a provider interface; today **Docker** is the primary implementation.
 - **Orchestration-shaped API:** deploy, destroy, inspect, heal — familiar to platform and SRE workflows.
 - **Observable runs:** structured deployment events for demos and future dashboards.
-- **Network modeling:** links and CIDR-style addressing inform how Docker networking is planned and tested.
+- **Network modeling:** links carry **network_name**, **CIDR**, optional **gateway**, and endpoint IPs; single-network labs still map to one `cns-topology-*` bridge; **segmented** labs map each segment to its own Docker network with deterministic `eth*` ordering in runtime inspection.
 
 ---
 
@@ -212,18 +213,22 @@ Full tag and naming conventions for Docker resources are described in [docs/runt
 
 ## Demo flow (`scripts/demo_full_flow.sh`)
 
-The script exercises a **happy path** comparable to a small cloud/network lab:
+The script runs **two labs** back-to-back:
+
+**A. Single-bridge lab (backward compatible)** — comparable to a flat L2 segment:
 
 1. Health check  
 2. Create topology (`runtime_target: docker`)  
-3. Add nodes (e.g. Alpine “host” + Nginx “service”)  
-4. Add a link (subnet/CIDR)  
-5. Deploy → Docker networks and containers  
+3. Add nodes (Alpine “host” + Nginx “service”)  
+4. Add one link (subnet/CIDR)  
+5. Deploy → Docker network and containers  
 6. Runtime inspection  
 7. Ping and HTTP traffic tests  
-8. Failure injection (stop / restart / kill)  
+8. Failure injection (stop service, restart host)  
 9. Reconciliation and healing  
-10. Destroy deployment and cleanup-related steps as implemented  
+10. Destroy deployment  
+
+**B. Routed multi-network lab** — `host-a → router-1 → service-b` across **two** bridge networks with per-link gateways and endpoint IPs; cross-subnet ping/HTTP; **router restart**; reconcile/heal; second destroy.
 
 It is the **authoritative smoke test** for “platform-like” behavior alongside unit/integration tests.
 
@@ -248,7 +253,7 @@ Details: [docs/failure-recovery.md](docs/failure-recovery.md)
 | **Near** | Web UI for topology editing, deployment timeline, runtime tables |
 | **Near** | Metrics export (Prometheus), structured logging, trace IDs |
 | **Mid** | Additional runtime targets (e.g. Kubernetes, compose stacks) |
-| **Mid** | Richer network policies, multi-subnet topologies, bandwidth/latency emulation |
+| **Mid** | Richer network policies, bandwidth/latency emulation |
 | **Long** | Plugin telemetry providers, chaos schedules, collaboration |
 
 Productized frontend and observability notes: [docs/frontend-mvp-and-observability.md](docs/frontend-mvp-and-observability.md)

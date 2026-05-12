@@ -20,6 +20,7 @@ from app.schemas.runtime import (
     RuntimeContainerResponse,
     RuntimeDeploymentResponse,
     RuntimeLogsResponse,
+    RuntimeNetworkInterfaceResponse,
     RuntimeNetworkResponse,
     RuntimeStatsResponse,
     RuntimeTopologyResponse,
@@ -58,6 +59,20 @@ def _snapshot_to_containers(snap: ProviderRuntimeSnapshot) -> list[RuntimeContai
                 labels=dict(c.labels),
                 node_id=c.node_id,
                 ipv4_by_network=dict(c.ipv4_by_network),
+                network_interfaces=[
+                    RuntimeNetworkInterfaceResponse(
+                        docker_network=i.docker_network,
+                        interface=i.interface,
+                        ipv4=i.ipv4,
+                        gateway=i.gateway,
+                        logical_network=i.logical_network,
+                    )
+                    for i in c.network_interfaces
+                ],
+                routes_lines=list(c.routes_lines),
+                interface_lines=list(c.interface_lines),
+                ip_forward_enabled=c.ip_forward_enabled,
+                forwarding_role=c.forwarding_role,
                 created=c.created,
                 started_at=c.started_at,
             )

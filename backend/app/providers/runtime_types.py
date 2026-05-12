@@ -20,6 +20,17 @@ class RuntimeNetworkRecord:
 
 
 @dataclass(frozen=True)
+class RuntimeNetworkInterfaceRecord:
+    """One container network attachment (logical interface)."""
+
+    docker_network: str
+    interface: str
+    ipv4: str
+    gateway: str | None = None
+    logical_network: str | None = None
+
+
+@dataclass(frozen=True)
 class RuntimeContainerRecord:
     """Materialized node container as observed at runtime."""
 
@@ -33,8 +44,14 @@ class RuntimeContainerRecord:
     labels: dict[str, str]
     node_id: UUID | None
     ipv4_by_network: dict[str, str]
+    """Legacy map docker network name -> IPv4 (first interface wins for single-net UX)."""
     created: str | None
     started_at: str | None
+    network_interfaces: tuple[RuntimeNetworkInterfaceRecord, ...] = ()
+    routes_lines: tuple[str, ...] = ()
+    interface_lines: tuple[str, ...] = ()
+    ip_forward_enabled: bool | None = None
+    forwarding_role: str | None = None
 
 
 @dataclass(frozen=True)

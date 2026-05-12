@@ -25,7 +25,7 @@ A **React dashboard** (`frontend/`) provides a topology list, a **React Flow** s
 | **Controller** | Manual **reconcile** pass and per-deployment **heal** |
 | **Traffic tests** | **ICMP** and **HTTP** checks executed from one container toward another node’s workload |
 | **Failure injection** | **Stop**, **restart**, or **kill** a node’s backing container |
-| **CI & quality** | **GitHub Actions** (pytest, frontend build, Docker images, compose config); **`scripts/demo_full_flow.sh`** for flat + routed smoke |
+| **CI & quality** | **GitHub Actions** — pytest, frontend build, **production Compose** + HTTP smoke ([docs/CI.md](docs/CI.md)); **`scripts/demo_full_flow.sh`** for flat + routed smoke |
 
 ---
 
@@ -68,6 +68,7 @@ flowchart LR
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — control plane, topology model, Docker provider, traffic, failures, reconcile/heal (interviewer-oriented)
 - [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) — exact **UI** and **CLI** demo steps and what each proves
 - [docs/RESUME_NOTES.md](docs/RESUME_NOTES.md) — **three resume bullets**, talking points, challenges solved
+- [docs/CI.md](docs/CI.md) — what GitHub Actions runs (including production Compose smoke)
 
 **Technical deep dives:**
 

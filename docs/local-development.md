@@ -84,6 +84,12 @@ API_BASE=http://127.0.0.1:8000 ./scripts/demo_full_flow.sh
 
 ---
 
+## CI vs this flow
+
+GitHub Actions still runs **`uvicorn` + Vite** only inside the pytest and npm jobs. A **separate** job builds and starts [`docker-compose.prod.yml`](../docker-compose.prod.yml) on the runner to prove the **containerized** stack starts; that does not change how you work locally. See [CI.md](CI.md).
+
+---
+
 ## Troubleshooting
 
 ### Cannot connect to Postgres

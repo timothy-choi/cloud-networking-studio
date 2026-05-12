@@ -13,7 +13,26 @@ This document covers **local production-style** deployment with Docker Compose a
 | [frontend/Dockerfile](../frontend/Dockerfile) | Vite production build + **nginx** |
 | [deploy/Caddyfile.prod](../deploy/Caddyfile.prod) | Routes `/api/*` → backend, everything else → frontend |
 
+**Backend ↔ host Docker:** `docker-compose.prod.yml` mounts **`/var/run/docker.sock`** into the `backend` service so `runtime_target: docker` can provision real networks and containers on the **host** engine. That is required for deploy/teardown in production-style runs and for CI’s optional heavy smoke. Removing the mount yields a tighter blast radius but **disables real Docker orchestration** from the API (see [Docker socket and security](#docker-socket-and-security) below).
+
 **Defaults:** UI and API are same-origin at `http://localhost` (port **80**). OpenAPI: `http://localhost/api/docs`.
+
+---
+
+## Docker socket and security
+
+Giving the backend container access to **`/var/run/docker.sock`** is the common pattern for “Docker-out-of-Docker”: the FastAPI process uses the Docker HTTP API over the Unix socket, which is equivalent to granting **root-level control of the host’s Docker engine** to whoever can execute inside that container (and to any code path that can drive the Docker SDK).
+
+**Tradeoffs:**
+
+| With socket mount | Without socket mount |
+|-------------------|----------------------|
+| Deploy, destroy, runtime inspection, traffic tests, and failure injection work against **real** containers on the host. | API and UI still run; topology CRUD works; **deploy** paths that need the engine will fail or must use a non-Docker runtime. |
+| A critical vulnerability in the API (or dependency) could, in the worst case, be leveraged toward **host container escape via Docker** (standard Docker threat model). | Smaller attack surface for the control plane container; align with “read-only API” demos. |
+
+Mitigations in real deployments: keep the API **private** (security groups, mTLS, VPN), run it on a **dedicated** host or VM, **patch** images regularly, restrict **who** can reach `/api`, and consider advanced setups (rootless Docker, remote engine with TLS) if you outgrow single-node Compose.
+
+**CI:** GitHub Actions uses the same compose file, so the optional **heavy** smoke test exercises deploy/destroy against the **runner’s** Docker. See [CI.md](CI.md).
 
 ---
 
@@ -54,7 +73,7 @@ Copy examples:
    docker compose -f docker-compose.prod.yml up --build -d
    ```
 
-3. Validate compose syntax (also run in CI):
+3. **Validate** compose syntax (also run in CI before `up`):
 
    ```bash
    docker compose -f docker-compose.prod.yml config --quiet
@@ -63,22 +82,15 @@ Copy examples:
 4. **Verification**
 
    ```bash
-   curl -sf http://localhost/health
+   curl -sfI http://localhost/ | head -n 3
    curl -sf http://localhost/api/health
    ```
 
+   (`GET /` is served by the static frontend; the API lives under **`/api/…`** behind Caddy.)
+
    Open `http://localhost` in a browser for the dashboard. API docs: `http://localhost/api/docs`.
 
-5. **Real Docker workloads** (deploy, traffic tests, failure injection against the **host** Docker engine):
-
-   Uncomment the `volumes` block under `backend` in `docker-compose.prod.yml`:
-
-   ```yaml
-   volumes:
-     - /var/run/docker.sock:/var/run/docker.sock
-   ```
-
-   Then recreate the backend container. Without the socket, the API runs but **cannot** reach a real Docker engine from inside the container.
+5. **Real Docker workloads** (deploy, traffic tests, failure injection) require the backend to reach the **host** Docker engine. The default `docker-compose.prod.yml` already mounts **`/var/run/docker.sock`** into `backend`. To **disable** real engine access (tighter security, API-only), remove the `volumes` entry under `backend` and recreate the container.
 
 6. **Logs**
 
@@ -94,6 +106,14 @@ Copy examples:
    # Remove DB volume as well (destructive):
    docker compose -f docker-compose.prod.yml down -v
    ```
+
+---
+
+## Continuous integration (GitHub Actions)
+
+On every push to `main` and on pull requests, CI runs **pytest**, a **production `npm run build`**, then **`docker compose -f docker-compose.prod.yml up -d --build`** on an `ubuntu-latest` runner, waits for HTTP readiness (up to 90 seconds), and runs **`scripts/prod_smoke_test.sh`** with **`CNS_HEAVY_SMOKE=1`** so **deploy + destroy** is exercised against the runner’s Docker engine (same socket mount as production compose).
+
+Details, log capture on failure, and what is **not** covered: [CI.md](CI.md).
 
 ---
 

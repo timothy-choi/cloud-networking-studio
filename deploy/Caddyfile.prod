@@ -1,13 +1,23 @@
 # Reverse proxy for docker-compose.prod.yml — :80 only (TLS left to ALB, Caddy elsewhere, or extend this file).
+#
+# Routing:
+#   - /api/* → backend:8000 with /api prefix stripped so FastAPI sees /health, /topologies, … (same as direct uvicorn paths).
+#   - /     → frontend:80 (static SPA + nginx).
+#
+# Browsers and VITE_API_BASE_URL=/api call /api/… on this host; direct backend access (e.g. :8000) is unchanged.
+
 {
 	admin off
 }
 
 :80 {
-	# Strip /api prefix before forwarding to FastAPI (routes are /health, /topologies, …).
-	handle_path /api/* {
-		reverse_proxy backend:8000
+	route {
+		# Strip /api prefix before reverse_proxy (upstream URI is /health, /topologies, …).
+		handle_path /api/* {
+			reverse_proxy backend:8000
+		}
+		handle {
+			reverse_proxy frontend:80
+		}
 	}
-
-	reverse_proxy frontend:80
 }

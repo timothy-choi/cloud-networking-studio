@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -119,7 +119,7 @@ def run_ping_test(
     )
 
     tt.status = TrafficTestStatus.RUNNING
-    tt.started_at = datetime.utcnow()
+    tt.started_at = datetime.now(UTC)
 
     target_ip = provider.resolve_node_ipv4(topology_id, target_node_id, source_node_id)
     argv = _build_ping_argv(target_ip or "0.0.0.0", count_clamped)
@@ -127,7 +127,7 @@ def run_ping_test(
 
     if target_ip is None:
         tt.status = TrafficTestStatus.FAILED
-        tt.finished_at = datetime.utcnow()
+        tt.finished_at = datetime.now(UTC)
         tr = TrafficTestResult(
             traffic_test_id=tt.id,
             exit_code=1,
@@ -150,7 +150,7 @@ def run_ping_test(
         return tt
 
     ex = provider.exec_in_node_container(topology_id, source_node_id, argv)
-    tt.finished_at = datetime.utcnow()
+    tt.finished_at = datetime.now(UTC)
 
     if ex is None:
         tt.status = TrafficTestStatus.FAILED
@@ -245,12 +245,12 @@ def run_http_test(
     )
 
     tt.status = TrafficTestStatus.RUNNING
-    tt.started_at = datetime.utcnow()
+    tt.started_at = datetime.now(UTC)
 
     target_ip = provider.resolve_node_ipv4(topology_id, target_node_id, source_node_id)
     if target_ip is None:
         tt.status = TrafficTestStatus.FAILED
-        tt.finished_at = datetime.utcnow()
+        tt.finished_at = datetime.now(UTC)
         tt.command = f"(missing target IPv4) wget http://<target>:{port}{path}"
         session.add(
             TrafficTestResult(
@@ -258,9 +258,9 @@ def run_http_test(
                 exit_code=1,
                 stdout="",
                 stderr=(
-                "could not resolve IPv4 on the CNS topology network "
-                "(default bridge addresses are not used for traffic tests)"
-            ),
+                    "could not resolve IPv4 on the CNS topology network "
+                    "(default bridge addresses are not used for traffic tests)"
+                ),
                 latency_ms=None,
                 success=False,
             )
@@ -278,7 +278,7 @@ def run_http_test(
     tt.command = " ".join(argv)
 
     ex = provider.exec_in_node_container(topology_id, source_node_id, argv)
-    tt.finished_at = datetime.utcnow()
+    tt.finished_at = datetime.now(UTC)
 
     if ex is None:
         tt.status = TrafficTestStatus.FAILED

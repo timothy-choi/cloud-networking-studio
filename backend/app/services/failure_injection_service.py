@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -105,7 +105,7 @@ def run_failure_injection(
     container_id = provider.find_container_id_for_node(topology_id, target_node_id)
     if container_id is None:
         fi.status = FailureInjectionStatus.FAILED
-        fi.finished_at = datetime.utcnow()
+        fi.finished_at = datetime.now(UTC)
         fi.result_message = (
             "runtime container not found for node (no matching engine workload)"
         )
@@ -119,7 +119,7 @@ def run_failure_injection(
         return fi
 
     fi.status = FailureInjectionStatus.RUNNING
-    fi.started_at = datetime.utcnow()
+    fi.started_at = datetime.now(UTC)
     session.flush()
 
     try:
@@ -133,7 +133,7 @@ def run_failure_injection(
             raise ValueError(f"unsupported failure type: {failure_type!r}")
 
         fi.status = FailureInjectionStatus.SUCCEEDED
-        fi.finished_at = datetime.utcnow()
+        fi.finished_at = datetime.now(UTC)
         fi.result_message = None
         _emit_deployment_event(
             session,
@@ -149,7 +149,7 @@ def run_failure_injection(
         )
     except LookupError as exc:
         fi.status = FailureInjectionStatus.FAILED
-        fi.finished_at = datetime.utcnow()
+        fi.finished_at = datetime.now(UTC)
         fi.result_message = str(exc)
         _emit_deployment_event(
             session,
@@ -159,7 +159,7 @@ def run_failure_injection(
         )
     except Exception as exc:
         fi.status = FailureInjectionStatus.FAILED
-        fi.finished_at = datetime.utcnow()
+        fi.finished_at = datetime.now(UTC)
         fi.result_message = str(exc)
         _emit_deployment_event(
             session,

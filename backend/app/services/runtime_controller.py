@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -151,7 +151,7 @@ def run_controller_once(session: Session) -> ControllerRunSummary:
             )
         )
 
-    _last_controller_run_at = datetime.utcnow()
+    _last_controller_run_at = datetime.now(UTC)
 
     return ControllerRunSummary(
         deployments_checked=len(deps),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, JSON, String, Text, Uuid
@@ -39,6 +39,10 @@ def _enum_column(enum_cls: type[enum.Enum]) -> Enum:
     return Enum(enum_cls, native_enum=False, length=32)
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 class Topology(Base):
     """User-defined topology (nodes/links) and deployment intent."""
 
@@ -59,12 +63,12 @@ class Topology(Base):
     config: Mapped[dict | None] = mapped_column(JSON)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False), default=datetime.utcnow
+        DateTime(timezone=True), default=_utc_now
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        DateTime(timezone=True),
+        default=_utc_now,
+        onupdate=_utc_now,
     )
 
     nodes: Mapped[list[TopologyNode]] = relationship(

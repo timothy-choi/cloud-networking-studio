@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
@@ -27,6 +27,10 @@ class FailureInjectionStatus(str, enum.Enum):
 
 def _enum_column(enum_cls: type[enum.Enum]) -> Enum:
     return Enum(enum_cls, native_enum=False, length=32)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class FailureInjection(Base):
@@ -63,8 +67,8 @@ class FailureInjection(Base):
     description: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False), default=datetime.utcnow
+        DateTime(timezone=True), default=_utc_now
     )
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result_message: Mapped[str | None] = mapped_column(Text)

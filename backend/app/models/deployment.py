@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, Uuid
@@ -40,6 +40,10 @@ def _enum_column(enum_cls: type[enum.Enum]) -> Enum:
     return Enum(enum_cls, native_enum=False, length=32)
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 class Deployment(Base):
     """A concrete orchestration run against a topology."""
 
@@ -58,16 +62,16 @@ class Deployment(Base):
         default=DeploymentStatus.PENDING,
     )
     runtime_target: Mapped[str] = mapped_column(String(64))
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False), default=datetime.utcnow
+        DateTime(timezone=True), default=_utc_now
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        DateTime(timezone=True),
+        default=_utc_now,
+        onupdate=_utc_now,
     )
 
     topology: Mapped[Topology] = relationship(back_populates="deployments")
@@ -99,7 +103,7 @@ class DeploymentEvent(Base):
     message: Mapped[str] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False), default=datetime.utcnow
+        DateTime(timezone=True), default=_utc_now
     )
 
     deployment: Mapped[Deployment] = relationship(back_populates="events")

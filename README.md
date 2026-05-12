@@ -25,7 +25,7 @@ A **React dashboard** (`frontend/`) provides a topology list, a **React Flow** s
 | **Controller** | Manual **reconcile** pass and per-deployment **heal** |
 | **Traffic tests** | **ICMP** and **HTTP** checks executed from one container toward another node’s workload |
 | **Failure injection** | **Stop**, **restart**, or **kill** a node’s backing container |
-| **CI & quality** | Pytest suite; **`scripts/demo_full_flow.sh`** for flat + routed end-to-end smoke |
+| **CI & quality** | **GitHub Actions** (pytest, frontend build, Docker images, compose config); **`scripts/demo_full_flow.sh`** for flat + routed smoke |
 
 ---
 
@@ -82,6 +82,30 @@ flowchart LR
 - **Orchestration-shaped API:** deploy, destroy, inspect, reconcile, heal — familiar to platform and SRE workflows.
 - **Observable runs:** structured deployment events for demos and future dashboards.
 - **Network modeling:** links carry **network_name**, **CIDR**, optional **gateway**, and endpoint IPs; **segmented** labs map each segment to its own Docker network with deterministic **`eth*`** ordering in runtime inspection.
+
+---
+
+## Continuous integration
+
+Workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
+
+**Triggers:** push to **`main`**, and **all pull requests**.
+
+**Jobs (any failure fails the run):**
+
+| Job | What it validates |
+|-----|-------------------|
+| **Backend (pytest)** | Python 3.12, Postgres 16 service, `pytest tests/ -q` with `CNS_USE_FAKE_DOCKER=1` |
+| **Frontend (production build)** | Node 22, `npm ci`, `npm run build` |
+| **Docker (backend image)** | `docker build -f backend/Dockerfile ./backend` |
+| **Docker (frontend image)** | `docker build -f frontend/Dockerfile ./frontend` |
+| **Compose (prod config)** | `docker compose -f docker-compose.prod.yml config --quiet` |
+
+**Badge placeholders** (replace `OWNER` and `REPO` with your GitHub path):
+
+```markdown
+[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+```
 
 ---
 
@@ -180,6 +204,8 @@ API_BASE=http://127.0.0.1:8000 ./scripts/demo_full_flow.sh
 ```
 
 Step-by-step narration for **UI** and **CLI**: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
+
+**Production-style stack** (Postgres + API + static UI + Caddy on port **80**): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · `docker-compose.prod.yml` · copy [.env.example](.env.example) to `.env`.
 
 ---
 
@@ -282,6 +308,7 @@ UI notes: [docs/frontend-mvp-and-observability.md](docs/frontend-mvp-and-observa
 | Doc | Purpose |
 |-----|---------|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Portfolio architecture overview (control plane, topology, Docker, reconcile/heal) |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production Compose, EC2, troubleshooting, next infra steps |
 | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | Exact UI + CLI demo flows |
 | [docs/RESUME_NOTES.md](docs/RESUME_NOTES.md) | Three resume bullets, talking points, challenges |
 | [docs/system-architecture.md](docs/system-architecture.md) | Detailed design, diagrams, API flow |

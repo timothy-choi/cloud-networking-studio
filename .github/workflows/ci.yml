@@ -2,15 +2,16 @@ name: CI
 
 on:
   push:
-    branches:
-      - "**"
+    branches: [main]
   pull_request:
-    branches:
-      - "**"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend-tests:
-    name: Backend Tests
+    name: Backend (pytest)
     runs-on: ubuntu-latest
 
     services:
@@ -49,5 +50,53 @@ jobs:
       - name: Run backend tests
         env:
           DATABASE_URL: postgresql://cns_user:cns_password@localhost:5432/cloud_networking_studio_test
-        run: |
-          pytest tests/ -v
+          CNS_USE_FAKE_DOCKER: "1"
+        run: pytest tests/ -q --tb=short
+
+  frontend-build:
+    name: Frontend (production build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+  docker-backend:
+    name: Docker (backend image)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t cns-backend:ci -f backend/Dockerfile ./backend
+
+  docker-frontend:
+    name: Docker (frontend image)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build frontend image
+        run: docker build -t cns-frontend:ci -f frontend/Dockerfile ./frontend
+
+  compose-config:
+    name: Compose (prod config validation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose.prod.yml
+        run: docker compose -f docker-compose.prod.yml config --quiet

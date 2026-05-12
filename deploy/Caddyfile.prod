@@ -1,0 +1,13 @@
+# Reverse proxy for docker-compose.prod.yml — :80 only (TLS left to ALB, Caddy elsewhere, or extend this file).
+{
+	admin off
+}
+
+:80 {
+	# Strip /api prefix before forwarding to FastAPI (routes are /health, /topologies, …).
+	handle_path /api/* {
+		reverse_proxy backend:8000
+	}
+
+	reverse_proxy frontend:80
+}

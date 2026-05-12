@@ -15,10 +15,18 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Cloud Networking Studio"
-    environment: str = "development"
+    environment: str = Field(
+        default="development",
+        validation_alias="CNS_ENVIRONMENT",
+    )
     controller_mode: str = Field(
         default="manual",
         validation_alias="CNS_CONTROLLER_MODE",
+    )
+    # Comma-separated browser origins for CORS (include your public UI URL in production).
+    cors_origins: str = Field(
+        default="http://localhost:5174,http://127.0.0.1:5174",
+        validation_alias="CNS_CORS_ORIGINS",
     )
     # Default matches docker-compose (Postgres published on host port 5433). Override via .env.
     database_url: str = (

@@ -29,6 +29,10 @@ export function getApiBase(): string {
   if (typeof window !== 'undefined' && window.location.port === '4173') {
     return '/api';
   }
+  // Production static build behind Caddy/nginx: same-origin `/api` unless VITE_API_BASE_URL is set.
+  if (import.meta.env.PROD) {
+    return '/api';
+  }
   return 'http://localhost:8000';
 }
 

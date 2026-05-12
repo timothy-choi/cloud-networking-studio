@@ -22,6 +22,7 @@ import { useDeploymentEvents } from '../hooks/useDeploymentEvents';
 import { useFailures } from '../hooks/useFailures';
 import { useTopologyRuntime } from '../hooks/useTopologyRuntime';
 import { useTrafficTests } from '../hooks/useTrafficTests';
+import { computeDeployReadiness } from '../lib/deployReadiness';
 import { deriveControlPlanePhase } from '../lib/deploymentUiPhase';
 import { deriveRuntimeHealth, hasStoppedContainers } from '../lib/runtimeHealth';
 import type { DeploymentStatus } from '../types/deployment';
@@ -105,21 +106,22 @@ export function TopologyDetailPage() {
   const degraded = hasStoppedContainers(runtime);
   const healthTier = deriveRuntimeHealth(runtime, topology?.status ?? 'draft');
 
+  const deployReadiness = useMemo(() => computeDeployReadiness(nodes, links), [nodes, links]);
+
   const hostTarget = useMemo(() => {
-    const host = nodes.find((n) => n.name === 'host-a');
-    const svc = nodes.find((n) => n.name === 'service-b');
-    if (host && svc) return { source: host, target: svc };
-    if (nodes.length >= 2) return { source: nodes[0], target: nodes[1] };
-    return null;
+    if (nodes.length < 2) return null;
+    const host = nodes.find((n) => n.node_type === 'host');
+    const svc = nodes.find((n) => n.node_type === 'generic');
+    if (host && svc && host.id !== svc.id) return { source: host, target: svc };
+    return { source: nodes[0], target: nodes[1] };
   }, [nodes]);
 
-  const serviceNode = useMemo(
-    () =>
-      nodes.find((n) => n.name === 'service-b') ??
-      nodes.find((n) => n.node_type === 'generic') ??
-      nodes[1],
-    [nodes],
-  );
+  const serviceNode = useMemo(() => {
+    const byGeneric = nodes.find((n) => n.node_type === 'generic');
+    if (byGeneric) return byGeneric;
+    const byHost = nodes.find((n) => n.node_type === 'host');
+    return nodes.find((n) => n.id !== byHost?.id) ?? nodes[0] ?? null;
+  }, [nodes]);
 
   const nodeNameById = useMemo(() => new Map(nodes.map((n) => [n.id, n.name])), [nodes]);
 
@@ -273,13 +275,31 @@ export function TopologyDetailPage() {
       <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/80">
         <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Runtime actions</h2>
         <p className="mt-0.5 text-xs text-cns-muted">
-          Deploy, validate traffic, inject failures, and reconcile or heal the active deployment. Live polling keeps data fresh.
+          Runtime deployment, traffic checks, failure injection, and reconcile/heal for this lab. Live polling keeps data
+          fresh.
         </p>
+        {!deployReadiness.deployable ? (
+          <p className="mt-2 rounded-md border border-amber-800/50 bg-amber-950/25 px-2 py-1.5 text-xs text-amber-100">
+            <span className="font-semibold">Deploy unavailable:</span> {deployReadiness.blockingReasons.join(' ')}
+          </p>
+        ) : deployReadiness.warnings.length > 0 ? (
+          <p className="mt-2 rounded-md border border-sky-900/40 bg-sky-950/20 px-2 py-1.5 text-xs text-sky-100">
+            <span className="font-semibold">Before deploy:</span> {deployReadiness.warnings.join(' ')}
+          </p>
+        ) : null}
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={busy !== null}
-            title={busy !== null ? 'Wait for the current action to finish.' : undefined}
+            disabled={busy !== null || !deployReadiness.deployable}
+            title={
+              busy !== null
+                ? 'Wait for the current action to finish.'
+                : !deployReadiness.deployable
+                  ? deployReadiness.blockingReasons.join(' ')
+                  : deployReadiness.warnings.length > 0
+                    ? 'Deploy allowed — review warnings above.'
+                    : undefined
+            }
             onClick={() =>
               wrap('deploy', async () => {
                 await deployTopology(id);
@@ -287,7 +307,7 @@ export function TopologyDetailPage() {
             }
             className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 cns-disabled-control dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
           >
-            Deploy topology
+            Deploy to runtime
           </button>
           <button
             type="button"
@@ -305,7 +325,7 @@ export function TopologyDetailPage() {
               busy !== null
                 ? 'Wait for the current action to finish.'
                 : !hostTarget
-                  ? 'Need at least two nodes (default pair host-a -> service-b when present).'
+                  ? 'Need at least two nodes with a link for traffic tests.'
                   : undefined
             }
             onClick={() =>
@@ -352,7 +372,7 @@ export function TopologyDetailPage() {
               busy !== null
                 ? 'Wait for the current action to finish.'
                 : !serviceNode
-                  ? 'Need a service/workload node to stop.'
+                  ? 'Need a workload node to stop.'
                   : undefined
             }
             onClick={() =>

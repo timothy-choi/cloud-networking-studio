@@ -153,8 +153,8 @@ export async function deleteLink(topologyId: string, linkId: string): Promise<vo
 }
 
 /**
- * Creates a lab topology matching `scripts/demo_full_flow.sh` naming (host-a, service-b + random /24).
- * Returns the new topology id for navigation.
+ * Creates a starter lab (host + service + link) for quick UI testing — similar shape to `scripts/demo_full_flow.sh`.
+ * Prefer “Create blank topology” for user-authored designs.
  */
 export async function createDemoTopology(): Promise<{ topologyId: string }> {
   const tag = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
@@ -164,8 +164,8 @@ export async function createDemoTopology(): Promise<{ topologyId: string }> {
   const svcIp = `10.${thirdOctet}.0.20`;
 
   const topo = await createTopology({
-    name: `CNS UI Demo ${tag}`,
-    description: `frontend demo ${tag}`,
+    name: `Sample lab ${tag}`,
+    description: `Created from template in UI · ${tag}`,
     runtime_target: 'docker',
     networking_mode: 'docker_bridge',
     status: 'draft',

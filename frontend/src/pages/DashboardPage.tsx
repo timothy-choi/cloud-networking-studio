@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { formatApiError, getControllerStatus, getHealth } from '../api/client';
 import { createDemoTopology, listTopologies } from '../api/topologies';
+import { CreateBlankTopologyModal } from '../components/CreateBlankTopologyModal';
 import { Spinner } from '../components/Spinner';
 import { usePolling } from '../hooks/usePolling';
 import type { ControllerStatusResponse, HealthResponse, TopologyResponse } from '../types';
@@ -27,8 +28,9 @@ export function DashboardPage() {
   const [controller, setController] = useState<ControllerStatusResponse | null>(null);
   const [topologies, setTopologies] = useState<TopologyResponse[]>([]);
   const [listErr, setListErr] = useState<string | null>(null);
-  const [demoLoading, setDemoLoading] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [blankOpen, setBlankOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setHealthErr(null);
@@ -58,8 +60,8 @@ export function DashboardPage() {
 
   usePolling(refresh, 10_000, true);
 
-  async function onCreateDemo() {
-    setDemoLoading(true);
+  async function onCreateFromTemplate() {
+    setTemplateLoading(true);
     try {
       const { topologyId } = await createDemoTopology();
       await refresh();
@@ -67,7 +69,7 @@ export function DashboardPage() {
     } catch (e) {
       alert(formatApiError(e));
     } finally {
-      setDemoLoading(false);
+      setTemplateLoading(false);
     }
   }
 
@@ -75,15 +77,24 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-8">
+      <CreateBlankTopologyModal
+        open={blankOpen}
+        onClose={() => setBlankOpen(false)}
+        onCreated={(topologyId) => {
+          void refresh();
+          navigate(`/topologies/${topologyId}`);
+        }}
+      />
+
       <div>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-            Platform overview
+            Topology studio
           </h1>
           {refreshing && <Spinner className="h-5 w-5" />}
         </div>
         <p className="mt-1 max-w-2xl text-sm text-cns-muted">
-          Live control plane — topologies auto-refresh every 10s. Open a topology for full runtime observability.
+          Design environments, attach a runtime, and operate workloads. Topologies refresh every 10s.
         </p>
       </div>
 
@@ -112,7 +123,7 @@ export function DashboardPage() {
           <div className="mt-2 text-3xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
             {topologies.length}
           </div>
-          <p className="mt-1 text-xs text-cns-muted">Persisted graph definitions</p>
+          <p className="mt-1 text-xs text-cns-muted">Saved lab graphs</p>
         </div>
 
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80">
@@ -126,35 +137,56 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={() => void onCreateDemo()}
-          disabled={demoLoading}
-          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow hover:bg-zinc-800 cns-disabled-control dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
-        >
-          {demoLoading ? 'Creating…' : 'Create demo topology'}
-        </button>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          disabled={refreshing}
-          className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 cns-disabled-control dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-        >
-          {refreshing ? <Spinner className="h-4 w-4" /> : null}
-          Refresh now
-        </button>
+      <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80">
+        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">New topology</h2>
+        <p className="mt-1 text-xs text-cns-muted">
+          Start from scratch or load a starter graph. Templates only append nodes and links — they never replace your
+          work unless you use “Replace with sample lab” inside the editor.
+        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setBlankOpen(true)}
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+          >
+            Create blank topology
+          </button>
+          <button
+            type="button"
+            onClick={() => void onCreateFromTemplate()}
+            disabled={templateLoading}
+            className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 cns-disabled-control dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            {templateLoading ? 'Creating…' : 'Create from template'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            disabled={refreshing}
+            className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 cns-disabled-control dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            {refreshing ? <Spinner className="h-4 w-4" /> : null}
+            Refresh now
+          </button>
+        </div>
+        <p className="mt-4 border-t border-zinc-100 pt-3 text-[11px] leading-relaxed text-cns-muted dark:border-zinc-800">
+          For scripted environments, see{' '}
+          <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[10px] dark:bg-zinc-800">scripts/demo_full_flow.sh</code>{' '}
+          in the repo (optional; lower priority than the UI flows above).
+        </p>
       </div>
 
       <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80">
         <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Topologies</h2>
-          <p className="text-xs text-cns-muted">Newest first · click to open detail</p>
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Your topologies</h2>
+          <p className="text-xs text-cns-muted">Newest first · open to edit and deploy</p>
         </div>
         {listErr ? (
           <p className="p-4 text-sm text-red-600 dark:text-red-400">{listErr}</p>
         ) : topologies.length === 0 ? (
-          <p className="p-6 text-sm text-cns-muted">No topologies yet — create a demo or use the API.</p>
+          <p className="p-6 text-sm text-cns-muted">
+            No topologies yet — create a blank lab or use a template, or use the REST API.
+          </p>
         ) : (
           <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
             {topologies.map((t) => (

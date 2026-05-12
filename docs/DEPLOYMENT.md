@@ -99,6 +99,8 @@ Copy examples:
 
 ## EC2 deployment (Docker + Compose)
 
+**Step-by-step commands** (launch instance, install Docker, clone, `.env`, compose, logs, health, cleanup): [EC2_RUNBOOK.md](EC2_RUNBOOK.md).
+
 ### 1. Instance sizing (starting point)
 
 - **t3.small** or larger for API + Postgres + UI on one instance.  

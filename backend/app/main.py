@@ -78,12 +78,15 @@ app.include_router(controller_router)
 app.include_router(traffic_tests_router)
 app.include_router(failure_injections_router)
 
+
+def _cors_origins() -> list[str]:
+    parts = [p.strip() for p in settings.cors_origins.split(",") if p.strip()]
+    return parts or ["http://localhost:5174", "http://127.0.0.1:5174"]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-    ],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

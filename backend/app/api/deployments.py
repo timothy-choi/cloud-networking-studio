@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -118,7 +118,7 @@ def deploy_topology(
     db.add(deployment)
     db.flush()
 
-    deployment.started_at = datetime.utcnow()
+    deployment.started_at = datetime.now(UTC)
     _append_event(db, deployment.id, "Deployment pending — record created.")
 
     val_errors = validate_topology_for_deploy(topo)
@@ -131,7 +131,7 @@ def deploy_topology(
             DeploymentEventLevel.ERROR,
         )
         deployment.status = DeploymentStatus.FAILED
-        deployment.finished_at = datetime.utcnow()
+        deployment.finished_at = datetime.now(UTC)
         db.commit()
         loaded = _load_deployment_full(db, deployment.id)
         return JSONResponse(
@@ -155,7 +155,7 @@ def deploy_topology(
         rows = provider.deploy(plan)
     except Exception as exc:
         deployment.status = DeploymentStatus.FAILED
-        deployment.finished_at = datetime.utcnow()
+        deployment.finished_at = datetime.now(UTC)
         _append_event(
             db,
             deployment.id,
@@ -190,7 +190,7 @@ def deploy_topology(
         )
 
     deployment.status = DeploymentStatus.SUCCEEDED
-    deployment.finished_at = datetime.utcnow()
+    deployment.finished_at = datetime.now(UTC)
     prior_stopped = db.scalar(
         select(func.count())
         .select_from(Deployment)
@@ -257,7 +257,7 @@ def destroy_deployment(
         )
 
     dep.status = DeploymentStatus.STOPPED
-    dep.finished_at = datetime.utcnow()
+    dep.finished_at = datetime.now(UTC)
     if already_stopped:
         _append_event(
             db,

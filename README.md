@@ -205,7 +205,7 @@ API_BASE=http://127.0.0.1:8000 ./scripts/demo_full_flow.sh
 
 Step-by-step narration for **UI** and **CLI**: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
-**Production-style stack** (Postgres + API + static UI + Caddy on port **80**): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · `docker-compose.prod.yml` · copy [.env.example](.env.example) to `.env`.
+**Production-style stack** (Postgres + API + static UI + Caddy on port **80**): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/EC2_RUNBOOK.md](docs/EC2_RUNBOOK.md) · `docker-compose.prod.yml` · copy [.env.example](.env.example) to `.env`.
 
 ---
 
@@ -309,6 +309,7 @@ UI notes: [docs/frontend-mvp-and-observability.md](docs/frontend-mvp-and-observa
 |-----|---------|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Portfolio architecture overview (control plane, topology, Docker, reconcile/heal) |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production Compose, EC2, troubleshooting, next infra steps |
+| [docs/EC2_RUNBOOK.md](docs/EC2_RUNBOOK.md) | Single-instance EC2: Docker, clone, `.env`, compose, smoke, cleanup |
 | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | Exact UI + CLI demo flows |
 | [docs/RESUME_NOTES.md](docs/RESUME_NOTES.md) | Three resume bullets, talking points, challenges |
 | [docs/system-architecture.md](docs/system-architecture.md) | Detailed design, diagrams, API flow |

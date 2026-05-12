@@ -75,8 +75,8 @@ def test_ping_command_from_service_targets_cns_ip(client, monkeypatch):
     from app.models.topology import NodeType
     from app.providers.docker_runtime_provider import FakeDockerRuntimeProvider
 
-    def fake_resolve(self, topology_id, node_id):
-        _ = (self, topology_id, node_id)
+    def fake_resolve(self, topology_id, node_id, source_node_id=None):
+        _ = (self, topology_id, node_id, source_node_id)
         return "10.80.0.20"
 
     monkeypatch.setattr(FakeDockerRuntimeProvider, "resolve_node_ipv4", fake_resolve)

@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, JSON, String, Text, Uuid
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -143,6 +143,13 @@ class TopologyLink(Base):
     )
     network_name: Mapped[str] = mapped_column(String(255))
     cidr: Mapped[str | None] = mapped_column(String(64))
+    gateway: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """Optional IPv4 gateway for this segment (defaults to first usable in CIDR when omitted)."""
+    vlan_tag: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Optional VLAN tag for documentation / future drivers (not applied to default Linux bridge)."""
+    source_endpoint_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """IPv4 for source node on this link; falls back to node ip_address when unique enough."""
+    target_endpoint_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     config: Mapped[dict | None] = mapped_column(JSON)
 
     topology: Mapped[Topology] = relationship(back_populates="links")

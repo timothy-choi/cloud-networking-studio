@@ -32,6 +32,13 @@ def test_inspect_topology_filters_labels_and_returns_records():
     net_key = topology_network_name(tid)
     mock_ctr = MagicMock()
     mock_ctr.status = "running"
+    mock_ctr.exec_run.return_value = (
+        0,
+        (
+            b"FWD:0\nROUTES\ndefault via 10.1.0.1 dev eth0\nINTERFACES\n1: lo\n",
+            b"",
+        ),
+    )
     mock_ctr.attrs = {
         "Id": "deadbeef0011223344556677889900",
         "Name": "/cns-node-test",
@@ -96,6 +103,13 @@ def test_inspect_topology_returns_static_style_cns_subnet_ips():
     net_key = topology_network_name(tid)
     mock_ctr = MagicMock()
     mock_ctr.status = "running"
+    mock_ctr.exec_run.return_value = (
+        0,
+        (
+            b"FWD:0\nROUTES\ndefault via 10.80.0.1 dev eth0\nINTERFACES\n1: lo\n",
+            b"",
+        ),
+    )
     mock_ctr.attrs = {
         "Config": {
             "Labels": {

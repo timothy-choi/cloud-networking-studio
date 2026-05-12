@@ -209,10 +209,56 @@ def test_ip_outside_subnet_rejected(client):
     assert "not within any link subnet" in r.text
 
 
+def test_disconnected_topology_rejected(client):
+    tid = client.post("/topologies", json=TOPO_BODY).json()["id"]
+    na = client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "a",
+            "node_type": NodeType.GENERIC.value,
+            "image": "alpine:latest",
+            "ip_address": "10.5.0.10",
+            "config": None,
+        },
+    ).json()
+    nb = client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "b",
+            "node_type": NodeType.GENERIC.value,
+            "image": "alpine:latest",
+            "ip_address": "10.5.0.20",
+            "config": None,
+        },
+    ).json()
+    client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "c_island",
+            "node_type": NodeType.GENERIC.value,
+            "image": "alpine:latest",
+            "ip_address": "10.5.0.30",
+            "config": None,
+        },
+    )
+    client.post(
+        f"/topologies/{tid}/links",
+        json={
+            "source_node_id": na["id"],
+            "target_node_id": nb["id"],
+            "network_name": "n0",
+            "cidr": "10.5.0.0/24",
+            "config": None,
+        },
+    )
+    r = client.post(f"/topologies/{tid}/deploy")
+    assert r.status_code == 400
+    assert "disconnected" in r.text.lower()
+
+
 def test_validate_topology_missing_link_target():
     tid = uuid.uuid4()
     n1 = uuid.uuid4()
-    n2 = uuid.uuid4()
     orphan = uuid.uuid4()
     topo = Topology(
         id=tid,
@@ -228,17 +274,6 @@ def test_validate_topology_missing_link_target():
             id=n1,
             topology_id=tid,
             name="a",
-            node_type=NodeType.GENERIC,
-            image=None,
-            ip_address=None,
-            config=None,
-        )
-    )
-    topo.nodes.append(
-        TopologyNode(
-            id=n2,
-            topology_id=tid,
-            name="b",
             node_type=NodeType.GENERIC,
             image=None,
             ip_address=None,

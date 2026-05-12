@@ -13,7 +13,10 @@ export function topologySignature(
     .sort()
     .join('|');
   const ls = links
-    .map((l) => `${l.id}:${l.source_node_id}:${l.target_node_id}:${l.network_name}:${l.cidr ?? ''}`)
+    .map(
+      (l) =>
+        `${l.id}:${l.source_node_id}:${l.target_node_id}:${l.network_name}:${l.cidr ?? ''}:${l.gateway ?? ''}:${l.vlan_tag ?? ''}:${l.source_endpoint_ip ?? ''}:${l.target_endpoint_ip ?? ''}`,
+    )
     .sort()
     .join('|');
   return `${ns}__${ls}`;

@@ -11,6 +11,14 @@ export interface RuntimeNetworkResponse {
   subnet_hints: string[];
 }
 
+export interface RuntimeNetworkInterfaceResponse {
+  docker_network: string;
+  interface: string;
+  ipv4: string;
+  gateway?: string | null;
+  logical_network?: string | null;
+}
+
 export interface RuntimeContainerResponse {
   container_id: string;
   short_id: string;
@@ -22,6 +30,7 @@ export interface RuntimeContainerResponse {
   labels: Record<string, string>;
   node_id: string | null;
   ipv4_by_network: Record<string, string>;
+  network_interfaces?: RuntimeNetworkInterfaceResponse[];
 }
 
 export interface RuntimeTopologyResponse {

@@ -15,6 +15,7 @@ import {
 } from '@xyflow/react';
 
 import { deploymentWorkloadLive, nodeWorkloadStatus } from '../lib/runtimeHealth';
+import { formatLinkEdgeLabel } from '../lib/flowTopology';
 import type { RuntimeTopologyResponse } from '../types/runtime';
 import type { TopologyLinkResponse, TopologyNodeResponse } from '../types/topology';
 
@@ -85,7 +86,7 @@ export function TopologyGraph({ nodes: topoNodes, links, runtime }: TopologyGrap
         id: link.id,
         source: link.source_node_id,
         target: link.target_node_id,
-        label: link.cidr ?? link.network_name,
+        label: formatLinkEdgeLabel(link),
         animated: animateEdges,
         markerEnd: { type: MarkerType.ArrowClosed, color: animateEdges ? '#34d399' : '#71717a' },
         style: {

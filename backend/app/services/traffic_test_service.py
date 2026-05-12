@@ -121,7 +121,7 @@ def run_ping_test(
     tt.status = TrafficTestStatus.RUNNING
     tt.started_at = datetime.utcnow()
 
-    target_ip = provider.resolve_node_ipv4(topology_id, target_node_id)
+    target_ip = provider.resolve_node_ipv4(topology_id, target_node_id, source_node_id)
     argv = _build_ping_argv(target_ip or "0.0.0.0", count_clamped)
     tt.command = " ".join(argv)
 
@@ -247,7 +247,7 @@ def run_http_test(
     tt.status = TrafficTestStatus.RUNNING
     tt.started_at = datetime.utcnow()
 
-    target_ip = provider.resolve_node_ipv4(topology_id, target_node_id)
+    target_ip = provider.resolve_node_ipv4(topology_id, target_node_id, source_node_id)
     if target_ip is None:
         tt.status = TrafficTestStatus.FAILED
         tt.finished_at = datetime.utcnow()

@@ -48,7 +48,9 @@ flowchart LR
 
 Topology-scoped networks use predictable names derived from the topology id (e.g. `cns-topology-{short}`), enabling reconciliation to locate the right bridge network.
 
-### Container naming and labels
+**Segmented mode:** when links declare **more than one** `network_name`, the provider instead creates **one labeled bridge per segment** (deterministic name per topology + logical network). Each segment gets IPAM from that link’s **CIDR**. The **Docker IPAM `gateway`** is bound to the **Linux bridge** on the host and **must not** duplicate any container static IPv4 on that segment (otherwise attach fails with “Address already in use”). CNS therefore picks a bridge gateway from the subnet **excluding** all link `source_ip` / `target_ip` values (typically high host addresses such as `.254`), while **topology `gateway`** and router **NIC** addresses stay on the intended lab IPs (e.g. `10.72.0.1`) for default routes and forwarding. Nodes are **`connect`**ed to every segment they touch; **routers** therefore appear on multiple bridges. Synthetic **`ethN` ordering** in the API follows a stable sort of Docker network names so `eth0 → net-a`, `eth1 → net-b` style mappings are reproducible. After attach, **default routes** on leaf containers target the **router IP on that segment** (link endpoint / gateway intent), replacing Docker’s bridge-gateway default where needed so ping/HTTP can cross subnets.
+
+---
 
 Containers combine topology/node identity into **names** and **labels** (`cns.topology_id`, `cns.node_id`, `cns.managed`, project labels). This mirrors how Kubernetes and other systems tie workloads back to higher-level objects.
 
@@ -79,7 +81,7 @@ stateDiagram-v2
 |------------------|-----------------|
 | Topology | User-defined bridge network + labels |
 | Node | Container (image, env, static IP where configured) |
-| Link | Shared network attachment + subnet (CIDR) intent |
+| Link | Shared network attachment + subnet (CIDR) intent; in segmented mode, **one bridge per distinct `network_name`** |
 
 Exact behavior evolves with the planner and provider; treat the **API and labels** as the contract for automation and reconciliation.
 

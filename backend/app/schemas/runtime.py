@@ -23,6 +23,21 @@ class RuntimeNetworkResponse(BaseModel):
     subnet_hints: list[str] = Field(default_factory=list)
 
 
+class RuntimeNetworkInterfaceResponse(BaseModel):
+    """One logical NIC attachment inside a container network namespace."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    docker_network: str = Field(description="Docker bridge network name (inspect key).")
+    interface: str = Field(description="Synthetic interface name eth0, eth1, … by sort order.")
+    ipv4: str
+    gateway: str | None = None
+    logical_network: str | None = Field(
+        default=None,
+        description="Logical network name from topology intent when labeled on the bridge.",
+    )
+
+
 class RuntimeContainerResponse(BaseModel):
     """Container bound to a topology node."""
 
@@ -38,6 +53,26 @@ class RuntimeContainerResponse(BaseModel):
     labels: dict[str, str] = Field(default_factory=dict)
     node_id: UUID | None = None
     ipv4_by_network: dict[str, str] = Field(default_factory=dict)
+    network_interfaces: list[RuntimeNetworkInterfaceResponse] = Field(
+        default_factory=list,
+        description="Per-bridge attachments with synthetic eth ordering.",
+    )
+    routes_lines: list[str] = Field(
+        default_factory=list,
+        description="IPv4 routing table from inside the container (best-effort exec).",
+    )
+    interface_lines: list[str] = Field(
+        default_factory=list,
+        description="IPv4 interface listing from inside the container (best-effort exec).",
+    )
+    ip_forward_enabled: bool | None = Field(
+        default=None,
+        description="Linux IPv4 forwarding flag read from /proc/sys/net/ipv4/ip_forward when available.",
+    )
+    forwarding_role: str | None = Field(
+        default=None,
+        description="segment_router vs leaf — from deploy-time labels for multinet labs.",
+    )
     created: str | None = None
     started_at: str | None = None
 

@@ -181,6 +181,10 @@ def create_topology_link(
         target_node_id=body.target_node_id,
         network_name=body.network_name,
         cidr=body.cidr,
+        gateway=body.gateway,
+        vlan_tag=body.vlan_tag,
+        source_endpoint_ip=body.source_endpoint_ip,
+        target_endpoint_ip=body.target_endpoint_ip,
         config=body.config,
     )
     db.add(link)

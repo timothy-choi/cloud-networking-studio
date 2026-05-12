@@ -1,4 +1,4 @@
-import { computeDeployReadiness } from '../../lib/deployReadiness';
+import { computeDeployReadiness, topologyLinkComponentCount } from '../../lib/deployReadiness';
 import type { TopologyLinkResponse, TopologyNodeResponse } from '../../types/topology';
 
 function parseIPv4(addr: string): number | null {
@@ -27,37 +27,6 @@ function ipv4RangesOverlap(
   b: { start: number; end: number },
 ): boolean {
   return a.start <= b.end && b.start <= a.end;
-}
-
-/** Undirected connected components among topology nodes using links as edges. */
-function countGraphComponents(nodeIds: string[], links: TopologyLinkResponse[]): number {
-  if (nodeIds.length === 0) return 0;
-  const idSet = new Set(nodeIds);
-  const adj = new Map<string, string[]>();
-  for (const id of nodeIds) adj.set(id, []);
-  for (const l of links) {
-    if (!idSet.has(l.source_node_id) || !idSet.has(l.target_node_id)) continue;
-    adj.get(l.source_node_id)!.push(l.target_node_id);
-    adj.get(l.target_node_id)!.push(l.source_node_id);
-  }
-  const seen = new Set<string>();
-  let comps = 0;
-  for (const id of nodeIds) {
-    if (seen.has(id)) continue;
-    comps += 1;
-    const stack = [id];
-    seen.add(id);
-    while (stack.length) {
-      const u = stack.pop()!;
-      for (const v of adj.get(u) ?? []) {
-        if (!seen.has(v)) {
-          seen.add(v);
-          stack.push(v);
-        }
-      }
-    }
-  }
-  return comps;
 }
 
 export interface DeploymentPlanningPanelProps {
@@ -98,9 +67,11 @@ export function DeploymentPlanningPanel({
   }
 
   const nodeIds = nodes.map((n) => n.id);
-  const graphComps = countGraphComponents(nodeIds, links);
+  const graphComps = topologyLinkComponentCount(nodeIds, links);
   const fragmented =
-    nodes.length >= 4 && graphComps > 1 ? `Graph has ${graphComps} disconnected islands.` : null;
+    nodes.length > 1 && graphComps > 1
+      ? `Graph has ${graphComps} disconnected components (islands).`
+      : null;
 
   const { deployable, blockingReasons, warnings: deployWarnings } = computeDeployReadiness(nodes, links);
 
@@ -110,8 +81,8 @@ export function DeploymentPlanningPanel({
     { ok: ipDup.length === 0, text: 'No duplicate intent IPv4 addresses on nodes.' },
     { ok: cidrOverlaps.length === 0, text: 'No overlapping IPv4 link subnets (best-effort check).' },
     {
-      ok: !(nodes.length >= 6 && graphComps > 2),
-      text: 'Topology is not excessively fragmented (many islands increase deploy risk).',
+      ok: !(nodes.length > 1 && graphComps > 1),
+      text: 'Single connected component (no isolated nodes).',
     },
     {
       ok: topologyStatus !== 'archived',

@@ -110,4 +110,4 @@ Run commands from the **`backend/`** directory so `app` resolves as the Python p
 ## Next steps
 
 - [testing.md](testing.md)
-- [architecture.md](architecture.md)
+- [system-architecture.md](system-architecture.md)

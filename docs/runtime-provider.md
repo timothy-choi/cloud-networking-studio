@@ -97,6 +97,6 @@ Exact behavior evolves with the planner and provider; treat the **API and labels
 
 ## See also
 
-- [architecture.md](architecture.md) — System context.
+- [system-architecture.md](system-architecture.md) — System context.
 - [failure-recovery.md](failure-recovery.md) — Drift detection and healing.
 - [traffic-testing.md](traffic-testing.md) — Exec-based connectivity checks.

@@ -1,5 +1,7 @@
 # Recruiter & interviewer highlights
 
+Short form: **[RESUME_NOTES.md](RESUME_NOTES.md)** (three bullets + challenges) · **[ARCHITECTURE.md](ARCHITECTURE.md)** (control plane overview) · **[DEMO_SCRIPT.md](DEMO_SCRIPT.md)** (UI + CLI walkthrough).
+
 Use this page as **resume bullets**, **LinkedIn summary fodder**, and **talking points** for infra/backend/platform roles. Tune numbers only if you measure them in your deployment.
 
 ---

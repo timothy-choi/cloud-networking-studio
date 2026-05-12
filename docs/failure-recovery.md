@@ -117,5 +117,5 @@ A compelling demo sequence:
 
 ## See also
 
-- [architecture.md](architecture.md)
+- [system-architecture.md](system-architecture.md)
 - [runtime-provider.md](runtime-provider.md)

@@ -92,5 +92,5 @@ These are **optional** API additions when you are ready; they do not block an MV
 
 ## Related docs
 
-- [architecture.md](architecture.md)
+- [system-architecture.md](system-architecture.md)
 - [local-development.md](local-development.md)

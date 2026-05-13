@@ -1,11 +1,25 @@
 import { useCallback, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { formatApiError, getControllerStatus, getHealth } from '../api/client';
-import { createDemoTopology, listTopologies } from '../api/topologies';
+import { createDemoTopology, deleteTopology, listTopologies } from '../api/topologies';
 import { CreateBlankTopologyModal } from '../components/CreateBlankTopologyModal';
 import { Spinner } from '../components/Spinner';
 import { usePolling } from '../hooks/usePolling';
 import type { ControllerStatusResponse, HealthResponse, TopologyResponse } from '../types';
+
+function fmtWhen(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      hour12: false,
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
 
 function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -190,14 +204,17 @@ export function DashboardPage() {
         ) : (
           <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
             {topologies.map((t) => (
-              <li key={t.id}>
+              <li key={t.id} className="flex items-stretch">
                 <Link
                   to={`/topologies/${t.id}`}
-                  className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                  className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
                 >
-                  <div>
+                  <div className="min-w-0">
                     <div className="font-medium text-zinc-900 dark:text-zinc-100">{t.name}</div>
                     <div className="font-mono text-xs text-cns-muted">{t.id}</div>
+                    <div className="mt-1 text-[11px] text-cns-muted">
+                      {t.node_count ?? 0} nodes · {t.link_count ?? 0} links · updated {fmtWhen(t.updated_at)}
+                    </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
@@ -206,6 +223,29 @@ export function DashboardPage() {
                     <span className="text-xs text-cns-muted">{t.runtime_target}</span>
                   </div>
                 </Link>
+                <button
+                  type="button"
+                  title="Delete topology"
+                  className="shrink-0 border-l border-zinc-200 px-3 text-xs font-medium text-red-700 hover:bg-red-50 dark:border-zinc-800 dark:text-red-400 dark:hover:bg-red-950/40"
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    if (
+                      !window.confirm(
+                        `Delete topology “${t.name}” and all nodes, links, and deployment records? This cannot be undone.`,
+                      )
+                    ) {
+                      return;
+                    }
+                    try {
+                      await deleteTopology(t.id);
+                      await refresh();
+                    } catch (err) {
+                      alert(formatApiError(err));
+                    }
+                  }}
+                >
+                  Delete
+                </button>
               </li>
             ))}
           </ul>

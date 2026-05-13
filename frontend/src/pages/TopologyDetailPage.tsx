@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useState, useEffect, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { formatApiError } from '../api/client';
 import {
   deployTopology,
@@ -7,7 +7,7 @@ import {
   healDeployment,
   reconcileDeployment,
 } from '../api/deployments';
-import { injectStopNode, injectRestartNode, runHttpTest, runPingTest } from '../api/topologies';
+import { injectStopNode, injectRestartNode, runHttpTest, runPingTest, deleteTopology } from '../api/topologies';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { DeploymentLifecycleTimeline } from '../components/deployment/DeploymentLifecycleTimeline';
 import { DeploymentPhaseStrip } from '../components/deployment/DeploymentPhaseStrip';
@@ -69,6 +69,7 @@ function fmtWhenIso(iso: string | null): string {
 
 export function TopologyDetailPage() {
   const { topologyId } = useParams<{ topologyId: string }>();
+  const navigate = useNavigate();
   const id = topologyId ?? '';
 
   const {
@@ -98,6 +99,7 @@ export function TopologyDetailPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [opsNote, setOpsNote] = useState<string | null>(null);
   const [pageToast, setPageToast] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const refreshLive = useCallback(async () => {
     await Promise.all([refetch(), refetchEvents(), refetchTraffic(), refetchFailures()]);
@@ -232,6 +234,12 @@ export function TopologyDetailPage() {
             {loading && <Spinner className="h-5 w-5" />}
           </div>
           <p className="font-mono text-xs text-cns-muted">{id}</p>
+          {topology ? (
+            <p className="mt-1 text-[11px] text-cns-muted">
+              Graph: {nodes.length} nodes · {links.length} links · record updated {fmtWhenIso(topology.updated_at)}
+              {lastUpdatedAt != null ? ` · polled ${fmtClock(lastUpdatedAt)}` : null}
+            </p>
+          ) : null}
           {topology && (
             <div className="mt-3">
               <RuntimeHealthBadges
@@ -252,6 +260,34 @@ export function TopologyDetailPage() {
           >
             {busy ? <Spinner className="h-4 w-4" /> : null}
             Refresh now
+          </button>
+          <button
+            type="button"
+            disabled={busy !== null || deleteBusy}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  'Delete this topology and all nodes, links, and deployment records? This cannot be undone.',
+                )
+              ) {
+                return;
+              }
+              void (async () => {
+                setDeleteBusy(true);
+                setOpsNote(null);
+                try {
+                  await deleteTopology(id);
+                  navigate('/');
+                } catch (e) {
+                  setOpsNote(formatApiError(e));
+                } finally {
+                  setDeleteBusy(false);
+                }
+              })();
+            }}
+            className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-800 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:bg-zinc-900 dark:text-red-300 dark:hover:bg-red-950/40"
+          >
+            {deleteBusy ? 'Deleting…' : 'Delete topology'}
           </button>
         </div>
       </div>

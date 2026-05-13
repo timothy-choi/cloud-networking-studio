@@ -1,4 +1,4 @@
-import { computeDeployReadiness, topologyLinkComponentCount } from '../../lib/deployReadiness';
+import { computeDeployReadiness, computeIntentBadges, topologyLinkComponentCount } from '../../lib/deployReadiness';
 import type { TopologyLinkResponse, TopologyNodeResponse } from '../../types/topology';
 
 function parseIPv4(addr: string): number | null {
@@ -74,6 +74,7 @@ export function DeploymentPlanningPanel({
       : null;
 
   const { deployable, blockingReasons, warnings: deployWarnings } = computeDeployReadiness(nodes, links);
+  const intentBadges = computeIntentBadges(nodes, links, topologyStatus, deploymentStatus);
 
   const readiness: { ok: boolean; text: string }[] = [
     { ok: nodes.length > 0, text: 'At least one node is defined.' },
@@ -95,6 +96,28 @@ export function DeploymentPlanningPanel({
   return (
     <div className="rounded-xl border border-zinc-700/80 bg-zinc-950/60 p-4">
       <h3 className="text-[11px] font-semibold uppercase tracking-wide text-cns-inverse-muted">Deployment planning</h3>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {intentBadges.map((b) => {
+          const cls =
+            b.tone === 'ok'
+              ? 'border-emerald-800/60 bg-emerald-950/50 text-emerald-100'
+              : b.tone === 'warn'
+                ? 'border-amber-800/60 bg-amber-950/40 text-amber-100'
+                : b.tone === 'live'
+                  ? 'border-sky-800/50 bg-sky-950/45 text-sky-100'
+                  : b.tone === 'bad'
+                    ? 'border-red-900/50 bg-red-950/35 text-red-100'
+                    : 'border-zinc-600 bg-zinc-900/80 text-zinc-200';
+          return (
+            <span
+              key={b.id}
+              className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${cls}`}
+            >
+              {b.label}
+            </span>
+          );
+        })}
+      </div>
       <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
         <dt className="text-cns-inverse-label">Nodes</dt>
         <dd className="text-right font-mono text-zinc-200">{nodes.length}</dd>

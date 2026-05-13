@@ -32,12 +32,16 @@ def test_topology_crud_flow(client):
     assert r.status_code == 200
     rows = r.json()
     assert len(rows) >= 1
-    assert any(row["id"] == tid for row in rows)
+    row = next(x for x in rows if x["id"] == tid)
+    assert row.get("node_count") == 0
+    assert row.get("link_count") == 0
 
     # Get one
     r = client.get(f"/topologies/{tid}")
     assert r.status_code == 200
     assert r.json()["id"] == tid
+    assert r.json().get("node_count") == 0
+    assert r.json().get("link_count") == 0
 
 
 def test_nodes_and_links_flow(client):
@@ -231,3 +235,10 @@ def test_patch_topology_metadata(client):
     assert pr.status_code == 200
     assert pr.json()["name"] == "Renamed"
     assert pr.json()["description"] == "x"
+
+
+def test_delete_topology(client):
+    r = client.post("/topologies", json=TOPOLOGY_BODY)
+    tid = r.json()["id"]
+    assert client.delete(f"/topologies/{tid}").status_code == 204
+    assert client.get(f"/topologies/{tid}").status_code == 404

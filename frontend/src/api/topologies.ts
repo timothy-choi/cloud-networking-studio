@@ -131,6 +131,12 @@ export async function patchTopology(topologyId: string, body: TopologyUpdate): P
   });
 }
 
+export async function deleteTopology(topologyId: string): Promise<void> {
+  await apiFetch(`/topologies/${topologyId}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function patchNode(
   topologyId: string,
   nodeId: string,

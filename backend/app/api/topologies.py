@@ -4,7 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import func as sa_func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -51,6 +51,16 @@ def _get_topology_or_404(db: Session, topology_id: UUID) -> Topology:
     return topo
 
 
+def _counts_for_topology(db: Session, topology_id: UUID) -> tuple[int, int]:
+    n = db.scalar(
+        select(sa_func.count()).select_from(TopologyNode).where(TopologyNode.topology_id == topology_id)
+    )
+    l = db.scalar(
+        select(sa_func.count()).select_from(TopologyLink).where(TopologyLink.topology_id == topology_id)
+    )
+    return (int(n or 0), int(l or 0))
+
+
 @router.post(
     "",
     response_model=TopologyResponse,
@@ -81,10 +91,17 @@ def create_topology(
     response_model=list[TopologyResponse],
     summary="List topologies",
 )
-def list_topologies(db: Session = Depends(get_db)) -> list[Topology]:
-    """List topologies, newest first."""
+def list_topologies(db: Session = Depends(get_db)) -> list[TopologyResponse]:
+    """List topologies, newest first, with node/link counts for dashboards."""
     stmt = select(Topology).order_by(Topology.created_at.desc())
-    return list(db.scalars(stmt).all())
+    rows = list(db.scalars(stmt).all())
+    out: list[TopologyResponse] = []
+    for topo in rows:
+        nc, lc = _counts_for_topology(db, topo.id)
+        out.append(
+            TopologyResponse.model_validate(topo).model_copy(update={"node_count": nc, "link_count": lc}),
+        )
+    return out
 
 
 @router.get(
@@ -95,7 +112,7 @@ def list_topologies(db: Session = Depends(get_db)) -> list[Topology]:
 def get_topology(
     topology_id: UUID,
     db: Session = Depends(get_db),
-) -> Topology:
+) -> TopologyResponse:
     """Fetch a single topology by id."""
     topo = db.get(Topology, topology_id)
     if topo is None:
@@ -103,7 +120,24 @@ def get_topology(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Topology not found",
         )
-    return topo
+    nc, lc = _counts_for_topology(db, topology_id)
+    return TopologyResponse.model_validate(topo).model_copy(update={"node_count": nc, "link_count": lc})
+
+
+@router.delete(
+    "/{topology_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete topology",
+)
+def delete_topology(
+    topology_id: UUID,
+    db: Session = Depends(get_db),
+) -> Response:
+    """Remove topology row; cascades delete nodes, links, and deployment records."""
+    topo = _get_topology_or_404(db, topology_id)
+    db.delete(topo)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

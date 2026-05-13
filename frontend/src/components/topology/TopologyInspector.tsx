@@ -30,6 +30,7 @@ function TopologyMetaForm({
 }) {
   const [topoName, setTopoName] = useState(topology.name);
   const [topoDesc, setTopoDesc] = useState(topology.description ?? '');
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     setTopoName(topology.name);
     setTopoDesc(topology.description ?? '');
@@ -37,9 +38,16 @@ function TopologyMetaForm({
   return (
     <form
       className="mt-2 space-y-2"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        void onRenameTopology(topoName, topoDesc.trim() === '' ? null : topoDesc);
+        setSaving(true);
+        try {
+          await onRenameTopology(topoName, topoDesc.trim() === '' ? null : topoDesc);
+        } catch {
+          /* error shown by parent */
+        } finally {
+          setSaving(false);
+        }
       }}
     >
       <label className="block text-[11px] text-cns-field-label">
@@ -61,9 +69,10 @@ function TopologyMetaForm({
       </label>
       <button
         type="submit"
-        className="w-full rounded-md border border-sky-700/50 bg-sky-950/50 px-3 py-1.5 text-xs font-medium text-sky-100 hover:bg-sky-900/60"
+        disabled={saving}
+        className="w-full rounded-md border border-sky-700/50 bg-sky-950/50 px-3 py-1.5 text-xs font-medium text-sky-100 hover:bg-sky-900/60 disabled:opacity-50"
       >
-        Apply topology metadata
+        {saving ? 'Saving…' : 'Apply topology metadata'}
       </button>
     </form>
   );
@@ -83,7 +92,10 @@ function NodeEditForm({
   const [metaJson, setMetaJson] = useState(
     node.config && Object.keys(node.config).length ? JSON.stringify(node.config, null, 2) : '{}',
   );
+  const [saving, setSaving] = useState(false);
 
+  // Only re-hydrate from the server when switching nodes — not on every poll (new object identity),
+  // which was resetting the IP field while the user typed.
   useEffect(() => {
     setNodeName(node.name);
     setNodeType(node.node_type);
@@ -92,14 +104,14 @@ function NodeEditForm({
     setMetaJson(
       node.config && Object.keys(node.config).length ? JSON.stringify(node.config, null, 2) : '{}',
     );
-  }, [node]);
+  }, [node.id]);
 
   return (
     <form
       className="mt-2 space-y-2"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        let extra: Record<string, unknown> | undefined;
+        let extra: Record<string, unknown>;
         try {
           const parsed: unknown = JSON.parse(metaJson || '{}');
           extra = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
@@ -107,13 +119,21 @@ function NodeEditForm({
           alert('Node metadata must be valid JSON.');
           return;
         }
-        void onPatchNode({
-          name: nodeName,
-          node_type: nodeType,
-          image: image.trim() === '' ? null : image,
-          ip_address: ip.trim() === '' ? null : ip,
-          config: extra,
-        });
+        const mergedConfig = { ...(node.config ?? {}), ...extra };
+        setSaving(true);
+        try {
+          await onPatchNode({
+            name: nodeName,
+            node_type: nodeType,
+            image: image.trim() === '' ? null : image,
+            ip_address: ip.trim() === '' ? null : ip.trim(),
+            config: mergedConfig,
+          });
+        } catch {
+          /* parent shows error toast / banner */
+        } finally {
+          setSaving(false);
+        }
       }}
     >
       <label className="block text-[11px] text-cns-field-label">
@@ -167,9 +187,10 @@ function NodeEditForm({
       </label>
       <button
         type="submit"
-        className="w-full rounded-md border border-emerald-800/50 bg-emerald-950/40 px-3 py-1.5 text-xs font-medium text-emerald-100 hover:bg-emerald-900/50"
+        disabled={saving}
+        className="w-full rounded-md border border-emerald-800/50 bg-emerald-950/40 px-3 py-1.5 text-xs font-medium text-emerald-100 hover:bg-emerald-900/50 disabled:opacity-50"
       >
-        Apply node changes
+        {saving ? 'Saving…' : 'Apply node changes'}
       </button>
     </form>
   );
@@ -197,6 +218,7 @@ function LinkEditForm({
   const [linkMetaJson, setLinkMetaJson] = useState(
     link.config && Object.keys(link.config).length ? JSON.stringify(link.config, null, 2) : '{}',
   );
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setLinkName(link.network_name);
@@ -208,14 +230,14 @@ function LinkEditForm({
     setLinkMetaJson(
       link.config && Object.keys(link.config).length ? JSON.stringify(link.config, null, 2) : '{}',
     );
-  }, [link]);
+  }, [link.id]);
 
   return (
     <form
       className="mt-2 space-y-2"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        let cfg: Record<string, unknown> | undefined;
+        let cfg: Record<string, unknown>;
         try {
           const parsed: unknown = JSON.parse(linkMetaJson || '{}');
           cfg = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
@@ -223,6 +245,7 @@ function LinkEditForm({
           alert('Link metadata must be valid JSON.');
           return;
         }
+        const mergedCfg = { ...(link.config ?? {}), ...cfg };
         const vlanTrim = vlanTag.trim();
         let vlanNum: number | null = null;
         if (vlanTrim !== '') {
@@ -233,15 +256,22 @@ function LinkEditForm({
           }
           vlanNum = n;
         }
-        void onPatchLink({
-          network_name: linkName,
-          cidr: cidr.trim() === '' ? null : cidr,
-          gateway: gateway.trim() === '' ? null : gateway.trim(),
-          vlan_tag: vlanNum,
-          source_endpoint_ip: srcEp.trim() === '' ? null : srcEp.trim(),
-          target_endpoint_ip: tgtEp.trim() === '' ? null : tgtEp.trim(),
-          config: cfg,
-        });
+        setSaving(true);
+        try {
+          await onPatchLink({
+            network_name: linkName,
+            cidr: cidr.trim() === '' ? null : cidr,
+            gateway: gateway.trim() === '' ? null : gateway.trim(),
+            vlan_tag: vlanNum,
+            source_endpoint_ip: srcEp.trim() === '' ? null : srcEp.trim(),
+            target_endpoint_ip: tgtEp.trim() === '' ? null : tgtEp.trim(),
+            config: mergedCfg,
+          });
+        } catch {
+          /* parent shows error */
+        } finally {
+          setSaving(false);
+        }
       }}
     >
       {sourceNodeName || targetNodeName ? (
@@ -320,9 +350,10 @@ function LinkEditForm({
       </label>
       <button
         type="submit"
-        className="w-full rounded-md border border-violet-800/50 bg-violet-950/40 px-3 py-1.5 text-xs font-medium text-violet-100 hover:bg-violet-900/50"
+        disabled={saving}
+        className="w-full rounded-md border border-violet-800/50 bg-violet-950/40 px-3 py-1.5 text-xs font-medium text-violet-100 hover:bg-violet-900/50 disabled:opacity-50"
       >
-        Apply link changes
+        {saving ? 'Saving…' : 'Apply link changes'}
       </button>
     </form>
   );

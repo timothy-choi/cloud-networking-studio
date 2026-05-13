@@ -80,22 +80,17 @@ Plain **`docker-compose.prod.yml`** alone remains valid for **HTTP-only** local 
 
 ## GitHub Actions: `deploy-production.yml`
 
-On **`push` to `main`** (and **`workflow_dispatch`**), the workflow runs as **two jobs**:
-
-**Job `terraform-plan`**
+On **`push` to `main`** (and **`workflow_dispatch`**), the **`deploy`** job:
 
 1. Runs **backend pytest** (with Postgres service on the runner).
 2. Validates **`docker-compose.prod.yml`** via `docker compose config`.
 3. Builds the **frontend** once with default Vite env (sanity compile before cloud steps).
-4. Runs **`terraform init -reconfigure`** (S3), **`terraform fmt -check`**, **`validate`**, **`plan`**, and uploads the **`tfplan`** artifact.
+4. Runs a **single shell step** under **`infra/terraform`**: `terraform init -reconfigure` (S3 via generated **`backend.ci.hcl`**), **`fmt -check`**, **`validate`**, **`plan`**, **`apply`**, then writes **`terraform output`** values to the job summary (same step so the backend is initialized before plan/apply).
+5. **SSH** to the instance: clone or update repo, **`git checkout` the pushed SHA**, refresh **`SSLIP_HOST`**, bring up **Compose + sslip overlay**.
+6. Runs **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL=${stack_base_url_sslip}`** (waits longer for ACME via **`CNS_WAIT_ATTEMPTS`**).
+7. Runs **`vercel pull` / `vercel build` / `vercel deploy --prebuilt --prod`** with **`VITE_API_BASE_URL`** set to **`api_base_url_sslip`**.
 
-**Job `terraform-apply-and-deploy`** (needs plan job)
-
-5. Downloads **`tfplan`**, runs **`terraform init -reconfigure`** again (fresh runner), then **`terraform apply`** the saved plan.
-6. Reads outputs: **`public_ip`**, **`sslip_host`**, **`stack_base_url_sslip`**, **`api_base_url_sslip`**.
-7. **SSH** to the instance: clone or update repo, **`git checkout` the pushed SHA**, refresh **`SSLIP_HOST`**, bring up **Compose + sslip overlay**.
-8. Runs **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL=${stack_base_url_sslip}`** (waits longer for ACME via **`CNS_WAIT_ATTEMPTS`**).
-9. Runs **`vercel pull` / `vercel build` / `vercel deploy --prebuilt --prod`** with **`VITE_API_BASE_URL`** set to **`api_base_url_sslip`**.
+`hashicorp/setup-terraform` is used only to install the Terraform CLI with **`terraform_wrapper: false`** so all **`terraform`** invocations run in plain shell blocks.
 
 ## CORS
 

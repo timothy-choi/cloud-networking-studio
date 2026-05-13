@@ -84,13 +84,16 @@ def _cors_origins() -> list[str]:
     return parts or ["http://localhost:5174", "http://127.0.0.1:5174"]
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors_kw: dict = {
+    "allow_origins": _cors_origins(),
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if (rx := (settings.cors_origin_regex or "").strip()):
+    _cors_kw["allow_origin_regex"] = rx
+
+app.add_middleware(CORSMiddleware, **_cors_kw)
 
 
 @app.get(

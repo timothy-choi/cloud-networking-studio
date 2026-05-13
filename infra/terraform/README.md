@@ -1,13 +1,13 @@
 # Terraform — Cloud Networking Studio (AWS)
 
-This directory provisions a **small dedicated VPC**, a **public subnet**, a **security group**, an **Ubuntu 24.04 EC2** instance (Docker Engine + Compose plugin pre-installed via `user_data`), and an **Elastic IP** for a stable public address. It does **not** deploy the application; after `apply`, you clone the repo on the instance and run `docker compose` yourself (see [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md)).
+This directory provisions a **small dedicated VPC**, a **public subnet**, a **security group**, an **Ubuntu 24.04 EC2** instance (Docker Engine + Compose plugin pre-installed via `user_data`), and an **Elastic IP** for a stable public address. Application containers are started separately (`docker compose` on the instance, or via CI over SSH). See [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [docs/CICD_DEPLOYMENT.md](../../docs/CICD_DEPLOYMENT.md), and [docs/EPHEMERAL_CI_ENVIRONMENTS.md](../../docs/EPHEMERAL_CI_ENVIRONMENTS.md).
 
 ## Prerequisites
 
 - [Terraform](https://developer.hashicorp.com/terraform/install) **1.5+**
 - An [AWS account](https://aws.amazon.com/) and **credentials configured for the CLI/SDK** (see below)
 - An **existing EC2 key pair** in the target region (for SSH)
-- A sensible **`ssh_allowed_cidr`** (your public IPv4 `/32` is recommended)
+- A sensible **`ssh_allowed_cidr`** (your public IPv4 `/32` is recommended for interactive SSH; CI may use a broader lab CIDR — see ephemeral docs)
 
 ### AWS credentials (required for `plan` / `apply`)
 
@@ -20,6 +20,24 @@ Terraform uses the default AWS credential chain. On your **Mac or dev machine**,
 The provider is set with **`skip_metadata_api_check = true`** so Terraform does not wait on the EC2 instance metadata service (`169.254.169.254`), which is unavailable off AWS and caused noisy timeouts.
 
 If you still see “No valid credential sources found”, no profile/env credentials are loaded yet — fix that before re-running `terraform plan`.
+
+## Remote state (production / shared CI)
+
+`versions.tf` declares a partial **`backend "s3" {}`**. For **durable production** state (required by `.github/workflows/deploy-production.yml`), configure an S3 bucket and run init with a backend config file. Example template: **`backend.s3.hcl.example`**.
+
+```bash
+cd infra/terraform
+cp backend.s3.hcl.example backend.local.hcl   # edit bucket/key — keep backend.local.hcl gitignored
+terraform init -backend-config=backend.local.hcl
+```
+
+For **throwaway** runs (local lab or **ephemeral PR** CI), use **local state**:
+
+```bash
+terraform init -backend=false
+```
+
+Ephemeral CI always **`terraform destroy`** at the end of the job; local state on the runner is discarded.
 
 ## Configure variables
 
@@ -49,7 +67,7 @@ You can also paste a specific prefix you see in the EC2 “Launch instance” AM
 From **`infra/terraform/`**:
 
 ```bash
-terraform init
+terraform init -backend=false   # or -backend-config=... for S3
 terraform fmt -recursive
 terraform validate
 terraform plan
@@ -76,18 +94,24 @@ terraform output
    ssh -i ~/.ssh/your-key.pem ubuntu@$(terraform output -raw public_ip)
    ```
 
-2. Clone the repository and start the production stack (from repo root on the instance):
+2. Clone the repository and start the production stack (from repo root on the instance). For **HTTPS + sslip.io** (Vercel split or public API URL):
 
    ```bash
    sudo apt-get update && sudo apt-get install -y git
    git clone https://github.com/<your-org>/cloud-networking-studio.git
    cd cloud-networking-studio
    cp .env.example .env
-   # edit .env — set POSTGRES_PASSWORD, CNS_CORS_ORIGINS to http://<EIP>, etc.
+   # edit .env — set POSTGRES_PASSWORD, CNS_CORS_ORIGINS (include Vercel origins), SSLIP_HOST=<EIP>.sslip.io
+   docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml up -d --build
+   ```
+
+   For **HTTP only** on port 80 (unchanged default):
+
+   ```bash
    docker compose -f docker-compose.prod.yml up -d --build
    ```
 
-3. Open **`http://<Elastic IP>`** (port 80) once Caddy and services are healthy.
+3. Open **`http://<Elastic IP>`** or **`https://<Elastic IP>.sslip.io`** once Caddy and services are healthy.
 
 For a fuller EC2 checklist, see [docs/EC2_RUNBOOK.md](../../docs/EC2_RUNBOOK.md).
 
@@ -99,14 +123,21 @@ terraform destroy
 
 Removes the VPC, instance, EIP, and related resources. **Data loss:** anything only on the instance disk is gone; use backups or external volumes if you need durability beyond this lab template.
 
+**Production:** the `deploy-production` GitHub Action **never** runs `terraform destroy`. Only this manual command (or a dedicated workflow you add) removes prod infra.
+
+**Ephemeral CI:** `.github/workflows/ephemeral-infra-smoke.yml` runs **`terraform destroy -auto-approve`** in an **`always()`** step after tests.
+
 ## Outputs reference
 
-| Output         | Meaning                                      |
-|----------------|----------------------------------------------|
-| `public_ip`    | Elastic IP (stable)                          |
-| `public_url`   | `http://<public_ip>`                         |
-| `ssh_command`  | Example `ssh` line (adjust key path)       |
-| `instance_id`  | EC2 instance ID for support / debugging     |
+| Output | Meaning |
+|--------|---------|
+| `public_ip` | Elastic IP (stable) |
+| `public_url` | `http://<public_ip>` |
+| `sslip_host` | `<public_ip>.sslip.io` hostname |
+| `stack_base_url_sslip` | `https://<public_ip>.sslip.io` — use as **`CNS_BASE_URL`** for smoke scripts |
+| `api_base_url_sslip` | `https://<public_ip>.sslip.io/api` — use as **`VITE_API_BASE_URL`** for Vercel builds |
+| `ssh_command` | Example `ssh` line (adjust key path) |
+| `instance_id` | EC2 instance ID for support / debugging |
 
 ## Lock file
 

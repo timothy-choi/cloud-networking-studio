@@ -1,0 +1,118 @@
+# Ephemeral EC2 + Terraform apply → deploy → smoke → terraform destroy (always).
+# Intended for same-repo PRs with AWS / SSH secrets configured. See docs/EPHEMERAL_CI_ENVIRONMENTS.md.
+
+name: Ephemeral infra smoke
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ephemeral-infra-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "1"
+
+jobs:
+  ephemeral:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Fork PRs do not receive repository secrets; skip expensive / unsafe no-op.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
+      TF_VAR_project_name: cns
+      TF_VAR_environment: ephemeral-${{ github.run_id }}
+      TF_VAR_key_name: ${{ secrets.TF_VAR_KEY_NAME }}
+      TF_VAR_ssh_allowed_cidr: ${{ secrets.TF_VAR_SSH_ALLOWED_CIDR }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform init (local state)
+        working-directory: infra/terraform
+        run: terraform init -input=false -backend=false
+
+      - name: Terraform validate
+        working-directory: infra/terraform
+        run: terraform validate
+
+      - name: Terraform apply
+        id: apply
+        working-directory: infra/terraform
+        run: terraform apply -input=false -auto-approve
+
+      - name: Terraform outputs
+        id: tf
+        working-directory: infra/terraform
+        run: |
+          echo "public_ip=$(terraform output -raw public_ip)" >> "$GITHUB_OUTPUT"
+          echo "sslip_host=$(terraform output -raw sslip_host)" >> "$GITHUB_OUTPUT"
+          echo "stack_base_url_sslip=$(terraform output -raw stack_base_url_sslip)" >> "$GITHUB_OUTPUT"
+          echo "api_base_url_sslip=$(terraform output -raw api_base_url_sslip)" >> "$GITHUB_OUTPUT"
+
+      - name: Bootstrap stack on EC2
+        uses: appleboy/ssh-action@v1.1.0
+        with:
+          host: ${{ steps.tf.outputs.public_ip }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            REPO_DIR="${HOME}/cloud-networking-studio-ephemeral"
+            REPO_SLUG="${{ github.repository }}"
+            GIT_SHA="${{ github.sha }}"
+            SSLIP_HOST="${{ steps.tf.outputs.sslip_host }}"
+            TOKEN="${{ github.token }}"
+            CLONE_URL="https://x-access-token:${TOKEN}@github.com/${REPO_SLUG}.git"
+            rm -rf "${REPO_DIR}"
+            git clone "${CLONE_URL}" "${REPO_DIR}"
+            cd "${REPO_DIR}"
+            git checkout "${GIT_SHA}"
+            PGP="$(openssl rand -hex 24)"
+            {
+              echo "POSTGRES_PASSWORD=${PGP}"
+              echo "DATABASE_URL=postgresql://cns_user:${PGP}@postgres:5432/cloud_networking_studio"
+              echo "SSLIP_HOST=${SSLIP_HOST}"
+              echo "CNS_CORS_ORIGINS=https://${SSLIP_HOST},http://127.0.0.1,http://localhost"
+            } > .env
+            docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
+
+      - name: Smoke tests (HTTPS sslip)
+        env:
+          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip }}
+          CNS_WAIT_ATTEMPTS: "90"
+        run: bash scripts/prod_smoke_test.sh
+
+      - name: Optional heavy smoke (Docker socket on EC2)
+        continue-on-error: true
+        env:
+          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip }}
+          CNS_WAIT_ATTEMPTS: "30"
+          CNS_HEAVY_SMOKE: "1"
+        run: bash scripts/prod_smoke_test.sh --heavy
+
+      - name: Terraform destroy (always)
+        if: always()
+        working-directory: infra/terraform
+        run: |
+          if terraform state list 2>/dev/null | grep -q .; then
+            terraform destroy -input=false -auto-approve
+          else
+            echo "Skipping terraform destroy (no state — init or apply did not complete)."
+          fi

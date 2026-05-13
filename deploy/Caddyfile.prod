@@ -1,5 +1,8 @@
 # Reverse proxy for docker-compose.prod.yml — :80 only (TLS left to ALB, Caddy elsewhere, or extend this file).
 #
+# For public HTTPS on EC2 with automatic certs via sslip.io, merge **docker-compose.sslip.yml**
+# and **deploy/Caddyfile.sslip** (see docs/CICD_DEPLOYMENT.md).
+#
 # Routing:
 #   - /api/* → backend:8000 with /api prefix stripped so FastAPI sees /health, /topologies, … (same as direct uvicorn paths).
 #   - /     → frontend:80 (static SPA + nginx).

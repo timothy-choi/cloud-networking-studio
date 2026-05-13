@@ -22,6 +22,7 @@ for arg in "$@"; do
       echo "usage: $0 [--heavy]"
       echo "  CNS_BASE_URL       default http://127.0.0.1"
       echo "  CNS_HEAVY_SMOKE=1  optional deploy/destroy against real Docker (CI sets this when enabled)"
+      echo "  CNS_WAIT_ATTEMPTS  passed to wait_caddy_edge (default 30) — raise for slow HTTPS / ACME"
       exit 0
       ;;
   esac
@@ -80,7 +81,8 @@ echo "base_url=${BASE}  heavy=${HEAVY}"
 echo
 
 CADDY_READY=0
-if bash "$SCRIPT_DIR/wait_caddy_edge.sh" "$BASE" 30 2 "$BODY"; then
+WAIT_ATTEMPTS="${CNS_WAIT_ATTEMPTS:-30}"
+if bash "$SCRIPT_DIR/wait_caddy_edge.sh" "$BASE" "$WAIT_ATTEMPTS" 2 "$BODY"; then
   CADDY_READY=1
   ok "GET / (frontend via Caddy) HTTP 200 after edge wait"
   ok "GET /api/health (API via Caddy) HTTP 200 with JSON status"
@@ -88,7 +90,7 @@ if bash "$SCRIPT_DIR/wait_caddy_edge.sh" "$BASE" 30 2 "$BODY"; then
   preview="$(printf '%s' "$health_raw" | tr -d '\n' | head -c 120)"
   echo "       ${preview}…"
 else
-  bad "Caddy edge not ready within 30 attempts × 2s (GET / and GET /api/health)"
+  bad "Caddy edge not ready within ${WAIT_ATTEMPTS} attempts × 2s (GET / and GET /api/health)"
 fi
 
 if [[ "$CADDY_READY" -ne 1 ]]; then

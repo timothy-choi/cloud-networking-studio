@@ -93,11 +93,7 @@ jobs:
         with:
           terraform_version: "1.9.0"
 
-      - name: Terraform fmt (check)
-        working-directory: infra/terraform
-        run: terraform fmt -check -recursive
-
-      - name: Terraform init (S3 backend)
+      - name: Terraform init (S3 backend, reconfigure)
         working-directory: infra/terraform
         env:
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
@@ -119,7 +115,11 @@ jobs:
           if [[ -n "${TF_STATE_DYNAMODB_TABLE:-}" ]]; then
             echo "dynamodb_table = \"${TF_STATE_DYNAMODB_TABLE}\"" >> backend.ci.hcl
           fi
-          terraform init -input=false -backend-config=backend.ci.hcl
+          terraform init -input=false -reconfigure -backend-config=backend.ci.hcl
+
+      - name: Terraform fmt (check)
+        working-directory: infra/terraform
+        run: terraform fmt -check -recursive
 
       - name: Terraform validate
         working-directory: infra/terraform

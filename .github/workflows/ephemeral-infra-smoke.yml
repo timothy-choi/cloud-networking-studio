@@ -43,16 +43,15 @@ jobs:
         with:
           terraform_version: "1.9.0"
 
-      - name: Terraform init (local state)
+      - name: Terraform init (local state, reconfigure)
         working-directory: infra/terraform
-        run: terraform init -input=false -backend=false
+        run: terraform init -input=false -reconfigure -backend=false
 
       - name: Terraform validate
         working-directory: infra/terraform
         run: terraform validate
 
       - name: Terraform apply
-        id: apply
         working-directory: infra/terraform
         run: terraform apply -input=false -auto-approve
 
@@ -111,8 +110,10 @@ jobs:
         if: always()
         working-directory: infra/terraform
         run: |
-          if terraform state list 2>/dev/null | grep -q .; then
+          set -euo pipefail
+          terraform init -input=false -reconfigure -backend=false
+          if terraform state list | grep -q .; then
             terraform destroy -input=false -auto-approve
           else
-            echo "Skipping terraform destroy (no state — init or apply did not complete)."
+            echo "Skipping terraform destroy (empty state after init)."
           fi

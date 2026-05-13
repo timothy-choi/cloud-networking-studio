@@ -1,5 +1,6 @@
 # Production: Terraform (S3 state) → EC2 Docker Compose + sslip HTTPS → smoke → Vercel frontend.
-# Does not run terraform destroy. Requires durable remote state — see docs/CICD_DEPLOYMENT.md.
+# Terraform is split: plan job then apply job (each runs `terraform init -reconfigure` before backend use).
+# See docs/CICD_DEPLOYMENT.md.
 
 name: Deploy production
 
@@ -19,9 +20,10 @@ env:
   TF_IN_AUTOMATION: "1"
 
 jobs:
-  deploy:
+  terraform-plan:
+    name: Terraform plan
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 45
 
     services:
       postgres:
@@ -128,6 +130,76 @@ jobs:
       - name: Terraform plan
         working-directory: infra/terraform
         run: terraform plan -input=false -out=tfplan
+
+      - name: Upload Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: infra/terraform/tfplan
+          if-no-files-found: error
+
+  terraform-apply-and-deploy:
+    name: Terraform apply and deploy
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    timeout-minutes: 45
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
+      TF_VAR_key_name: ${{ secrets.TF_VAR_KEY_NAME }}
+      TF_VAR_ssh_allowed_cidr: ${{ secrets.TF_VAR_SSH_ALLOWED_CIDR }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set optional Terraform variables
+        run: |
+          PN="${{ secrets.TF_VAR_PROJECT_NAME }}"
+          EV="${{ secrets.TF_VAR_ENVIRONMENT }}"
+          echo "TF_VAR_project_name=${PN:-cns}" >> "$GITHUB_ENV"
+          echo "TF_VAR_environment=${EV:-prod}" >> "$GITHUB_ENV"
+
+      - name: Download Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+          path: infra/terraform
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform debug and init (S3 backend, reconfigure)
+        working-directory: infra/terraform
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
+          TF_STATE_DYNAMODB_TABLE: ${{ secrets.TF_STATE_DYNAMODB_TABLE }}
+        run: |
+          set -euo pipefail
+          pwd
+          ls -la
+          terraform version
+          if [[ -z "${TF_STATE_BUCKET:-}" ]]; then
+            echo "::error::Set repository secret TF_STATE_BUCKET (S3). See docs/CICD_DEPLOYMENT.md"
+            exit 1
+          fi
+          KEY="${TF_STATE_KEY:-cloud-networking-studio/prod/terraform.tfstate}"
+          {
+            echo "bucket  = \"${TF_STATE_BUCKET}\""
+            echo "key     = \"${KEY}\""
+            echo "region  = \"${AWS_REGION}\""
+            echo "encrypt = true"
+          } > backend.ci.hcl
+          if [[ -n "${TF_STATE_DYNAMODB_TABLE:-}" ]]; then
+            echo "dynamodb_table = \"${TF_STATE_DYNAMODB_TABLE}\"" >> backend.ci.hcl
+          fi
+          terraform init -input=false -reconfigure -backend-config=backend.ci.hcl
 
       - name: Terraform apply
         working-directory: infra/terraform

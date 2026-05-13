@@ -14,12 +14,13 @@ The workflow **`.github/workflows/ephemeral-infra-smoke.yml`** provisions a **sh
 
 ## Lifecycle
 
-1. **`terraform init -backend=false`** — state file lives only for this job.
-2. **`terraform validate`** / **`apply -auto-approve`** — unique `TF_VAR_environment=ephemeral-<run_id>` so resource names do not collide with prod.
-3. **SSH**: clone repo, **`git checkout` the PR/commit SHA**, write **`.env`**, **`docker compose ... up -d --build`**.
-4. **Smoke**: `scripts/prod_smoke_test.sh` with **`CNS_BASE_URL`** = **`stack_base_url_sslip`** (HTTPS, longer wait for certificate issuance).
-5. **Optional heavy smoke**: **`--heavy`** (deploy/destroy topology) runs with **`continue-on-error: true`** because Docker-on-EC2 behavior can vary.
-6. **`terraform destroy -auto-approve`** in a step with **`if: always()`** so teardown runs even when smoke fails.
+1. **`terraform init -reconfigure -backend=false`** — local state on the runner only for this job.
+2. **`terraform validate`** then **`terraform plan -out=tfplan`**.
+3. **`terraform init -reconfigure -backend=false`** again (debug context) immediately before **`terraform apply`** the saved plan.
+4. **SSH**: clone repo, **`git checkout` the PR/commit SHA**, write **`.env`**, **`docker compose ... up -d --build`**.
+5. **Smoke**: `scripts/prod_smoke_test.sh` with **`CNS_BASE_URL`** = **`stack_base_url_sslip`** (HTTPS, longer wait for certificate issuance).
+6. **Optional heavy smoke**: **`--heavy`** (deploy/destroy topology) runs with **`continue-on-error: true`** because Docker-on-EC2 behavior can vary.
+7. **`terraform init -reconfigure -backend=false`** then **`terraform destroy -auto-approve`** in a step with **`if: always()`** so teardown runs even when smoke fails (after **`terraform state list`** guard for empty state).
 
 If **destroy** fails (API rate limit, transient AWS error), resources may linger — re-run the workflow or clean up manually in the AWS console.
 

@@ -1,5 +1,6 @@
 # Ephemeral EC2 + Terraform apply → deploy → smoke → terraform destroy (always).
-# Intended for same-repo PRs with AWS / SSH secrets configured. See docs/EPHEMERAL_CI_ENVIRONMENTS.md.
+# Uses local Terraform state on the runner (`-backend=false`); each step that runs Terraform
+# re-initializes so cleanup works even when earlier steps fail. See docs/EPHEMERAL_CI_ENVIRONMENTS.md.
 
 name: Ephemeral infra smoke
 
@@ -19,6 +20,7 @@ env:
 
 jobs:
   ephemeral:
+    name: Ephemeral Terraform and smoke
     runs-on: ubuntu-latest
     timeout-minutes: 90
     # Fork PRs do not receive repository secrets; skip expensive / unsafe no-op.
@@ -51,9 +53,22 @@ jobs:
         working-directory: infra/terraform
         run: terraform validate
 
+      - name: Terraform plan
+        working-directory: infra/terraform
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Terraform debug and init before apply
+        working-directory: infra/terraform
+        run: |
+          set -euo pipefail
+          pwd
+          ls -la
+          terraform version
+          terraform init -input=false -reconfigure -backend=false
+
       - name: Terraform apply
         working-directory: infra/terraform
-        run: terraform apply -input=false -auto-approve
+        run: terraform apply -input=false -auto-approve tfplan
 
       - name: Terraform outputs
         id: tf
@@ -111,6 +126,9 @@ jobs:
         working-directory: infra/terraform
         run: |
           set -euo pipefail
+          pwd
+          ls -la
+          terraform version
           terraform init -input=false -reconfigure -backend=false
           if terraform state list | grep -q .; then
             terraform destroy -input=false -auto-approve

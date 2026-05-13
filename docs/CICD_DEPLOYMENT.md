@@ -55,7 +55,7 @@ The **Deploy production** workflow (`.github/workflows/deploy-production.yml`) r
 3. Optional: **`TF_STATE_KEY`** (defaults to `cloud-networking-studio/prod/terraform.tfstate`).
 4. Optional: **`TF_STATE_DYNAMODB_TABLE`** for lock coordination.
 
-The repo declares a partial **`backend "s3" {}`** in `infra/terraform/versions.tf`. Local developers can use:
+The repo declares a partial **`backend "s3" {}`** in `infra/terraform/backend.tf` (merged with `versions.tf`). Local developers can use:
 
 - `terraform init -backend-config=backend.local.hcl` (see `backend.s3.hcl.example`), or  
 - `terraform init -backend=false` for throwaway local state.
@@ -80,16 +80,22 @@ Plain **`docker-compose.prod.yml`** alone remains valid for **HTTP-only** local 
 
 ## GitHub Actions: `deploy-production.yml`
 
-On **`push` to `main`** (and **`workflow_dispatch`**), the workflow:
+On **`push` to `main`** (and **`workflow_dispatch`**), the workflow runs as **two jobs**:
+
+**Job `terraform-plan`**
 
 1. Runs **backend pytest** (with Postgres service on the runner).
 2. Validates **`docker-compose.prod.yml`** via `docker compose config`.
 3. Builds the **frontend** once with default Vite env (sanity compile before cloud steps).
-4. Runs **`terraform fmt -check`**, **`terraform init`** (S3), **`validate`**, **`plan`**, **`apply`**.
-5. Reads outputs: **`public_ip`**, **`sslip_host`**, **`stack_base_url_sslip`**, **`api_base_url_sslip`**.
-6. **SSH** to the instance: clone or update repo, **`git checkout` the pushed SHA**, refresh **`SSLIP_HOST`**, bring up **Compose + sslip overlay**.
-7. Runs **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL=${stack_base_url_sslip}`** (waits longer for ACME via **`CNS_WAIT_ATTEMPTS`**).
-8. Runs **`vercel pull` / `vercel build` / `vercel deploy --prebuilt --prod`** with **`VITE_API_BASE_URL`** set to **`api_base_url_sslip`**.
+4. Runs **`terraform init -reconfigure`** (S3), **`terraform fmt -check`**, **`validate`**, **`plan`**, and uploads the **`tfplan`** artifact.
+
+**Job `terraform-apply-and-deploy`** (needs plan job)
+
+5. Downloads **`tfplan`**, runs **`terraform init -reconfigure`** again (fresh runner), then **`terraform apply`** the saved plan.
+6. Reads outputs: **`public_ip`**, **`sslip_host`**, **`stack_base_url_sslip`**, **`api_base_url_sslip`**.
+7. **SSH** to the instance: clone or update repo, **`git checkout` the pushed SHA**, refresh **`SSLIP_HOST`**, bring up **Compose + sslip overlay**.
+8. Runs **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL=${stack_base_url_sslip}`** (waits longer for ACME via **`CNS_WAIT_ATTEMPTS`**).
+9. Runs **`vercel pull` / `vercel build` / `vercel deploy --prebuilt --prod`** with **`VITE_API_BASE_URL`** set to **`api_base_url_sslip`**.
 
 ## CORS
 

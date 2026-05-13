@@ -23,18 +23,18 @@ If you still see “No valid credential sources found”, no profile/env credent
 
 ## Remote state (production / shared CI)
 
-`versions.tf` declares a partial **`backend "s3" {}`**. For **durable production** state (required by `.github/workflows/deploy-production.yml`), configure an S3 bucket and run init with a backend config file. Example template: **`backend.s3.hcl.example`**.
+`backend.tf` declares a partial **`backend "s3" {}`** (merged with `versions.tf`). For **durable production** state (required by `.github/workflows/deploy-production.yml`), configure an S3 bucket and run init with a backend config file. Example template: **`backend.s3.hcl.example`**.
 
 ```bash
 cd infra/terraform
 cp backend.s3.hcl.example backend.local.hcl   # edit bucket/key — keep backend.local.hcl gitignored
-terraform init -backend-config=backend.local.hcl
+terraform init -reconfigure -backend-config=backend.local.hcl
 ```
 
 For **throwaway** runs (local lab or **ephemeral PR** CI), use **local state**:
 
 ```bash
-terraform init -backend=false
+terraform init -reconfigure -backend=false
 ```
 
 Ephemeral CI always **`terraform destroy`** at the end of the job; local state on the runner is discarded.

@@ -100,6 +100,8 @@ jobs:
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
           TF_STATE_DYNAMODB_TABLE: ${{ secrets.TF_STATE_DYNAMODB_TABLE }}
+          # Partial S3 backend: inject backend file path into init (init line stays `terraform init -input=false -reconfigure`).
+          TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
         run: |
           # Terraform commands must stay in this single block so backend init is guaranteed before plan/apply.
           set -euxo pipefail
@@ -121,7 +123,7 @@ jobs:
           if [[ -n "${TF_STATE_DYNAMODB_TABLE:-}" ]]; then
             echo "dynamodb_table = \"${TF_STATE_DYNAMODB_TABLE}\"" >> backend.ci.hcl
           fi
-          terraform init -input=false -reconfigure -backend-config=backend.ci.hcl
+          terraform init -input=false -reconfigure
           terraform fmt -check -recursive
           terraform validate
           terraform plan -input=false -out=tfplan

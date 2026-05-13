@@ -4,7 +4,7 @@
 #   cd infra/terraform
 #   terraform init -backend-config=backend.local.hcl
 #
-# Ephemeral CI uses `terraform init -backend=false` instead (local state on the runner, then destroy).
+# Ephemeral CI uses the same S3 backend with a per-run state key (see .github/workflows/ephemeral-infra-smoke.yml).
 
 bucket         = "your-terraform-state-bucket"
 key            = "cloud-networking-studio/prod/terraform.tfstate"

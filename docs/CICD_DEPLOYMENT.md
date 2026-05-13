@@ -58,7 +58,7 @@ The **Deploy production** workflow (`.github/workflows/deploy-production.yml`) r
 The repo declares a partial **`backend "s3" {}`** in `infra/terraform/backend.tf` (merged with `versions.tf`). Local developers can use:
 
 - `terraform init -backend-config=backend.local.hcl` (see `backend.s3.hcl.example`), or  
-- `terraform init -backend=false` for throwaway local state.
+- `terraform init -input=false -reconfigure -backend-config=backend.local.hcl` for a dedicated non-CI state file.
 
 **The production workflow does not run `terraform destroy`.** Destroy is manual or a separate process.
 
@@ -85,7 +85,7 @@ On **`push` to `main`** (and **`workflow_dispatch`**), the **`deploy`** job:
 1. Runs **backend pytest** (with Postgres service on the runner).
 2. Validates **`docker-compose.prod.yml`** via `docker compose config`.
 3. Builds the **frontend** once with default Vite env (sanity compile before cloud steps).
-4. Runs a **single shell step** under **`infra/terraform`**: `terraform init -reconfigure` (S3 via generated **`backend.ci.hcl`**), **`fmt -check`**, **`validate`**, **`plan`**, **`apply`**, then writes **`terraform output`** values to the job summary (same step so the backend is initialized before plan/apply).
+4. Runs a **single shell step** under **`infra/terraform`**: writes **`backend.ci.hcl`**, **`rm -rf .terraform`**, **`terraform init -input=false -reconfigure`** (with **`TF_CLI_ARGS_init=-backend-config=backend.ci.hcl`** so the partial S3 backend is configured), then **`fmt -check`**, **`validate`**, **`plan`**, **`apply`**, then **`terraform output`** in the same step.
 5. **SSH** to the instance: clone or update repo, **`git checkout` the pushed SHA**, refresh **`SSLIP_HOST`**, bring up **Compose + sslip overlay**.
 6. Runs **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL=${stack_base_url_sslip}`** (waits longer for ACME via **`CNS_WAIT_ATTEMPTS`**).
 7. Runs **`vercel pull` / `vercel build` / `vercel deploy --prebuilt --prod`** with **`VITE_API_BASE_URL`** set to **`api_base_url_sslip`**.

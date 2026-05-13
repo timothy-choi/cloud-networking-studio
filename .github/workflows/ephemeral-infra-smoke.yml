@@ -1,5 +1,6 @@
 # Ephemeral EC2 + Terraform apply → deploy → smoke → terraform destroy (always).
-# Local Terraform state on the runner (`-backend=false`). See docs/EPHEMERAL_CI_ENVIRONMENTS.md.
+# Uses the same S3 partial backend as production; state key is per-run under TF_STATE_BUCKET.
+# See docs/EPHEMERAL_CI_ENVIRONMENTS.md.
 
 name: Ephemeral infra smoke
 
@@ -47,6 +48,9 @@ jobs:
           TF_VAR_environment: ephemeral-${{ github.run_id }}
           TF_VAR_key_name: ${{ secrets.TF_VAR_KEY_NAME }}
           TF_VAR_ssh_allowed_cidr: ${{ secrets.TF_VAR_SSH_ALLOWED_CIDR }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TF_STATE_DYNAMODB_TABLE: ${{ secrets.TF_STATE_DYNAMODB_TABLE }}
+          TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
         run: |
           # Terraform commands must stay in this single block so backend init is guaranteed before plan/apply.
           set -euxo pipefail
@@ -54,7 +58,21 @@ jobs:
           ls -la
           terraform version
           rm -rf .terraform
-          terraform init -input=false -reconfigure -backend=false
+          if [[ -z "${TF_STATE_BUCKET:-}" ]]; then
+            echo "::error::Set TF_STATE_BUCKET for ephemeral Terraform (S3 backend). See docs/EPHEMERAL_CI_ENVIRONMENTS.md"
+            exit 1
+          fi
+          KEY="cloud-networking-studio/ephemeral/${GITHUB_RUN_ID}/terraform.tfstate"
+          {
+            echo "bucket  = \"${TF_STATE_BUCKET}\""
+            echo "key     = \"${KEY}\""
+            echo "region  = \"${AWS_REGION}\""
+            echo "encrypt = true"
+          } > backend.ci.hcl
+          if [[ -n "${TF_STATE_DYNAMODB_TABLE:-}" ]]; then
+            echo "dynamodb_table = \"${TF_STATE_DYNAMODB_TABLE}\"" >> backend.ci.hcl
+          fi
+          terraform init -input=false -reconfigure
           terraform validate
           terraform plan -input=false -out=tfplan
           terraform apply -input=false -auto-approve tfplan
@@ -117,9 +135,26 @@ jobs:
           TF_VAR_environment: ephemeral-${{ github.run_id }}
           TF_VAR_key_name: ${{ secrets.TF_VAR_KEY_NAME }}
           TF_VAR_ssh_allowed_cidr: ${{ secrets.TF_VAR_SSH_ALLOWED_CIDR }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TF_STATE_DYNAMODB_TABLE: ${{ secrets.TF_STATE_DYNAMODB_TABLE }}
+          TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
         run: |
           # Terraform commands must stay in this single block so backend init is guaranteed before plan/apply.
           set -euxo pipefail
+          if [[ -z "${TF_STATE_BUCKET:-}" ]]; then
+            echo "::error::TF_STATE_BUCKET unset; cannot init S3 backend for destroy."
+            exit 1
+          fi
+          KEY="cloud-networking-studio/ephemeral/${GITHUB_RUN_ID}/terraform.tfstate"
+          {
+            echo "bucket  = \"${TF_STATE_BUCKET}\""
+            echo "key     = \"${KEY}\""
+            echo "region  = \"${AWS_REGION}\""
+            echo "encrypt = true"
+          } > backend.ci.hcl
+          if [[ -n "${TF_STATE_DYNAMODB_TABLE:-}" ]]; then
+            echo "dynamodb_table = \"${TF_STATE_DYNAMODB_TABLE}\"" >> backend.ci.hcl
+          fi
           rm -rf .terraform
-          terraform init -input=false -reconfigure -backend=false
+          terraform init -input=false -reconfigure
           terraform destroy -input=false -auto-approve

@@ -31,13 +31,13 @@ cp backend.s3.hcl.example backend.local.hcl   # edit bucket/key — keep backend
 terraform init -reconfigure -backend-config=backend.local.hcl
 ```
 
-For **throwaway** runs (local lab or **ephemeral PR** CI), use **local state**:
+For **throwaway** local runs without S3, you can use **local state** (not used in GitHub Actions):
 
 ```bash
-terraform init -reconfigure -backend=false
+terraform init -input=false -reconfigure -backend=false
 ```
 
-Ephemeral CI always **`terraform destroy`** at the end of the job; local state on the runner is discarded.
+Ephemeral **CI** uses **S3** with a per-run object key under **`TF_STATE_BUCKET`** (see **`.github/workflows/ephemeral-infra-smoke.yml`**).
 
 ## Configure variables
 
@@ -67,7 +67,7 @@ You can also paste a specific prefix you see in the EC2 “Launch instance” AM
 From **`infra/terraform/`**:
 
 ```bash
-terraform init -backend=false   # or -backend-config=... for S3
+terraform init -input=false -reconfigure -backend-config=backend.local.hcl   # or another generated backend.*.hcl
 terraform fmt -recursive
 terraform validate
 terraform plan
@@ -147,7 +147,7 @@ After `terraform init`, Terraform may create **`.terraform.lock.hcl`**. Committi
 
 ```bash
 cd infra/terraform
-terraform init -backend=false
+terraform init -input=false -reconfigure -backend-config=backend.local.hcl
 terraform fmt -check -recursive
 terraform validate
 terraform plan -input=false

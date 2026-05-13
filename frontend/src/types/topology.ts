@@ -14,6 +14,9 @@ export interface TopologyResponse {
   config: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+  /** Present on list/detail API responses. */
+  node_count?: number | null;
+  link_count?: number | null;
 }
 
 export interface TopologyCreate {

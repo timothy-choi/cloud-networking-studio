@@ -52,13 +52,16 @@ const CnsEditorNode = memo(function CnsEditorNode({
 }: NodeProps<Node<CnsFlowNodeData>>) {
   const v = data.visual;
   const isRouter = data.nodeKind === 'router';
+  const missingIp = Boolean(data.missingIntentIp);
   const shellBase = isRouter
     ? 'border-violet-500/80 bg-gradient-to-br from-violet-950/55 via-zinc-950/90 to-zinc-950/95'
     : 'border-zinc-700/90 bg-zinc-950/95';
   const accent =
     selected
       ? 'ring-2 ring-sky-400 shadow-[0_0_0_1px_rgba(56,189,248,0.35)]'
-      : v === 'running'
+      : missingIp
+        ? 'ring-2 ring-amber-400/90 shadow-[0_0_0_1px_rgba(251,191,36,0.45)]'
+        : v === 'running'
         ? 'shadow-[0_0_26px_rgba(34,197,94,0.38)] ring-1 ring-emerald-500/75'
         : v === 'stopped'
           ? 'shadow-[0_0_28px_rgba(239,68,68,0.48)] ring-1 ring-red-500/80'
@@ -136,6 +139,9 @@ const CnsEditorNode = memo(function CnsEditorNode({
         {data.intentIp ? (
           <div className="font-mono text-[11px] text-cns-graph-mono">intent {data.intentIp}</div>
         ) : null}
+        {data.missingIntentIp ? (
+          <div className="text-[10px] font-medium text-amber-300/95">Intent IP required for deploy — set in inspector</div>
+        ) : null}
       </div>
       <Handle
         type="source"
@@ -194,7 +200,7 @@ function TopologyWorkspaceInner({
       return;
     }
     prevSig.current = sig;
-    setRfNodes(topologyNodesToFlowNodes(nodes, runtime, null));
+    setRfNodes(topologyNodesToFlowNodes(nodes, runtime, null, links));
     setRfEdges(topologyLinksToFlowEdges(links, runtime?.deployment_status ?? null));
     queueMicrotask(() => {
       if (nodes.length > 0) {
@@ -204,6 +210,7 @@ function TopologyWorkspaceInner({
   }, [sig, nodes, links, runtime, setRfNodes, setRfEdges, fitView]);
 
   /* Overlay runtime + controller activity without resetting drag positions. */
+  const requireIntentIp = links.length > 0 && nodes.length > 1;
   useEffect(() => {
     setRfNodes((nds) =>
       nds.map((n) => {
@@ -224,6 +231,7 @@ function TopologyWorkspaceInner({
             subtitle: node?.node_type ?? d.subtitle,
             nodeKind: node?.node_type ?? d.nodeKind,
             intentIp: node?.ip_address ?? d.intentIp,
+            missingIntentIp: requireIntentIp && !(node?.ip_address ?? '').trim(),
             routerIfaceCount,
             routerIpForward,
             forwardingRole,
@@ -231,7 +239,7 @@ function TopologyWorkspaceInner({
         };
       }),
     );
-  }, [runtime, controllerBusy, nodes, setRfNodes]);
+  }, [runtime, controllerBusy, nodes, links.length, requireIntentIp, setRfNodes]);
 
   useEffect(() => {
     setRfEdges((eds) =>
@@ -267,7 +275,7 @@ function TopologyWorkspaceInner({
   }, [linkDraftSourceId, nodes]);
 
   const run = useCallback(
-    async (label: string, fn: () => Promise<unknown>) => {
+    async (label: string, fn: () => Promise<unknown>, rethrow = false) => {
       setBusy(label);
       setNote(null);
       setSuccessMsg(null);
@@ -278,6 +286,7 @@ function TopologyWorkspaceInner({
         window.setTimeout(() => setSuccessMsg(null), 4500);
       } catch (e) {
         setNote(formatApiError(e));
+        if (rethrow) throw e;
       } finally {
         setBusy(null);
       }
@@ -470,7 +479,7 @@ function TopologyWorkspaceInner({
         name: `${src.name}-copy`,
         node_type: src.node_type,
         image: src.image,
-        ip_address: null,
+        ip_address: src.ip_address,
         config: {
           ...(src.config ?? {}),
           [EDITOR_POSITION_KEY]: { x: pos.x + 40, y: pos.y + 40 },
@@ -717,20 +726,23 @@ function TopologyWorkspaceInner({
               selectedLink={selectedLink}
               onPatchNode={(body) =>
                 selectedNodeId
-                  ? run('patch-node', () => topoApi.patchNode(topologyId, selectedNodeId, body))
+                  ? run('patch-node', () => topoApi.patchNode(topologyId, selectedNodeId, body), true)
                   : Promise.resolve()
               }
               onPatchLink={(body) =>
                 selectedEdgeId
-                  ? run('patch-link', () => topoApi.patchLink(topologyId, selectedEdgeId, body))
+                  ? run('patch-link', () => topoApi.patchLink(topologyId, selectedEdgeId, body), true)
                   : Promise.resolve()
               }
               onRenameTopology={(name, description) =>
-                run('rename', () =>
-                  topoApi.patchTopology(topologyId, {
-                    name,
-                    description,
-                  }),
+                run(
+                  'rename',
+                  () =>
+                    topoApi.patchTopology(topologyId, {
+                      name,
+                      description,
+                    }),
+                  true,
                 )
               }
             />

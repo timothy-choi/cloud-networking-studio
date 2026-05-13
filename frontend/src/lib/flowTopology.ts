@@ -18,6 +18,8 @@ export interface CnsFlowNodeData extends Record<string, unknown> {
   /** Persisted topology node_type — drives router styling and badges. */
   nodeKind: TopologyNodeResponse['node_type'];
   intentIp: string | null;
+  /** True when a linked multi-node lab expects an intent IP on every node. */
+  missingIntentIp?: boolean;
   runtimeIp: string | null;
   /** Docker / provider status string */
   statusLabel: string;
@@ -138,8 +140,10 @@ export function topologyNodesToFlowNodes(
   nodes: TopologyNodeResponse[],
   runtime: RuntimeTopologyResponse | null,
   controllerBusy: string | null = null,
+  links: TopologyLinkResponse[] | null = null,
 ): Node<CnsFlowNodeData>[] {
   const n = nodes.length;
+  const requireIntentIp = Boolean(links && links.length > 0 && n > 1);
   const radius = 240;
   return nodes.map((node, i) => {
     const pos = readEditorPosition(node.config);
@@ -164,6 +168,7 @@ export function topologyNodesToFlowNodes(
         subtitle: node.node_type,
         nodeKind: node.node_type,
         intentIp: node.ip_address,
+        missingIntentIp: requireIntentIp && !(node.ip_address ?? '').trim(),
         runtimeIp: pres.runtimeIp,
         statusLabel: pres.statusLabel,
         visual: pres.visual,

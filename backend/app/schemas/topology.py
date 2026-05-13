@@ -84,6 +84,14 @@ class TopologyResponse(BaseModel):
     config: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
+    node_count: int | None = Field(
+        default=None,
+        description="Set on list responses; number of persisted nodes.",
+    )
+    link_count: int | None = Field(
+        default=None,
+        description="Set on list responses; number of persisted links.",
+    )
 
 
 class TopologyNodeCreate(BaseModel):

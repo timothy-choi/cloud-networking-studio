@@ -63,6 +63,16 @@ export function computeDeployReadiness(
     blockingReasons.push('Multi-node topology needs at least one link before deploy.');
   }
 
+  if (nodes.length > 1 && links.length > 0) {
+    for (const n of nodes) {
+      if (!(n.ip_address ?? '').trim()) {
+        blockingReasons.push(
+          `Node “${n.name}” is missing an intent IP — required when multiple nodes are linked (set in the inspector).`,
+        );
+      }
+    }
+  }
+
   const trimmedIps = nodes.map((n) => (n.ip_address ?? '').trim()).filter(Boolean);
   const counts = new Map<string, number>();
   for (const ip of trimmedIps) {
@@ -121,4 +131,53 @@ export function computeDeployReadiness(
     blockingReasons,
     warnings,
   };
+}
+
+export type IntentBadgeTone = 'neutral' | 'warn' | 'ok' | 'live' | 'bad';
+
+export interface IntentBadge {
+  id: string;
+  label: string;
+  tone: IntentBadgeTone;
+}
+
+/** Compact labels for the deployment sidebar (draft / gaps / deployable / deployed). */
+export function computeIntentBadges(
+  nodes: TopologyNodeResponse[],
+  links: TopologyLinkResponse[],
+  topologyStatus: string | null | undefined,
+  deploymentStatus: string | null | undefined,
+): IntentBadge[] {
+  const badges: IntentBadge[] = [];
+  const st = (topologyStatus ?? 'draft').toLowerCase();
+  if (st === 'draft') badges.push({ id: 'draft', label: 'Draft', tone: 'neutral' });
+  else if (st === 'active') badges.push({ id: 'active', label: 'Active', tone: 'live' });
+  else badges.push({ id: 'arch', label: 'Archived', tone: 'bad' });
+
+  if (nodes.length > 1 && links.length === 0) {
+    badges.push({ id: 'm-links', label: 'Missing links', tone: 'warn' });
+  }
+  const missingIp =
+    nodes.length > 1 && links.length > 0 && nodes.some((n) => !(n.ip_address ?? '').trim());
+  if (missingIp) {
+    badges.push({ id: 'm-ip', label: 'Missing IPs', tone: 'warn' });
+  }
+
+  const r = computeDeployReadiness(nodes, links);
+  const ds = deploymentStatus ?? null;
+  if (ds === 'succeeded') {
+    badges.push({ id: 'dep-ok', label: 'Deployed', tone: 'live' });
+  } else if (ds === 'deploying' || ds === 'pending' || ds === 'stopping') {
+    badges.push({
+      id: 'dep-run',
+      label: ds === 'deploying' ? 'Deploying…' : ds === 'pending' ? 'Deploy pending' : 'Stopping…',
+      tone: 'live',
+    });
+  } else if (r.deployable) {
+    badges.push({ id: 'go', label: 'Deployable', tone: 'ok' });
+  } else {
+    badges.push({ id: 'block', label: 'Not deployable', tone: 'bad' });
+  }
+
+  return badges;
 }

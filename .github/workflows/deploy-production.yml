@@ -1,0 +1,245 @@
+# Production: Terraform (S3 state) → EC2 Docker Compose + sslip HTTPS → smoke → Vercel frontend.
+# See docs/CICD_DEPLOYMENT.md.
+
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "1"
+
+jobs:
+  deploy:
+    name: Deploy production
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cloud_networking_studio_test
+          POSTGRES_USER: cns_user
+          POSTGRES_PASSWORD: cns_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U cns_user -d cloud_networking_studio_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set optional Terraform variables
+        run: |
+          PN="${{ secrets.TF_VAR_PROJECT_NAME }}"
+          EV="${{ secrets.TF_VAR_ENVIRONMENT }}"
+          echo "TF_VAR_project_name=${PN:-cns}" >> "$GITHUB_ENV"
+          echo "TF_VAR_environment=${EV:-prod}" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Backend tests
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://cns_user:cns_password@localhost:5432/cloud_networking_studio_test
+          CNS_USE_FAKE_DOCKER: "1"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pytest tests/ -q --tb=short
+
+      - name: Validate production compose file
+        run: docker compose -f docker-compose.prod.yml config --quiet
+
+      - name: Set up Node.js (frontend)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend production build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Terraform apply infrastructure
+        id: tf
+        working-directory: infra/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
+          TF_VAR_key_name: ${{ secrets.TF_VAR_KEY_NAME }}
+          TF_VAR_ssh_allowed_cidr: ${{ secrets.TF_VAR_SSH_ALLOWED_CIDR }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
+          TF_STATE_DYNAMODB_TABLE: ${{ secrets.TF_STATE_DYNAMODB_TABLE }}
+          # Partial S3 backend: inject backend file path into init (init line stays `terraform init -input=false -reconfigure`).
+          TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
+        run: |
+          # Terraform commands must stay in this single block so backend init is guaranteed before plan/apply.
+          set -euxo pipefail
+          pwd
+          ls -la
+          terraform version
+          rm -rf .terraform
+          if [[ -z "${TF_STATE_BUCKET:-}" ]]; then
+            echo "::error::Set repository secret TF_STATE_BUCKET (S3). See docs/CICD_DEPLOYMENT.md"
+            exit 1
+          fi
+          KEY="${TF_STATE_KEY:-cloud-networking-studio/prod/terraform.tfstate}"
+          {
+            echo "bucket  = \"${TF_STATE_BUCKET}\""
+            echo "key     = \"${KEY}\""
+            echo "region  = \"${AWS_REGION}\""
+            echo "encrypt = true"
+          } > backend.ci.hcl
+          if [[ -n "${TF_STATE_DYNAMODB_TABLE:-}" ]]; then
+            echo "dynamodb_table = \"${TF_STATE_DYNAMODB_TABLE}\"" >> backend.ci.hcl
+          fi
+          terraform init -input=false -reconfigure
+          terraform fmt -check -recursive
+          terraform validate
+          terraform plan -input=false -out=tfplan
+          terraform apply -input=false -auto-approve tfplan
+          echo "public_ip=$(terraform output -raw public_ip)" >> "$GITHUB_OUTPUT"
+          echo "sslip_host=$(terraform output -raw sslip_host)" >> "$GITHUB_OUTPUT"
+          echo "stack_base_url_sslip=$(terraform output -raw stack_base_url_sslip)" >> "$GITHUB_OUTPUT"
+          echo "api_base_url_sslip=$(terraform output -raw api_base_url_sslip)" >> "$GITHUB_OUTPUT"
+
+      - name: Debug Terraform (pre-SSH)
+        working-directory: infra/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
+        run: |
+          set -euxo pipefail
+          echo "== steps.tf.outputs.public_ip == ${{ steps.tf.outputs.public_ip }}"
+          terraform output -no-color
+          echo "security_group_id=$(terraform output -raw security_group_id)"
+          echo "subnet_id=$(terraform output -raw subnet_id)"
+          echo "vpc_id=$(terraform output -raw vpc_id)"
+
+      - name: Wait for SSH
+        env:
+          IP: ${{ steps.tf.outputs.public_ip }}
+        run: |
+          set -euxo pipefail
+          for i in $(seq 1 30); do
+            if (command -v nc >/dev/null 2>&1 && nc -zvw2 "$IP" 22) || timeout 3 bash -c "echo >/dev/tcp/${IP}/22" 2>/dev/null; then
+              echo "SSH ready"
+              exit 0
+            fi
+            echo "Waiting for SSH... (${i}/30)"
+            sleep 10
+          done
+          echo "::error::SSH did not become ready"
+          exit 1
+
+      - name: Deploy Docker stack on EC2 (sslip Caddy)
+        uses: appleboy/ssh-action@v1.1.0
+        with:
+          host: ${{ steps.tf.outputs.public_ip }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            set -euxo pipefail
+            sudo cloud-init status --wait || true
+            echo "=== cloud-init status ==="
+            sudo cloud-init status || true
+
+            ensure_docker() {
+              if command -v docker >/dev/null 2>&1; then
+                return 0
+              fi
+              export DEBIAN_FRONTEND=noninteractive
+              sudo apt-get update -y
+              sudo apt-get install -y ca-certificates curl gnupg git jq
+              sudo install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
+              sudo chmod a+r /etc/apt/keyrings/docker.gpg
+              . /etc/os-release
+              echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+              sudo apt-get update -y
+              sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+              sudo systemctl enable docker
+              sudo systemctl start docker
+              sudo usermod -aG docker "${USER}" || true
+            }
+
+            ensure_docker
+            docker --version 2>/dev/null || sudo docker --version
+            docker compose version 2>/dev/null || sudo docker compose version
+
+            COMPOSE=(sudo docker compose)
+
+            REPO_DIR="${HOME}/cloud-networking-studio"
+            REPO_SLUG="${{ github.repository }}"
+            GIT_SHA="${{ github.sha }}"
+            SSLIP_HOST="${{ steps.tf.outputs.sslip_host }}"
+            TOKEN="${{ github.token }}"
+            CLONE_URL="https://x-access-token:${TOKEN}@github.com/${REPO_SLUG}.git"
+            if [[ ! -d "${REPO_DIR}/.git" ]]; then
+              git clone "${CLONE_URL}" "${REPO_DIR}"
+            fi
+            cd "${REPO_DIR}"
+            git remote set-url origin "${CLONE_URL}"
+            git fetch origin
+            git checkout "${GIT_SHA}"
+            if [[ ! -f .env ]]; then
+              echo "::error::Missing ${REPO_DIR}/.env on the instance. Create it once (POSTGRES_PASSWORD, CNS_CORS_ORIGINS for Vercel, etc.). See docs/CICD_DEPLOYMENT.md"
+              exit 1
+            fi
+            tmpf="$(mktemp)"
+            grep -v '^SSLIP_HOST=' .env >"${tmpf}" || cp .env "${tmpf}"
+            mv "${tmpf}" .env
+            echo "SSLIP_HOST=${SSLIP_HOST}" >> .env
+            "${COMPOSE[@]}" -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
+
+      - name: Production smoke (EC2 via sslip)
+        env:
+          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip }}
+          CNS_WAIT_ATTEMPTS: "90"
+        run: bash scripts/prod_smoke_test.sh
+
+      - name: Deploy to Vercel (prebuilt)
+        working-directory: frontend
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VITE_API_BASE_URL: ${{ steps.tf.outputs.api_base_url_sslip }}
+        run: |
+          npm ci
+          npm install vercel@34 --no-save
+          npx vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+          npx vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+          npx vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}"

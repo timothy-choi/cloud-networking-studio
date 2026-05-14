@@ -5,7 +5,8 @@ aws_region         = "us-east-1"
 project_name       = "cns"
 environment        = "prod"
 key_name           = "my-keypair-name"
-ssh_allowed_cidr   = "203.0.113.10/32" # your public IP /32 recommended
+ssh_allowed_cidr   = "203.0.113.10/32" # your public IPv4 /32 for local or manual SSH (not GitHub Actions runners)
+# Ephemeral CI in this repo sets SSH to 0.0.0.0/0 in the workflow — do not mirror that for long-lived prod unless you accept the risk.
 instance_type      = "t3.medium"
 
 # Ubuntu AMI (Canonical owner 099720109477). Default pattern matches noble 24.04 (hvm-ssd and hvm-ssd-gp3 prefixes).

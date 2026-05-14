@@ -28,6 +28,12 @@ class Settings(BaseSettings):
         default="http://localhost:5174,http://127.0.0.1:5174",
         validation_alias="CNS_CORS_ORIGINS",
     )
+    # Optional regex for extra CORS origins (Starlette allow_origin_regex), e.g. Vercel previews:
+    # ^https://.*\\.vercel\\.app$ — leave unset to disable.
+    cors_origin_regex: str | None = Field(
+        default=None,
+        validation_alias="CNS_CORS_ORIGIN_REGEX",
+    )
     # Default matches docker-compose (Postgres published on host port 5433). Override via .env.
     database_url: str = (
         "postgresql://cns_user:cns_password@localhost:5433/cloud_networking_studio"

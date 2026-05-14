@@ -45,6 +45,7 @@ services:
       CNS_ENVIRONMENT: ${CNS_ENVIRONMENT:-production}
       CNS_CONTROLLER_MODE: ${CNS_CONTROLLER_MODE:-manual}
       CNS_CORS_ORIGINS: ${CNS_CORS_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:80,http://127.0.0.1:80}
+      CNS_CORS_ORIGIN_REGEX: ${CNS_CORS_ORIGIN_REGEX:-}
     depends_on:
       postgres:
         condition: service_healthy

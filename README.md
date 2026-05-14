@@ -325,10 +325,6 @@ UI notes: [docs/frontend-mvp-and-observability.md](docs/frontend-mvp-and-observa
 
 ---
 
-## Resume positioning
-
-Use **[docs/RESUME_NOTES.md](docs/RESUME_NOTES.md)** for three tight bullets and interview sound bites, and **[docs/recruiter-highlights.md](docs/recruiter-highlights.md)** for a longer list and **30-second pitch** variants. This repo is meant to read as **“thin slice of platform / networking control plane”** work: intent in Postgres, execution in Docker, operability APIs on top — not a managed cloud product, but **credible architecture** for backend / platform / SRE roles.
-
 ---
 
 ## License

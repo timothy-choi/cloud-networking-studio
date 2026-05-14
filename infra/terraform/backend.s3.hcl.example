@@ -1,0 +1,13 @@
+# Example partial backend config for `terraform init -backend-config=...`
+# Copy to a gitignored file (e.g. `backend.local.hcl`) and fill in your bucket.
+#
+#   cd infra/terraform
+#   terraform init -backend-config=backend.local.hcl
+#
+# Ephemeral CI uses the same S3 backend with a per-run state key (see .github/workflows/ephemeral-infra-smoke.yml).
+
+bucket         = "your-terraform-state-bucket"
+key            = "cloud-networking-studio/prod/terraform.tfstate"
+region         = "us-east-1"
+encrypt        = true
+# dynamodb_table = "your-terraform-locks"

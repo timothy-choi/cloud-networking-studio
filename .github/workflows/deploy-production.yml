@@ -172,7 +172,36 @@ jobs:
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           script_stop: true
           script: |
-            set -euo pipefail
+            set -euxo pipefail
+            sudo cloud-init status --wait || true
+            echo "=== cloud-init status ==="
+            sudo cloud-init status || true
+
+            ensure_docker() {
+              if command -v docker >/dev/null 2>&1; then
+                return 0
+              fi
+              export DEBIAN_FRONTEND=noninteractive
+              sudo apt-get update -y
+              sudo apt-get install -y ca-certificates curl gnupg git jq
+              sudo install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
+              sudo chmod a+r /etc/apt/keyrings/docker.gpg
+              . /etc/os-release
+              echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+              sudo apt-get update -y
+              sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+              sudo systemctl enable docker
+              sudo systemctl start docker
+              sudo usermod -aG docker "${USER}" || true
+            }
+
+            ensure_docker
+            docker --version 2>/dev/null || sudo docker --version
+            docker compose version 2>/dev/null || sudo docker compose version
+
+            COMPOSE=(sudo docker compose)
+
             REPO_DIR="${HOME}/cloud-networking-studio"
             REPO_SLUG="${{ github.repository }}"
             GIT_SHA="${{ github.sha }}"
@@ -194,7 +223,7 @@ jobs:
             grep -v '^SSLIP_HOST=' .env >"${tmpf}" || cp .env "${tmpf}"
             mv "${tmpf}" .env
             echo "SSLIP_HOST=${SSLIP_HOST}" >> .env
-            docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
+            "${COMPOSE[@]}" -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
 
       - name: Production smoke (EC2 via sslip)
         env:

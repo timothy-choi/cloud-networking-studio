@@ -135,6 +135,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           script_stop: true
           script: |
+            #!/usr/bin/env bash
             set -euxo pipefail
             sudo cloud-init status --wait || true
             echo "=== cloud-init status ==="
@@ -142,21 +143,27 @@ jobs:
 
             ensure_docker() {
               if command -v docker >/dev/null 2>&1; then
-                return 0
+                :
+              else
+                export DEBIAN_FRONTEND=noninteractive
+                sudo apt-get update -y
+                sudo apt-get install -y ca-certificates curl gnupg git jq openssl
+                sudo install -m 0755 -d /etc/apt/keyrings
+                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
+                sudo chmod a+r /etc/apt/keyrings/docker.gpg
+                . /etc/os-release
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+                sudo apt-get update -y
+                sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+                sudo systemctl enable docker
+                sudo systemctl start docker
+                sudo usermod -aG docker "${USER}" || true
               fi
-              export DEBIAN_FRONTEND=noninteractive
-              sudo apt-get update -y
-              sudo apt-get install -y ca-certificates curl gnupg git jq
-              sudo install -m 0755 -d /etc/apt/keyrings
-              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
-              sudo chmod a+r /etc/apt/keyrings/docker.gpg
-              . /etc/os-release
-              echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-              sudo apt-get update -y
-              sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-              sudo systemctl enable docker
-              sudo systemctl start docker
-              sudo usermod -aG docker "${USER}" || true
+              if ! command -v openssl >/dev/null 2>&1; then
+                export DEBIAN_FRONTEND=noninteractive
+                sudo apt-get update -y
+                sudo apt-get install -y openssl
+              fi
             }
 
             ensure_docker
@@ -187,24 +194,35 @@ jobs:
               git checkout "${CHECKOUT_REF}"
             fi
             git rev-parse HEAD
-            git status --short
+            git status --short || true
 
             echo "=== write .env (values not printed) ==="
-            missing=()
-            [[ -z "${SSLIP_HOST:-}" ]] && missing+=(SSLIP_HOST)
-            if [[ "${#missing[@]}" -gt 0 ]]; then
-              echo "::error::Ephemeral SSH bootstrap: required value(s) empty or unset (names only): ${missing[*]}. Check Terraform sslip_host output."
+            SSLIP_HOST="$(printf '%s' "${SSLIP_HOST}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [[ -z "${SSLIP_HOST}" ]]; then
+              echo "::error::Ephemeral SSH bootstrap: SSLIP_HOST is empty after trim (check Terraform sslip_host output and tf step)."
               exit 1
             fi
-            PGP="$(openssl rand -hex 24)"
+
+            echo "=== generate POSTGRES_PASSWORD material (no value printed) ==="
+            gen_pg_hex() {
+              if command -v openssl >/dev/null 2>&1; then
+                openssl rand -hex 24
+              elif command -v python3 >/dev/null 2>&1; then
+                python3 -c 'import secrets; print(secrets.token_hex(24))'
+              else
+                ( set +o pipefail; LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c 48 )
+              fi
+            }
+            PGP="$(gen_pg_hex)"
             if [[ -z "${PGP}" ]]; then
-              echo "::error::Ephemeral SSH bootstrap: POSTGRES_PASSWORD generation failed (openssl returned empty)."
+              echo "::error::Ephemeral SSH bootstrap: POSTGRES password material was empty after generation."
               exit 1
             fi
 
             CNS_ENVIRONMENT_VAL="${CNS_ENVIRONMENT:-production}"
             CNS_CONTROLLER_MODE_VAL="${CNS_CONTROLLER_MODE:-manual}"
-            CNS_CADDY_SITE_ADDRESS_VAL="${CNS_CADDY_SITE_ADDRESS:-:80}"
+            _def_caddy_site=':80'
+            CNS_CADDY_SITE_ADDRESS_VAL="${CNS_CADDY_SITE_ADDRESS:-$_def_caddy_site}"
             CNS_CADDY_AUTO_HTTPS_VAL="${CNS_CADDY_AUTO_HTTPS:-off}"
             CADDYFILE_SSLIP_VAL="${CADDYFILE_SSLIP:-./deploy/Caddyfile.prod}"
 

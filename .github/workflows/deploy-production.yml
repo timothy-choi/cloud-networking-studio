@@ -191,6 +191,7 @@ jobs:
           envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS
           script_stop: true
           script: |
+            #!/usr/bin/env bash
             set -euxo pipefail
             sudo cloud-init status --wait || true
             echo "=== cloud-init status ==="
@@ -198,21 +199,27 @@ jobs:
 
             ensure_docker() {
               if command -v docker >/dev/null 2>&1; then
-                return 0
+                :
+              else
+                export DEBIAN_FRONTEND=noninteractive
+                sudo apt-get update -y
+                sudo apt-get install -y ca-certificates curl gnupg git jq openssl
+                sudo install -m 0755 -d /etc/apt/keyrings
+                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
+                sudo chmod a+r /etc/apt/keyrings/docker.gpg
+                . /etc/os-release
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+                sudo apt-get update -y
+                sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+                sudo systemctl enable docker
+                sudo systemctl start docker
+                sudo usermod -aG docker "${USER}" || true
               fi
-              export DEBIAN_FRONTEND=noninteractive
-              sudo apt-get update -y
-              sudo apt-get install -y ca-certificates curl gnupg git jq
-              sudo install -m 0755 -d /etc/apt/keyrings
-              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
-              sudo chmod a+r /etc/apt/keyrings/docker.gpg
-              . /etc/os-release
-              echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-              sudo apt-get update -y
-              sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-              sudo systemctl enable docker
-              sudo systemctl start docker
-              sudo usermod -aG docker "${USER}" || true
+              if ! command -v openssl >/dev/null 2>&1; then
+                export DEBIAN_FRONTEND=noninteractive
+                sudo apt-get update -y
+                sudo apt-get install -y openssl
+              fi
             }
 
             ensure_docker
@@ -239,18 +246,20 @@ jobs:
             git fetch origin
             git checkout "${GIT_SHA}"
             git rev-parse HEAD
-            git status --short
+            git status --short || true
 
             echo "=== write .env (values not printed) ==="
-            missing=()
-            [[ -z "${POSTGRES_PASSWORD:-}" ]] && missing+=(POSTGRES_PASSWORD)
-            [[ -z "${CNS_CORS_ORIGINS:-}" ]] && missing+=(CNS_CORS_ORIGINS)
-            if [[ "${#missing[@]}" -gt 0 ]]; then
-              echo "::error::SSH deploy: required environment variable(s) empty or unset (names only): ${missing[*]}. Set repository secrets and pass them through appleboy ssh-action envs. See docs/CICD_DEPLOYMENT.md"
+            if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+              echo "::error::SSH deploy: POSTGRES_PASSWORD is empty or unset on the SSH session. Set the repository secret and pass envs through appleboy ssh-action (envs: POSTGRES_PASSWORD,...). See docs/CICD_DEPLOYMENT.md"
               exit 1
             fi
-            if [[ -z "${SSLIP_HOST:-}" ]]; then
-              echo "::error::SSH deploy: SSLIP_HOST is empty or unset (Terraform sslip_host output missing?)"
+            if [[ -z "${CNS_CORS_ORIGINS:-}" ]]; then
+              echo "::error::SSH deploy: CNS_CORS_ORIGINS is empty or unset on the SSH session. Set the repository secret and pass envs through appleboy ssh-action. See docs/CICD_DEPLOYMENT.md"
+              exit 1
+            fi
+            SSLIP_HOST="$(printf '%s' "${SSLIP_HOST}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [[ -z "${SSLIP_HOST}" ]]; then
+              echo "::error::SSH deploy: SSLIP_HOST is empty after trim (Terraform sslip_host output missing?)."
               exit 1
             fi
 
@@ -258,7 +267,8 @@ jobs:
             # defaults to on so production sslip + Let's Encrypt behavior matches docker-compose.sslip.yml.
             CNS_ENVIRONMENT_VAL="${CNS_ENVIRONMENT:-production}"
             CNS_CONTROLLER_MODE_VAL="${CNS_CONTROLLER_MODE:-manual}"
-            CNS_CADDY_SITE_ADDRESS_VAL="${CNS_CADDY_SITE_ADDRESS:-:80}"
+            _def_caddy_site=':80'
+            CNS_CADDY_SITE_ADDRESS_VAL="${CNS_CADDY_SITE_ADDRESS:-$_def_caddy_site}"
             CNS_CADDY_AUTO_HTTPS_VAL="${CNS_CADDY_AUTO_HTTPS:-on}"
 
             if [[ ! -f .env ]]; then

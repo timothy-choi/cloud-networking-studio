@@ -23,6 +23,7 @@ for arg in "$@"; do
       echo "  CNS_BASE_URL       default http://127.0.0.1"
       echo "  CNS_HEAVY_SMOKE=1  optional deploy/destroy against real Docker (CI sets this when enabled)"
       echo "  CNS_WAIT_ATTEMPTS  passed to wait_caddy_edge (default 30) — raise for slow HTTPS / ACME"
+      echo "  Edge checks use curl without -L: only HTTP 200 counts (3xx redirects fail the wait)."
       exit 0
       ;;
   esac

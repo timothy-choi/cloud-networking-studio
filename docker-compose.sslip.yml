@@ -5,6 +5,9 @@
 #   docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml up -d --build
 #
 # Without this file, the default Caddyfile.prod (:80 only) is unchanged.
+#
+# HTTP-only (no ACME, no HTTP→HTTPS redirect): in `.env` set **CADDYFILE_SSLIP=./deploy/Caddyfile.prod**
+# and **CNS_CADDY_AUTO_HTTPS=off** (ephemeral CI). Default **CADDYFILE_SSLIP** is **./deploy/Caddyfile.sslip**.
 
 services:
   caddy:
@@ -13,5 +16,6 @@ services:
       - "443:443"
     environment:
       SSLIP_HOST: ${SSLIP_HOST:?Set SSLIP_HOST to your EIP sslip hostname, e.g. 203.0.113.7.sslip.io}
+      CNS_CADDY_AUTO_HTTPS: ${CNS_CADDY_AUTO_HTTPS:-on}
     volumes:
-      - ./deploy/Caddyfile.sslip:/etc/caddy/Caddyfile:ro
+      - ${CADDYFILE_SSLIP:-./deploy/Caddyfile.sslip}:/etc/caddy/Caddyfile:ro

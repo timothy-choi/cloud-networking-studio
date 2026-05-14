@@ -113,6 +113,18 @@ jobs:
           echo "::error::SSH did not become ready"
           exit 1
 
+      - name: Set EC2 checkout ref
+        id: ec2_ref
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            R="${{ github.event.pull_request.head.sha }}"
+          else
+            R="${{ github.sha }}"
+          fi
+          echo "ref=${R}" >> "$GITHUB_OUTPUT"
+          echo "EC2 checkout ref=${R} (pull_request uses head.sha; workflow_dispatch uses github.sha)"
+
       - name: Bootstrap stack on EC2
         uses: appleboy/ssh-action@v1.1.0
         with:
@@ -122,16 +134,26 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
-            REPO_DIR="${HOME}/cloud-networking-studio-ephemeral"
+            APP_DIR="${HOME}/cloud-networking-studio-ephemeral"
             REPO_SLUG="${{ github.repository }}"
-            GIT_SHA="${{ github.sha }}"
+            CHECKOUT_REF="${{ steps.ec2_ref.outputs.ref }}"
             SSLIP_HOST="${{ steps.tf.outputs.sslip_host }}"
             TOKEN="${{ github.token }}"
             CLONE_URL="https://x-access-token:${TOKEN}@github.com/${REPO_SLUG}.git"
-            rm -rf "${REPO_DIR}"
-            git clone "${CLONE_URL}" "${REPO_DIR}"
-            cd "${REPO_DIR}"
-            git checkout "${GIT_SHA}"
+            rm -rf "${APP_DIR}"
+            git clone "${CLONE_URL}" "${APP_DIR}"
+            cd "${APP_DIR}"
+            if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              PR="${{ github.event.pull_request.number }}"
+              git fetch origin "pull/${PR}/head:pr-${PR}" || true
+              git fetch origin "${CHECKOUT_REF}" || true
+              git checkout "${CHECKOUT_REF}" || git checkout "pr-${PR}"
+            else
+              git fetch origin "${CHECKOUT_REF}" || true
+              git checkout "${CHECKOUT_REF}"
+            fi
+            git rev-parse HEAD
+            git status --short
             PGP="$(openssl rand -hex 24)"
             {
               echo "POSTGRES_PASSWORD=${PGP}"

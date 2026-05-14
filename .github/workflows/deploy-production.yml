@@ -242,15 +242,36 @@ jobs:
             git status --short
 
             echo "=== write .env (values not printed) ==="
+            missing=()
+            [[ -z "${POSTGRES_PASSWORD:-}" ]] && missing+=(POSTGRES_PASSWORD)
+            [[ -z "${CNS_CORS_ORIGINS:-}" ]] && missing+=(CNS_CORS_ORIGINS)
+            if [[ "${#missing[@]}" -gt 0 ]]; then
+              echo "::error::SSH deploy: required environment variable(s) empty or unset (names only): ${missing[*]}. Set repository secrets and pass them through appleboy ssh-action envs. See docs/CICD_DEPLOYMENT.md"
+              exit 1
+            fi
+            if [[ -z "${SSLIP_HOST:-}" ]]; then
+              echo "::error::SSH deploy: SSLIP_HOST is empty or unset (Terraform sslip_host output missing?)"
+              exit 1
+            fi
+
+            # Defaults only — optional overrides may be passed via appleboy envs later. CNS_CADDY_AUTO_HTTPS
+            # defaults to on so production sslip + Let's Encrypt behavior matches docker-compose.sslip.yml.
+            CNS_ENVIRONMENT_VAL="${CNS_ENVIRONMENT:-production}"
+            CNS_CONTROLLER_MODE_VAL="${CNS_CONTROLLER_MODE:-manual}"
+            CNS_CADDY_SITE_ADDRESS_VAL="${CNS_CADDY_SITE_ADDRESS:-:80}"
+            CNS_CADDY_AUTO_HTTPS_VAL="${CNS_CADDY_AUTO_HTTPS:-on}"
+
             if [[ ! -f .env ]]; then
               umask 077
               {
                 echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
                 echo "DATABASE_URL=postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio"
-                echo "CNS_ENVIRONMENT=production"
-                echo "CNS_CONTROLLER_MODE=manual"
+                echo "CNS_ENVIRONMENT=${CNS_ENVIRONMENT_VAL}"
+                echo "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE_VAL}"
                 echo "CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}"
                 echo "SSLIP_HOST=${SSLIP_HOST}"
+                echo "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS_VAL}"
+                echo "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS_VAL}"
               } > .env
               echo "Created ${REPO_DIR}/.env from GitHub Actions secrets."
             else
@@ -261,7 +282,7 @@ jobs:
               echo "Refreshed SSLIP_HOST in existing ${REPO_DIR}/.env"
             fi
             echo "=== .env keys (names only) ==="
-            cut -d= -f1 .env | sort -u
+            cut -d= -f1 .env
 
             unset TOKEN CLONE_URL POSTGRES_PASSWORD CNS_CORS_ORIGINS || true
             set -x

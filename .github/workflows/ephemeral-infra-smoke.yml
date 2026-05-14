@@ -190,17 +190,37 @@ jobs:
             git status --short
 
             echo "=== write .env (values not printed) ==="
+            missing=()
+            [[ -z "${SSLIP_HOST:-}" ]] && missing+=(SSLIP_HOST)
+            if [[ "${#missing[@]}" -gt 0 ]]; then
+              echo "::error::Ephemeral SSH bootstrap: required value(s) empty or unset (names only): ${missing[*]}. Check Terraform sslip_host output."
+              exit 1
+            fi
             PGP="$(openssl rand -hex 24)"
+            if [[ -z "${PGP}" ]]; then
+              echo "::error::Ephemeral SSH bootstrap: POSTGRES_PASSWORD generation failed (openssl returned empty)."
+              exit 1
+            fi
+
+            CNS_ENVIRONMENT_VAL="${CNS_ENVIRONMENT:-production}"
+            CNS_CONTROLLER_MODE_VAL="${CNS_CONTROLLER_MODE:-manual}"
+            CNS_CADDY_SITE_ADDRESS_VAL="${CNS_CADDY_SITE_ADDRESS:-:80}"
+            CNS_CADDY_AUTO_HTTPS_VAL="${CNS_CADDY_AUTO_HTTPS:-off}"
+            CADDYFILE_SSLIP_VAL="${CADDYFILE_SSLIP:-./deploy/Caddyfile.prod}"
+
             {
               echo "POSTGRES_PASSWORD=${PGP}"
               echo "DATABASE_URL=postgresql://cns_user:${PGP}@postgres:5432/cloud_networking_studio"
               echo "SSLIP_HOST=${SSLIP_HOST}"
               echo "CNS_CORS_ORIGINS=https://${SSLIP_HOST},http://127.0.0.1,http://localhost"
-              echo "CNS_CADDY_AUTO_HTTPS=off"
-              echo "CADDYFILE_SSLIP=./deploy/Caddyfile.prod"
+              echo "CNS_ENVIRONMENT=${CNS_ENVIRONMENT_VAL}"
+              echo "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE_VAL}"
+              echo "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS_VAL}"
+              echo "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS_VAL}"
+              echo "CADDYFILE_SSLIP=${CADDYFILE_SSLIP_VAL}"
             } > .env
             echo "=== .env keys (names only) ==="
-            cut -d= -f1 .env | sort -u
+            cut -d= -f1 .env
 
             unset TOKEN CLONE_URL PGP || true
             set -x

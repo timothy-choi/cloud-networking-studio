@@ -3,7 +3,7 @@
 # Usage: wait_caddy_edge.sh <base_url> [attempts=30] [sleep_seconds=2] [api_body_outfile]
 #
 # Exits 0 when GET / returns 200 and GET /api/health returns 200 with JSON containing .status.
-# Exits 1 otherwise. Progress on stderr.
+# Exits 1 otherwise. Redirects (3xx) are never accepted — curl is invoked without -L.
 
 set -euo pipefail
 
@@ -29,9 +29,16 @@ trap 'rm -f "$ROOT_TMP" "$API_TMP"' EXIT
 
 echo "wait_caddy_edge: ${BASE} (up to ${ATTEMPTS} attempts, ${SLEEP}s apart) …" >&2
 
+REDIR_HINTED=0
 for i in $(seq 1 "$ATTEMPTS"); do
+  # Do not follow redirects — smoke requires 200 from Caddy, not 308 to HTTPS.
   code_root="$(curl -sS -o "$ROOT_TMP" -w '%{http_code}' --connect-timeout 5 --max-time 20 "${BASE}/" 2>/dev/null || true)"
   code_api="$(curl -sS -o "$API_TMP" -w '%{http_code}' --connect-timeout 5 --max-time 20 "${BASE}/api/health" 2>/dev/null || true)"
+
+  if [[ "$REDIR_HINTED" -eq 0 ]] && [[ "$code_root" =~ ^3[0-9][0-9]$ || "$code_api" =~ ^3[0-9][0-9]$ ]]; then
+    REDIR_HINTED=1
+    echo "wait_caddy_edge: got HTTP redirect (${code_root} / ${code_api}) — not following (-L off). For sslip without TLS use CADDYFILE_SSLIP=./deploy/Caddyfile.prod and CNS_CADDY_AUTO_HTTPS=off (see docker-compose.sslip.yml)." >&2
+  fi
 
   health_ok=0
   if [[ "$code_api" == "200" ]] && jq -e '.status' "$API_TMP" >/dev/null 2>&1; then

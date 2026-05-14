@@ -80,7 +80,9 @@ jobs:
           echo "public_ip=$(terraform output -raw public_ip)" >> "$GITHUB_OUTPUT"
           echo "sslip_host=$(terraform output -raw sslip_host)" >> "$GITHUB_OUTPUT"
           echo "stack_base_url_sslip=$(terraform output -raw stack_base_url_sslip)" >> "$GITHUB_OUTPUT"
+          echo "stack_base_url_sslip_http=$(terraform output -raw stack_base_url_sslip_http)" >> "$GITHUB_OUTPUT"
           echo "api_base_url_sslip=$(terraform output -raw api_base_url_sslip)" >> "$GITHUB_OUTPUT"
+          echo "api_base_url_sslip_http=$(terraform output -raw api_base_url_sslip_http)" >> "$GITHUB_OUTPUT"
 
       - name: Debug Terraform (pre-SSH)
         working-directory: infra/terraform
@@ -189,19 +191,21 @@ jobs:
               echo "DATABASE_URL=postgresql://cns_user:${PGP}@postgres:5432/cloud_networking_studio"
               echo "SSLIP_HOST=${SSLIP_HOST}"
               echo "CNS_CORS_ORIGINS=https://${SSLIP_HOST},http://127.0.0.1,http://localhost"
+              echo "CNS_CADDY_AUTO_HTTPS=off"
+              echo "CADDYFILE_SSLIP=./deploy/Caddyfile.prod"
             } > .env
             "${COMPOSE[@]}" -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
 
-      - name: Smoke tests (HTTPS sslip)
+      - name: Smoke tests (HTTP sslip)
         env:
-          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip }}
+          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip_http }}
           CNS_WAIT_ATTEMPTS: "90"
         run: bash scripts/prod_smoke_test.sh
 
       - name: Optional heavy smoke (Docker socket on EC2)
         continue-on-error: true
         env:
-          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip }}
+          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip_http }}
           CNS_WAIT_ATTEMPTS: "30"
           CNS_HEAVY_SMOKE: "1"
         run: bash scripts/prod_smoke_test.sh --heavy

@@ -1,6 +1,8 @@
 # Ephemeral CI environments (PR Terraform)
 
-The workflow **`.github/workflows/ephemeral-infra-smoke.yml`** provisions a **short-lived** copy of the Terraform stack (VPC, EC2, EIP), deploys **`docker-compose.prod.yml` + `docker-compose.sslip.yml`**, runs **smoke tests** against **`https://<EIP>.sslip.io`**, then **always** runs **`terraform destroy`** so the VPC and instance are torn down.
+The workflow **`.github/workflows/ephemeral-infra-smoke.yml`** provisions a **short-lived** copy of the Terraform stack (VPC, EC2, EIP), deploys **`docker-compose.prod.yml` + `docker-compose.sslip.yml`**, runs **smoke tests** against **`http://<EIP>.sslip.io`** on port **80**, then **always** runs **`terraform destroy`** so the VPC and instance are torn down.
+
+**HTTPS on sslip** (`https://<EIP>.sslip.io`) remains for production and Vercel. Ephemeral stacks set **`CADDYFILE_SSLIP=./deploy/Caddyfile.prod`** and **`CNS_CADDY_AUTO_HTTPS=off`** in the generated **`.env`** so Caddy does **not** load the **`{$SSLIP_HOST}`** automatic-TLS site (which would otherwise respond with **308** to HTTPS). Caddy then serves the same **`/api/*` → backend** and **`/*` → frontend** routes on **:80** only.
 
 ## How it differs from production
 
@@ -9,7 +11,7 @@ The workflow **`.github/workflows/ephemeral-infra-smoke.yml`** provisions a **sh
 | Trigger | `push` to `main`, `workflow_dispatch` | `pull_request`, `workflow_dispatch` |
 | Terraform state | **S3** (required via `TF_STATE_BUCKET`) | **S3** with key `cloud-networking-studio/ephemeral/<run_id>/terraform.tfstate` |
 | `terraform destroy` | **Never** (by design) | **`always()`** after tests |
-| EC2 `.env` | Maintained on the instance | Generated on the fly (random Postgres password) |
+| EC2 `.env` | Maintained on the instance | Generated on the fly (Postgres password, **`CADDYFILE_SSLIP=./deploy/Caddyfile.prod`**, **`CNS_CADDY_AUTO_HTTPS=off`**, sslip CORS) |
 | Compose directory | `~/cloud-networking-studio` | `~/cloud-networking-studio-ephemeral` (fresh clone) |
 | SSH ingress (port 22) | Secret **`TF_VAR_SSH_ALLOWED_CIDR`** (e.g. **`MY_IP/32`**) | Workflow sets **`TF_VAR_ssh_allowed_cidr` = `0.0.0.0/0`** for GitHub-hosted runners |
 
@@ -27,7 +29,7 @@ After **`terraform apply`**, the workflow **prints Terraform outputs**, **`publi
 2. **Debug (pre-SSH):** print **`terraform output`**, **`public_ip`**, **`security_group_id`**, **`subnet_id`**, **`vpc_id`**.
 3. **Wait for SSH:** poll until **TCP port 22** on **`public_ip`** accepts connections (up to ~5 minutes).
 4. **SSH** (`appleboy/ssh-action`): wait for **`cloud-init`**, ensure **Docker** is present (install from Docker’s apt repo if **`user_data` has not finished**), print **`docker` / `docker compose` versions**, then clone/checkout as before. Deploy uses **`sudo docker compose`** (group membership may not apply in the same SSH session). Prints **`git rev-parse HEAD`** and **`git status --short`**, writes **`.env`**, runs **`docker compose ... up`**.
-5. **Smoke**: `scripts/prod_smoke_test.sh` with **`CNS_BASE_URL`** = **`stack_base_url_sslip`** (HTTPS, longer wait for certificate issuance).
+5. **Smoke**: `scripts/prod_smoke_test.sh` with **`CNS_BASE_URL`** = **`stack_base_url_sslip_http`** (`http://<EIP>.sslip.io`). **`curl` does not follow redirects** — only **200** counts. Terraform still exposes **`stack_base_url_sslip`** / **`api_base_url_sslip`** (HTTPS) for production and future TLS smoke on sslip.
 6. **Optional heavy smoke**: **`--heavy`** (deploy/destroy topology) runs with **`continue-on-error: true`** because Docker-on-EC2 behavior can vary.
 7. **`Terraform destroy infrastructure`** with **`if: always()`**: regenerate **`backend.ci.hcl`** (same state key as apply), **`rm -rf .terraform`**, **`terraform init -input=false -reconfigure`**, **`terraform destroy -auto-approve`** (same **`TF_CLI_ARGS_init`** pattern; **`TF_VAR_ssh_allowed_cidr`** remains **`0.0.0.0/0`** so destroy matches the applied security group).
 

@@ -1,6 +1,10 @@
 # Production reverse proxy with optional public HTTPS on sslip.io + HTTP on :80.
 # Use together with docker-compose.prod.yml + docker-compose.sslip.yml (see docs/CICD_DEPLOYMENT.md).
 #
+# The **{$SSLIP_HOST}** site enables automatic HTTPS (and may redirect plain HTTP for that host). For
+# CI/ephemeral stacks that must stay on HTTP only, set **CADDYFILE_SSLIP=./deploy/Caddyfile.prod** in `.env`
+# (see docker-compose.sslip.yml) and **CNS_CADDY_AUTO_HTTPS=off** as a documented flag.
+#
 # Routing (both :80 and {$SSLIP_HOST}):
 #   - /api/* → backend:8000 (prefix stripped; FastAPI paths are /health, /topologies, …)
 #   - /     → frontend:80

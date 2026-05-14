@@ -209,17 +209,18 @@ jobs:
             fi
 
             umask 077
-            cat > .env <<EOF
-POSTGRES_PASSWORD=${PGP}
-DATABASE_URL=postgresql://cns_user:${PGP}@postgres:5432/cloud_networking_studio
-CNS_ENVIRONMENT=${CNS_ENVIRONMENT:-production}
-CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE:-manual}
-CNS_CORS_ORIGINS=https://${SSLIP_HOST},http://127.0.0.1,http://localhost
-SSLIP_HOST=${SSLIP_HOST}
-CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}
-CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}
-CADDYFILE_SSLIP=${CADDYFILE_SSLIP}
-EOF
+            {
+              printf '%s\n' \
+                "POSTGRES_PASSWORD=${PGP}" \
+                "DATABASE_URL=postgresql://cns_user:${PGP}@postgres:5432/cloud_networking_studio" \
+                "CNS_ENVIRONMENT=${CNS_ENVIRONMENT:-production}" \
+                "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE:-manual}" \
+                "CNS_CORS_ORIGINS=https://${SSLIP_HOST},http://127.0.0.1,http://localhost" \
+                "SSLIP_HOST=${SSLIP_HOST}" \
+                "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}" \
+                "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" \
+                "CADDYFILE_SSLIP=${CADDYFILE_SSLIP}"
+            } > .env
             unset PGP || true
 
             echo "=== .env written ==="

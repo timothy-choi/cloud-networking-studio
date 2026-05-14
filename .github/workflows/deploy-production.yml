@@ -1,5 +1,5 @@
-# Production: Terraform (S3 state) → EC2 Docker Compose + sslip HTTPS → smoke → Vercel frontend.
-# See docs/CICD_DEPLOYMENT.md.
+# Production: push to main → Terraform (S3, persistent EC2) → EC2 Compose (HTTP API on sslip for now) → smoke → Vercel.
+# Does not destroy infra. See docs/CICD_DEPLOYMENT.md (Step 31: main vs PR workflows).
 
 name: Deploy production
 
@@ -104,9 +104,7 @@ jobs:
           TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
         run: |
           # Terraform commands must stay in this single block so backend init is guaranteed before plan/apply.
-          set -euxo pipefail
-          pwd
-          ls -la
+          set -euo pipefail
           terraform version
           rm -rf .terraform
           if [[ -z "${TF_STATE_BUCKET:-}" ]]; then
@@ -131,28 +129,15 @@ jobs:
           echo "public_ip=$(terraform output -raw public_ip)" >> "$GITHUB_OUTPUT"
           echo "sslip_host=$(terraform output -raw sslip_host)" >> "$GITHUB_OUTPUT"
           echo "stack_base_url_sslip=$(terraform output -raw stack_base_url_sslip)" >> "$GITHUB_OUTPUT"
+          echo "stack_base_url_sslip_http=$(terraform output -raw stack_base_url_sslip_http)" >> "$GITHUB_OUTPUT"
           echo "api_base_url_sslip=$(terraform output -raw api_base_url_sslip)" >> "$GITHUB_OUTPUT"
-
-      - name: Debug Terraform (pre-SSH)
-        working-directory: infra/terraform
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
-        run: |
-          set -euxo pipefail
-          echo "== steps.tf.outputs.public_ip == ${{ steps.tf.outputs.public_ip }}"
-          terraform output -no-color
-          echo "security_group_id=$(terraform output -raw security_group_id)"
-          echo "subnet_id=$(terraform output -raw subnet_id)"
-          echo "vpc_id=$(terraform output -raw vpc_id)"
+          echo "api_base_url_sslip_http=$(terraform output -raw api_base_url_sslip_http)" >> "$GITHUB_OUTPUT"
 
       - name: Wait for SSH
         env:
           IP: ${{ steps.tf.outputs.public_ip }}
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           for i in $(seq 1 30); do
             if (command -v nc >/dev/null 2>&1 && nc -zvw2 "$IP" 22) || timeout 3 bash -c "echo >/dev/tcp/${IP}/22" 2>/dev/null; then
               echo "SSH ready"
@@ -179,20 +164,21 @@ jobs:
           fi
           echo "Required EC2 deploy secrets are set (values are not printed)."
 
-      - name: Deploy Docker stack on EC2 (sslip Caddy)
+      - name: Deploy Docker stack on EC2 (Caddy HTTP on sslip)
         uses: appleboy/ssh-action@v1.1.0
         env:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           CNS_CORS_ORIGINS: ${{ secrets.CNS_CORS_ORIGINS }}
           CNS_CADDY_SITE_ADDRESS: ":80"
-          CNS_CADDY_AUTO_HTTPS: "on"
+          CNS_CADDY_AUTO_HTTPS: "off"
           CNS_ENVIRONMENT: "production"
           CNS_CONTROLLER_MODE: "manual"
+          CADDYFILE_SSLIP: "./deploy/Caddyfile.prod"
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE
+          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_SSLIP
           script_stop: true
           script: |
             #!/usr/bin/env bash
@@ -252,9 +238,6 @@ jobs:
             git status --short || true
 
             echo "=== write .env (values not printed) ==="
-            echo "POSTGRES_PASSWORD present? $([[ -n "${POSTGRES_PASSWORD:-}" ]] && echo yes || echo no)"
-            echo "CNS_CORS_ORIGINS present? $([[ -n "${CNS_CORS_ORIGINS:-}" ]] && echo yes || echo no)"
-            echo "CNS_CADDY_SITE_ADDRESS present? $([[ -n "${CNS_CADDY_SITE_ADDRESS:-}" ]] && echo yes || echo no)"
 
             SSLIP_TF="${{ steps.tf.outputs.sslip_host }}"
             SH_SSLIP="$(printf '%s' "${SSLIP_TF}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
@@ -276,8 +259,9 @@ CNS_ENVIRONMENT=${CNS_ENVIRONMENT:-production}
 CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE:-manual}
 CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}
 SSLIP_HOST=${SH_SSLIP}
-CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS:-:80}
-CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS:-on}
+CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}
+CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}
+CADDYFILE_SSLIP=${CADDYFILE_SSLIP}
 EOF
             else
               tmpf="$(mktemp)"
@@ -318,9 +302,9 @@ EOF
             echo "=== docker compose ps ==="
             "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a
 
-      - name: Production smoke (EC2 via sslip)
+      - name: Production smoke (EC2 via HTTP sslip)
         env:
-          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip }}
+          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip_http }}
           CNS_WAIT_ATTEMPTS: "90"
         run: bash scripts/prod_smoke_test.sh
 
@@ -329,8 +313,11 @@ EOF
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-          VITE_API_BASE_URL: ${{ steps.tf.outputs.api_base_url_sslip }}
+          VERCEL_VITE_API_BASE_URL: ${{ secrets.VERCEL_VITE_API_BASE_URL }}
+          VITE_API_DEFAULT: ${{ steps.tf.outputs.api_base_url_sslip_http }}
         run: |
+          set -euo pipefail
+          export VITE_API_BASE_URL="${VERCEL_VITE_API_BASE_URL:-${VITE_API_DEFAULT}}"
           npm ci
           npm install vercel@34 --no-save
           npx vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"

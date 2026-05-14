@@ -252,17 +252,18 @@ jobs:
 
             umask 077
             if [[ ! -f .env ]]; then
-              cat > .env <<EOF
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-DATABASE_URL=postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio
-CNS_ENVIRONMENT=${CNS_ENVIRONMENT:-production}
-CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE:-manual}
-CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}
-SSLIP_HOST=${SH_SSLIP}
-CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}
-CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}
-CADDYFILE_SSLIP=${CADDYFILE_SSLIP}
-EOF
+              {
+                printf '%s\n' \
+                  "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" \
+                  "DATABASE_URL=postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio" \
+                  "CNS_ENVIRONMENT=${CNS_ENVIRONMENT:-production}" \
+                  "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE:-manual}" \
+                  "CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}" \
+                  "SSLIP_HOST=${SH_SSLIP}" \
+                  "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}" \
+                  "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" \
+                  "CADDYFILE_SSLIP=${CADDYFILE_SSLIP}"
+              } > .env
             else
               tmpf="$(mktemp)"
               grep -v '^SSLIP_HOST=' .env >"${tmpf}" || cp .env "${tmpf}"

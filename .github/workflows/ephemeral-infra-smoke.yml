@@ -164,7 +164,10 @@ jobs:
             docker compose version 2>/dev/null || sudo docker compose version
 
             COMPOSE=(sudo docker compose)
+            C_ARGS=(-f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env)
 
+            set +x
+            echo "=== git clone / fetch / checkout (xtrace off — token in clone URL) ==="
             APP_DIR="${HOME}/cloud-networking-studio-ephemeral"
             REPO_SLUG="${{ github.repository }}"
             CHECKOUT_REF="${{ steps.ec2_ref.outputs.ref }}"
@@ -185,6 +188,8 @@ jobs:
             fi
             git rev-parse HEAD
             git status --short
+
+            echo "=== write .env (values not printed) ==="
             PGP="$(openssl rand -hex 24)"
             {
               echo "POSTGRES_PASSWORD=${PGP}"
@@ -194,7 +199,35 @@ jobs:
               echo "CNS_CADDY_AUTO_HTTPS=off"
               echo "CADDYFILE_SSLIP=./deploy/Caddyfile.prod"
             } > .env
-            "${COMPOSE[@]}" -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
+            echo "=== .env keys (names only) ==="
+            cut -d= -f1 .env | sort -u
+
+            unset TOKEN CLONE_URL PGP || true
+            set -x
+
+            echo "=== docker compose config ==="
+            if ! "${COMPOSE[@]}" "${C_ARGS[@]}" config; then
+              echo "=== docker compose ps (after failed config) ==="
+              "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a || true
+              echo "=== docker compose logs (after failed config, tail=120) ==="
+              "${COMPOSE[@]}" "${C_ARGS[@]}" logs --tail=120 || true
+              exit 1
+            fi
+
+            echo "=== docker compose down ==="
+            "${COMPOSE[@]}" "${C_ARGS[@]}" down || true
+
+            echo "=== docker compose up -d --build ==="
+            if ! "${COMPOSE[@]}" "${C_ARGS[@]}" up -d --build; then
+              echo "=== docker compose ps (after failed up) ==="
+              "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a || true
+              echo "=== docker compose logs (after failed up, tail=120) ==="
+              "${COMPOSE[@]}" "${C_ARGS[@]}" logs --tail=120 || true
+              exit 1
+            fi
+
+            echo "=== docker compose ps ==="
+            "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a
 
       - name: Smoke tests (HTTP sslip)
         env:

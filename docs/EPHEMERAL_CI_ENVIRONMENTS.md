@@ -1,6 +1,8 @@
 # Ephemeral CI environments (PR Terraform)
 
-The workflow **`.github/workflows/ephemeral-infra-smoke.yml`** provisions a **short-lived** copy of the Terraform stack (VPC, EC2, EIP), deploys **`docker-compose.prod.yml` + `docker-compose.sslip.yml`**, runs **smoke tests** against **`https://<EIP>.sslip.io`**, then **always** runs **`terraform destroy`** so the VPC and instance are torn down.
+The workflow **`.github/workflows/ephemeral-infra-smoke.yml`** provisions a **short-lived** copy of the Terraform stack (VPC, EC2, EIP), deploys **`docker-compose.prod.yml` + `docker-compose.sslip.yml`**, runs **smoke tests** against **`http://<EIP>.sslip.io`** (port 80 through Caddy; no TLS on the smoke path), then **always** runs **`terraform destroy`** so the VPC and instance are torn down.
+
+**HTTPS on sslip** (`https://<EIP>.sslip.io`) is reserved for production-style checks and Vercel integration; ACME/TLS on disposable PR instances can fail or flap, so ephemeral smoke deliberately uses **HTTP** until that path is polished.
 
 ## How it differs from production
 
@@ -27,7 +29,7 @@ After **`terraform apply`**, the workflow **prints Terraform outputs**, **`publi
 2. **Debug (pre-SSH):** print **`terraform output`**, **`public_ip`**, **`security_group_id`**, **`subnet_id`**, **`vpc_id`**.
 3. **Wait for SSH:** poll until **TCP port 22** on **`public_ip`** accepts connections (up to ~5 minutes).
 4. **SSH** (`appleboy/ssh-action`): wait for **`cloud-init`**, ensure **Docker** is present (install from Docker’s apt repo if **`user_data` has not finished**), print **`docker` / `docker compose` versions**, then clone/checkout as before. Deploy uses **`sudo docker compose`** (group membership may not apply in the same SSH session). Prints **`git rev-parse HEAD`** and **`git status --short`**, writes **`.env`**, runs **`docker compose ... up`**.
-5. **Smoke**: `scripts/prod_smoke_test.sh` with **`CNS_BASE_URL`** = **`stack_base_url_sslip`** (HTTPS, longer wait for certificate issuance).
+5. **Smoke**: `scripts/prod_smoke_test.sh` with **`CNS_BASE_URL`** = **`stack_base_url_sslip_http`** (`http://<EIP>.sslip.io`). Terraform still exposes **`stack_base_url_sslip`** / **`api_base_url_sslip`** (HTTPS) for production and future TLS smoke on sslip.
 6. **Optional heavy smoke**: **`--heavy`** (deploy/destroy topology) runs with **`continue-on-error: true`** because Docker-on-EC2 behavior can vary.
 7. **`Terraform destroy infrastructure`** with **`if: always()`**: regenerate **`backend.ci.hcl`** (same state key as apply), **`rm -rf .terraform`**, **`terraform init -input=false -reconfigure`**, **`terraform destroy -auto-approve`** (same **`TF_CLI_ARGS_init`** pattern; **`TF_VAR_ssh_allowed_cidr`** remains **`0.0.0.0/0`** so destroy matches the applied security group).
 

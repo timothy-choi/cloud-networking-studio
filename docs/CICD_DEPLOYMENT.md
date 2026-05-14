@@ -126,4 +126,4 @@ You typically **do not** add the sslip URL as a CORS “browser origin” unless
 
 Never commit keys, `terraform.tfvars`, or tokens. Fork PRs do not receive secrets (ephemeral workflow skips them).
 
-See **`docs/EPHEMERAL_CI_ENVIRONMENTS.md`** for ephemeral-specific behavior.
+See **`docs/EPHEMERAL_CI_ENVIRONMENTS.md`** for ephemeral-specific behavior (PR stacks use **HTTP** `stack_base_url_sslip_http` for smoke so CI does not depend on ACME on short-lived sslip; **HTTPS** on sslip remains the production and Vercel path).

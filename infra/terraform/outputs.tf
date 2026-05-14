@@ -29,13 +29,23 @@ output "sslip_host" {
 }
 
 output "stack_base_url_sslip" {
-  description = "HTTPS origin for the EC2 stack via sslip (use for smoke tests: CNS_BASE_URL + /api/health)."
+  description = "HTTPS origin for the EC2 stack via sslip (production smoke, Vercel-related flows). Ephemeral CI smoke uses stack_base_url_sslip_http until TLS on sslip is polished."
   value       = "https://${aws_eip.cns.public_ip}.sslip.io"
+}
+
+output "stack_base_url_sslip_http" {
+  description = "HTTP origin for sslip (ephemeral CI smoke: CNS_BASE_URL + /api/health). Avoids ACME/TLS issues on short-lived instances."
+  value       = "http://${aws_eip.cns.public_ip}.sslip.io"
 }
 
 output "api_base_url_sslip" {
   description = "HTTPS API base for split Vercel UI (no trailing slash path beyond /api). Caddy strips /api before proxying to FastAPI."
   value       = "https://${aws_eip.cns.public_ip}.sslip.io/api"
+}
+
+output "api_base_url_sslip_http" {
+  description = "HTTP API base for sslip (same path shape as api_base_url_sslip; optional local/debug)."
+  value       = "http://${aws_eip.cns.public_ip}.sslip.io/api"
 }
 
 output "ssh_command" {

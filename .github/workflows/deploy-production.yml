@@ -164,15 +164,34 @@ jobs:
           echo "::error::SSH did not become ready"
           exit 1
 
+      - name: Require EC2 deploy secrets
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          CNS_CORS_ORIGINS: ${{ secrets.CNS_CORS_ORIGINS }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -z "${POSTGRES_PASSWORD:-}" ]] && missing+=(POSTGRES_PASSWORD)
+          [[ -z "${CNS_CORS_ORIGINS:-}" ]] && missing+=(CNS_CORS_ORIGINS)
+          if [[ "${#missing[@]}" -gt 0 ]]; then
+            echo "::error::Missing required repository secret(s): ${missing[*]}. Add them for production EC2 deploy. See docs/CICD_DEPLOYMENT.md"
+            exit 1
+          fi
+          echo "Required EC2 deploy secrets are set (values are not printed)."
+
       - name: Deploy Docker stack on EC2 (sslip Caddy)
         uses: appleboy/ssh-action@v1.1.0
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          CNS_CORS_ORIGINS: ${{ secrets.CNS_CORS_ORIGINS }}
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS
           script_stop: true
           script: |
-            set -euxo pipefail
+            set -euo pipefail
             sudo cloud-init status --wait || true
             echo "=== cloud-init status ==="
             sudo cloud-init status || true
@@ -216,13 +235,22 @@ jobs:
             git fetch origin
             git checkout "${GIT_SHA}"
             if [[ ! -f .env ]]; then
-              echo "::error::Missing ${REPO_DIR}/.env on the instance. Create it once (POSTGRES_PASSWORD, CNS_CORS_ORIGINS for Vercel, etc.). See docs/CICD_DEPLOYMENT.md"
-              exit 1
+              umask 077
+              {
+                echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
+                echo "DATABASE_URL=postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio"
+                echo "CNS_ENVIRONMENT=production"
+                echo "CNS_CONTROLLER_MODE=manual"
+                echo "CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}"
+                echo "SSLIP_HOST=${SSLIP_HOST}"
+              } > .env
+              echo "Created ${REPO_DIR}/.env from GitHub Actions secrets (no secret values logged)."
+            else
+              tmpf="$(mktemp)"
+              grep -v '^SSLIP_HOST=' .env >"${tmpf}" || cp .env "${tmpf}"
+              mv "${tmpf}" .env
+              echo "SSLIP_HOST=${SSLIP_HOST}" >> .env
             fi
-            tmpf="$(mktemp)"
-            grep -v '^SSLIP_HOST=' .env >"${tmpf}" || cp .env "${tmpf}"
-            mv "${tmpf}" .env
-            echo "SSLIP_HOST=${SSLIP_HOST}" >> .env
             "${COMPOSE[@]}" -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
 
       - name: Production smoke (EC2 via sslip)

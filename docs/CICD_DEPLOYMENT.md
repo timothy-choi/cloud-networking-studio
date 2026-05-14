@@ -62,18 +62,22 @@ The repo declares a partial **`backend "s3" {}`** in `infra/terraform/backend.tf
 
 **The production workflow does not run `terraform destroy`.** Destroy is manual or a separate process.
 
-## EC2 bootstrap (one-time)
+## EC2 bootstrap and `.env`
 
-Before the first automated deploy can succeed, the instance must have a repo checkout directory and a **`.env`** file (not committed) with at least:
+**GitHub Actions (`deploy-production.yml`):** before SSH deploy, the workflow checks repository secrets **`POSTGRES_PASSWORD`** and **`CNS_CORS_ORIGINS`**. On the instance, if **`~/cloud-networking-studio/.env` does not exist**, the SSH step creates it from those secrets (plus **`CNS_ENVIRONMENT=production`**, **`CNS_CONTROLLER_MODE=manual`**, matching **`DATABASE_URL`**, and **`SSLIP_HOST`** for sslip). Secret values are **not** written to logs (`set -x` is avoided on the remote script). If **`.env` already exists** (manual install), the workflow **only refreshes `SSLIP_HOST`** so your local passwords and CORS stay in place.
+
+**Manual / local EC2:** copy **`.env.example`** to **`.env`** and set at least:
 
 - Strong **`POSTGRES_PASSWORD`** (and matching **`DATABASE_URL`** if you override it).
 - **`CNS_CORS_ORIGINS`** including your **Vercel production origin** (and any preview origins you care about), **`https://<EIP>.sslip.io`**, and local dev URLs as needed.
 - Optional **`CNS_CORS_ORIGIN_REGEX`** for patterns such as Vercel preview hosts (see `backend/.env.example`).
 
-The workflow **appends `SSLIP_HOST=<EIP>.sslip.io`** on each deploy and runs:
+**`docker-compose.prod.yml`** reads **`POSTGRES_*`**, **`DATABASE_URL`**, **`CNS_*`**, etc. from **`.env`** when you pass **`--env-file .env`** (as the workflow does).
+
+The workflow **appends or refreshes `SSLIP_HOST=<EIP>.sslip.io`** on each deploy and runs:
 
 ```bash
-docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
+sudo docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
 ```
 
 Plain **`docker-compose.prod.yml`** alone remains valid for **HTTP-only** local or EC2 setups (`deploy/Caddyfile.prod`).
@@ -88,9 +92,10 @@ On **`push` to `main`** (and **`workflow_dispatch`**), the **`deploy`** job:
 4. Runs a **single shell step** under **`infra/terraform`**: writes **`backend.ci.hcl`**, **`rm -rf .terraform`**, **`terraform init -input=false -reconfigure`** (with **`TF_CLI_ARGS_init=-backend-config=backend.ci.hcl`** so the partial S3 backend is configured), then **`fmt -check`**, **`validate`**, **`plan`**, **`apply`**, then **`terraform output`** in the same step.
 5. **Debug (pre-SSH):** prints **`terraform output`**, **`steps.tf.outputs.public_ip`**, and **`security_group_id`**, **`subnet_id`**, **`vpc_id`** (Terraform outputs).
 6. **Wait for SSH:** polls until **TCP port 22** on **`public_ip`** accepts connections (instance is in a **public subnet** with **`map_public_ip_on_launch`**, default route to the **internet gateway**, and an **Elastic IP** — see `infra/terraform/network.tf` and `ec2.tf`).
-7. **SSH** (`appleboy/ssh-action`) to the instance: **`sudo cloud-init status --wait`**, ensure **Docker** (install from Docker’s apt repo if still missing), **`sudo docker compose`**, then clone or update repo, **`git checkout` the pushed SHA**, refresh **`SSLIP_HOST`**, bring up **Compose + sslip overlay**.
-8. Runs **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL=${stack_base_url_sslip}`** (waits longer for ACME via **`CNS_WAIT_ATTEMPTS`**).
-9. Runs **`vercel pull` / `vercel build` / `vercel deploy --prebuilt --prod`** with **`VITE_API_BASE_URL`** set to **`api_base_url_sslip`**.
+7. **Require EC2 deploy secrets:** fails early if **`POSTGRES_PASSWORD`** or **`CNS_CORS_ORIGINS`** repository secrets are unset (values are never printed).
+8. **SSH** (`appleboy/ssh-action`) to the instance: **`sudo cloud-init status --wait`**, ensure **Docker** (install from Docker’s apt repo if still missing), **`sudo docker compose`**, then clone or update repo, **`git checkout` the pushed SHA**, create **`.env` from secrets if missing** (else refresh **`SSLIP_HOST`** only), bring up **Compose + sslip overlay**.
+9. Runs **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL=${stack_base_url_sslip}`** (waits longer for ACME via **`CNS_WAIT_ATTEMPTS`**).
+10. Runs **`vercel pull` / `vercel build` / `vercel deploy --prebuilt --prod`** with **`VITE_API_BASE_URL`** set to **`api_base_url_sslip`**.
 
 **SSH CIDR:** for **local or manual** Terraform, use **`ssh_allowed_cidr = "<MY_PUBLIC_IP>/32"`** in **`terraform.tfvars`**. For **`deploy-production.yml`**, set secret **`TF_VAR_SSH_ALLOWED_CIDR`** to **`MY_IP/32`** when only you SSH from home, or to **`0.0.0.0/0`** only if GitHub Actions must reach port 22 and you accept world-writable SSH for the lifetime of the rule (prefer **AWS SSM Session Manager** later to drop open SSH). **Ephemeral** workflow forces **`0.0.0.0/0`** in YAML (see **`docs/EPHEMERAL_CI_ENVIRONMENTS.md`**).
 
@@ -114,6 +119,7 @@ You typically **do not** add the sslip URL as a CORS “browser origin” unless
 | Terraform | `TF_STATE_BUCKET`, optional `TF_STATE_KEY`, `TF_STATE_DYNAMODB_TABLE` | **Production only** — remote state |
 | Terraform | `TF_VAR_KEY_NAME` (workflow maps to env `TF_VAR_key_name`), `TF_VAR_SSH_ALLOWED_CIDR` | EC2 key pair name; SSH ingress CIDR |
 | Terraform | Optional `TF_VAR_PROJECT_NAME`, `TF_VAR_ENVIRONMENT` | Default to `cns` and `prod` when unset |
+| EC2 (compose on instance) | **`POSTGRES_PASSWORD`**, **`CNS_CORS_ORIGINS`** | Required for **first** automated deploy: create **`~/cloud-networking-studio/.env`** on EC2 when the file is missing (see **EC2 bootstrap and `.env`**). Include Vercel origins and **`https://<EIP>.sslip.io`** in **`CNS_CORS_ORIGINS`** as needed. |
 | EC2 | `EC2_SSH_PRIVATE_KEY` | PEM for `appleboy/ssh-action` |
 | EC2 | `EC2_SSH_USER` | e.g. `ubuntu` |
 | Vercel | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | `vercel pull` / `build` / `deploy` |

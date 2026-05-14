@@ -173,12 +173,11 @@ jobs:
           CNS_CADDY_AUTO_HTTPS: "off"
           CNS_ENVIRONMENT: "production"
           CNS_CONTROLLER_MODE: "manual"
-          CADDYFILE_SSLIP: "./deploy/Caddyfile.prod"
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_SSLIP
+          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE
           script_stop: true
           script: |
             #!/usr/bin/env bash
@@ -239,6 +238,9 @@ jobs:
 
             echo "=== write .env (values not printed) ==="
 
+            echo "POSTGRES_PASSWORD present? $([[ -n "${POSTGRES_PASSWORD:-}" ]] && echo yes || echo no)"
+            echo "CNS_CORS_ORIGINS present? $([[ -n "${CNS_CORS_ORIGINS:-}" ]] && echo yes || echo no)"
+
             SSLIP_TF="${{ steps.tf.outputs.sslip_host }}"
             SH_SSLIP="$(printf '%s' "${SSLIP_TF}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
             if [[ -z "${SH_SSLIP}" ]]; then
@@ -250,27 +252,22 @@ jobs:
               exit 1
             fi
 
+            CNS_CADDY_SITE_ADDRESS="${CNS_CADDY_SITE_ADDRESS:-:80}"
+            CNS_CADDY_AUTO_HTTPS="${CNS_CADDY_AUTO_HTTPS:-off}"
+
             umask 077
-            if [[ ! -f .env ]]; then
-              {
-                printf '%s\n' \
-                  "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" \
-                  "DATABASE_URL=postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio" \
-                  "CNS_ENVIRONMENT=${CNS_ENVIRONMENT:-production}" \
-                  "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE:-manual}" \
-                  "CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}" \
-                  "SSLIP_HOST=${SH_SSLIP}" \
-                  "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}" \
-                  "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" \
-                  "CADDYFILE_SSLIP=${CADDYFILE_SSLIP}"
-              } > .env
-            else
-              tmpf="$(mktemp)"
-              grep -v '^SSLIP_HOST=' .env >"${tmpf}" || cp .env "${tmpf}"
-              mv "${tmpf}" .env
-              echo "SSLIP_HOST=${SH_SSLIP}" >> .env
-              echo "Refreshed SSLIP_HOST in existing ${REPO_DIR}/.env"
-            fi
+            {
+              printf '%s\n' \
+                "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" \
+                "CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}" \
+                "CNS_ENVIRONMENT=${CNS_ENVIRONMENT:-production}" \
+                "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE:-manual}" \
+                "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}" \
+                "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" \
+                "DATABASE_URL=postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio" \
+                "SSLIP_HOST=${SH_SSLIP}" \
+                "CADDYFILE_SSLIP=./deploy/Caddyfile.prod"
+            } > .env
             echo "=== .env written ==="
             ls -la .env
             echo "=== .env keys ==="

@@ -127,12 +127,57 @@ jobs:
           echo "ref=${R}" >> "$GITHUB_OUTPUT"
           echo "EC2 checkout ref=${R} (pull_request uses head.sha; workflow_dispatch uses github.sha)"
 
+      - name: Build ephemeral EC2 .env (base64)
+        id: eph_env
+        env:
+          SSLIP_HOST_RAW: ${{ steps.tf.outputs.sslip_host }}
+          CNS_CADDY_SITE_ADDRESS: ":80"
+          CNS_CADDY_AUTO_HTTPS: "off"
+          CNS_ENVIRONMENT: "production"
+          CNS_CONTROLLER_MODE: "manual"
+          CADDYFILE_SSLIP: "./deploy/Caddyfile.prod"
+        run: |
+          set -euo pipefail
+          SH="$(printf '%s' "${SSLIP_HOST_RAW}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          if [[ -z "$SH" ]]; then
+            echo "::error::Build ephemeral .env: SSLIP_HOST is empty after trim."
+            exit 1
+          fi
+          PGP="$(openssl rand -hex 24)"
+          if [[ -z "$PGP" ]]; then
+            echo "::error::Build ephemeral .env: openssl rand returned empty."
+            exit 1
+          fi
+          CONTENT="$(printf '%s\n' \
+            "POSTGRES_PASSWORD=${PGP}" \
+            "DATABASE_URL=postgresql://cns_user:${PGP}@postgres:5432/cloud_networking_studio" \
+            "SSLIP_HOST=${SH}" \
+            "CNS_CORS_ORIGINS=https://${SH},http://127.0.0.1,http://localhost" \
+            "CNS_ENVIRONMENT=${CNS_ENVIRONMENT}" \
+            "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE}" \
+            "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}" \
+            "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" \
+            "CADDYFILE_SSLIP=${CADDYFILE_SSLIP}" )"
+          B64="$(printf '%s' "$CONTENT" | base64 -w0)"
+          {
+            echo "REMOTE_ENV_B64<<__B64_EOF"
+            echo "$B64"
+            echo "__B64_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Bootstrap stack on EC2
         uses: appleboy/ssh-action@v1.1.0
+        env:
+          REMOTE_ENV_B64: ${{ steps.eph_env.outputs.REMOTE_ENV_B64 }}
+          CNS_CADDY_SITE_ADDRESS: ":80"
+          CNS_CADDY_AUTO_HTTPS: "off"
+          CNS_ENVIRONMENT: "production"
+          CNS_CONTROLLER_MODE: "manual"
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          envs: REMOTE_ENV_B64,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE
           script_stop: true
           script: |
             #!/usr/bin/env bash
@@ -178,7 +223,6 @@ jobs:
             APP_DIR="${HOME}/cloud-networking-studio-ephemeral"
             REPO_SLUG="${{ github.repository }}"
             CHECKOUT_REF="${{ steps.ec2_ref.outputs.ref }}"
-            SSLIP_HOST="${{ steps.tf.outputs.sslip_host }}"
             TOKEN="${{ github.token }}"
             CLONE_URL="https://x-access-token:${TOKEN}@github.com/${REPO_SLUG}.git"
             rm -rf "${APP_DIR}"
@@ -197,50 +241,61 @@ jobs:
             git status --short || true
 
             echo "=== write .env (values not printed) ==="
-            SSLIP_HOST="$(printf '%s' "${SSLIP_HOST}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            if [[ -z "${SSLIP_HOST}" ]]; then
-              echo "::error::Ephemeral SSH bootstrap: SSLIP_HOST is empty after trim (check Terraform sslip_host output and tf step)."
-              exit 1
-            fi
+            echo "REMOTE_ENV_B64 present? $([[ -n "${REMOTE_ENV_B64:-}" ]] && echo yes || echo no)"
+            echo "CNS_CADDY_SITE_ADDRESS present? $([[ -n "${CNS_CADDY_SITE_ADDRESS:-}" ]] && echo yes || echo no)"
+            echo "CNS_CADDY_AUTO_HTTPS present? $([[ -n "${CNS_CADDY_AUTO_HTTPS:-}" ]] && echo yes || echo no)"
 
-            echo "=== generate POSTGRES_PASSWORD material (no value printed) ==="
-            gen_pg_hex() {
-              if command -v openssl >/dev/null 2>&1; then
-                openssl rand -hex 24
-              elif command -v python3 >/dev/null 2>&1; then
-                python3 -c 'import secrets; print(secrets.token_hex(24))'
-              else
-                ( set +o pipefail; LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c 48 )
+            umask 077
+            if [[ -n "${REMOTE_ENV_B64:-}" ]]; then
+              if ! printf '%s' "${REMOTE_ENV_B64}" | base64 -d > .env; then
+                echo "::error::Ephemeral SSH: base64 decode of REMOTE_ENV_B64 failed."
+                exit 1
               fi
-            }
-            PGP="$(gen_pg_hex)"
-            if [[ -z "${PGP}" ]]; then
-              echo "::error::Ephemeral SSH bootstrap: POSTGRES password material was empty after generation."
-              exit 1
+            else
+              echo "::warning::REMOTE_ENV_B64 missing on remote; building .env on EC2 (legacy fallback)."
+              SSLIP_HOST="${{ steps.tf.outputs.sslip_host }}"
+              SSLIP_HOST="$(printf '%s' "${SSLIP_HOST}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+              if [[ -z "${SSLIP_HOST}" ]]; then
+                echo "::error::Ephemeral SSH bootstrap: SSLIP_HOST is empty after trim (check Terraform sslip_host output)."
+                exit 1
+              fi
+              gen_pg_hex() {
+                if command -v openssl >/dev/null 2>&1; then
+                  openssl rand -hex 24
+                elif command -v python3 >/dev/null 2>&1; then
+                  python3 -c 'import secrets; print(secrets.token_hex(24))'
+                else
+                  ( set +o pipefail; LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c 48 )
+                fi
+              }
+              PGP="$(gen_pg_hex)"
+              if [[ -z "${PGP}" ]]; then
+                echo "::error::Ephemeral SSH bootstrap: POSTGRES password material was empty after generation."
+                exit 1
+              fi
+              CNS_ENVIRONMENT_VAL="${CNS_ENVIRONMENT:-production}"
+              CNS_CONTROLLER_MODE_VAL="${CNS_CONTROLLER_MODE:-manual}"
+              _def_caddy_site=':80'
+              CNS_CADDY_SITE_ADDRESS_VAL="${CNS_CADDY_SITE_ADDRESS:-$_def_caddy_site}"
+              CNS_CADDY_AUTO_HTTPS_VAL="${CNS_CADDY_AUTO_HTTPS:-off}"
+              CADDYFILE_SSLIP_VAL="${CADDYFILE_SSLIP:-./deploy/Caddyfile.prod}"
+              {
+                echo "POSTGRES_PASSWORD=${PGP}"
+                echo "DATABASE_URL=postgresql://cns_user:${PGP}@postgres:5432/cloud_networking_studio"
+                echo "SSLIP_HOST=${SSLIP_HOST}"
+                echo "CNS_CORS_ORIGINS=https://${SSLIP_HOST},http://127.0.0.1,http://localhost"
+                echo "CNS_ENVIRONMENT=${CNS_ENVIRONMENT_VAL}"
+                echo "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE_VAL}"
+                echo "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS_VAL}"
+                echo "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS_VAL}"
+                echo "CADDYFILE_SSLIP=${CADDYFILE_SSLIP_VAL}"
+              } > .env
+              unset PGP || true
             fi
-
-            CNS_ENVIRONMENT_VAL="${CNS_ENVIRONMENT:-production}"
-            CNS_CONTROLLER_MODE_VAL="${CNS_CONTROLLER_MODE:-manual}"
-            _def_caddy_site=':80'
-            CNS_CADDY_SITE_ADDRESS_VAL="${CNS_CADDY_SITE_ADDRESS:-$_def_caddy_site}"
-            CNS_CADDY_AUTO_HTTPS_VAL="${CNS_CADDY_AUTO_HTTPS:-off}"
-            CADDYFILE_SSLIP_VAL="${CADDYFILE_SSLIP:-./deploy/Caddyfile.prod}"
-
-            {
-              echo "POSTGRES_PASSWORD=${PGP}"
-              echo "DATABASE_URL=postgresql://cns_user:${PGP}@postgres:5432/cloud_networking_studio"
-              echo "SSLIP_HOST=${SSLIP_HOST}"
-              echo "CNS_CORS_ORIGINS=https://${SSLIP_HOST},http://127.0.0.1,http://localhost"
-              echo "CNS_ENVIRONMENT=${CNS_ENVIRONMENT_VAL}"
-              echo "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE_VAL}"
-              echo "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS_VAL}"
-              echo "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS_VAL}"
-              echo "CADDYFILE_SSLIP=${CADDYFILE_SSLIP_VAL}"
-            } > .env
-            echo "=== .env keys (names only) ==="
+            echo "=== .env written ==="
             cut -d= -f1 .env
 
-            unset TOKEN CLONE_URL PGP || true
+            unset TOKEN CLONE_URL REMOTE_ENV_B64 || true
             set -x
 
             echo "=== docker compose config ==="

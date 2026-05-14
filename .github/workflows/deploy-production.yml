@@ -179,41 +179,6 @@ jobs:
           fi
           echo "Required EC2 deploy secrets are set (values are not printed)."
 
-      # Encode full initial .env on the runner so secrets never depend on appleboy passing them to the remote shell.
-      - name: Build EC2 initial .env (base64)
-        id: ec2_env
-        env:
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          CNS_CORS_ORIGINS: ${{ secrets.CNS_CORS_ORIGINS }}
-          SSLIP_HOST_RAW: ${{ steps.tf.outputs.sslip_host }}
-          CNS_CADDY_SITE_ADDRESS: ":80"
-          # Production EC2 uses automatic HTTPS on sslip (see docker-compose.sslip.yml).
-          CNS_CADDY_AUTO_HTTPS: "on"
-          CNS_ENVIRONMENT: "production"
-          CNS_CONTROLLER_MODE: "manual"
-        run: |
-          set -euo pipefail
-          SH="$(printf '%s' "${SSLIP_HOST_RAW}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-          if [[ -z "$SH" ]]; then
-            echo "::error::Build EC2 .env: SSLIP_HOST (Terraform) is empty after trim."
-            exit 1
-          fi
-          CONTENT="$(printf '%s\n' \
-            "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" \
-            "DATABASE_URL=postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio" \
-            "CNS_ENVIRONMENT=${CNS_ENVIRONMENT}" \
-            "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE}" \
-            "CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}" \
-            "SSLIP_HOST=${SH}" \
-            "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}" \
-            "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" )"
-          B64="$(printf '%s' "$CONTENT" | base64 -w0)"
-          {
-            echo "REMOTE_ENV_B64<<__B64_EOF"
-            echo "$B64"
-            echo "__B64_EOF"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Deploy Docker stack on EC2 (sslip Caddy)
         uses: appleboy/ssh-action@v1.1.0
         env:
@@ -223,12 +188,11 @@ jobs:
           CNS_CADDY_AUTO_HTTPS: "on"
           CNS_ENVIRONMENT: "production"
           CNS_CONTROLLER_MODE: "manual"
-          REMOTE_ENV_B64: ${{ steps.ec2_env.outputs.REMOTE_ENV_B64 }}
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,REMOTE_ENV_B64
+          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE
           script_stop: true
           script: |
             #!/usr/bin/env bash
@@ -291,7 +255,6 @@ jobs:
             echo "POSTGRES_PASSWORD present? $([[ -n "${POSTGRES_PASSWORD:-}" ]] && echo yes || echo no)"
             echo "CNS_CORS_ORIGINS present? $([[ -n "${CNS_CORS_ORIGINS:-}" ]] && echo yes || echo no)"
             echo "CNS_CADDY_SITE_ADDRESS present? $([[ -n "${CNS_CADDY_SITE_ADDRESS:-}" ]] && echo yes || echo no)"
-            echo "REMOTE_ENV_B64 present? $([[ -n "${REMOTE_ENV_B64:-}" ]] && echo yes || echo no)"
 
             SSLIP_TF="${{ steps.tf.outputs.sslip_host }}"
             SH_SSLIP="$(printf '%s' "${SSLIP_TF}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
@@ -299,37 +262,23 @@ jobs:
               echo "::error::SSH deploy: sslip host from workflow is empty after trim."
               exit 1
             fi
+            if [[ -z "${POSTGRES_PASSWORD:-}" ]] || [[ -z "${CNS_CORS_ORIGINS:-}" ]]; then
+              echo "::error::SSH deploy: POSTGRES_PASSWORD or CNS_CORS_ORIGINS empty on remote."
+              exit 1
+            fi
 
+            umask 077
             if [[ ! -f .env ]]; then
-              umask 077
-              if [[ -n "${REMOTE_ENV_B64:-}" ]]; then
-                if ! printf '%s' "${REMOTE_ENV_B64}" | base64 -d > .env; then
-                  echo "::error::SSH deploy: base64 decode of REMOTE_ENV_B64 failed."
-                  exit 1
-                fi
-                echo "Created ${REPO_DIR}/.env from runner-built REMOTE_ENV_B64 (secrets not echoed)."
-              else
-                if [[ -z "${POSTGRES_PASSWORD:-}" ]] || [[ -z "${CNS_CORS_ORIGINS:-}" ]]; then
-                  echo "::error::SSH deploy: REMOTE_ENV_B64 empty and secrets missing on remote. Fix appleboy envs or the Build EC2 initial .env step."
-                  exit 1
-                fi
-                _def_caddy_site=':80'
-                CNS_ENVIRONMENT_VAL="${CNS_ENVIRONMENT:-production}"
-                CNS_CONTROLLER_MODE_VAL="${CNS_CONTROLLER_MODE:-manual}"
-                CNS_CADDY_SITE_ADDRESS_VAL="${CNS_CADDY_SITE_ADDRESS:-$_def_caddy_site}"
-                CNS_CADDY_AUTO_HTTPS_VAL="${CNS_CADDY_AUTO_HTTPS:-on}"
-                {
-                  echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
-                  echo "DATABASE_URL=postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio"
-                  echo "CNS_ENVIRONMENT=${CNS_ENVIRONMENT_VAL}"
-                  echo "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE_VAL}"
-                  echo "CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}"
-                  echo "SSLIP_HOST=${SH_SSLIP}"
-                  echo "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS_VAL}"
-                  echo "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS_VAL}"
-                } > .env
-                echo "Created ${REPO_DIR}/.env from remote env vars (fallback)."
-              fi
+              cat > .env <<EOF
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+DATABASE_URL=postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio
+CNS_ENVIRONMENT=${CNS_ENVIRONMENT:-production}
+CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE:-manual}
+CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}
+SSLIP_HOST=${SH_SSLIP}
+CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS:-:80}
+CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS:-on}
+EOF
             else
               tmpf="$(mktemp)"
               grep -v '^SSLIP_HOST=' .env >"${tmpf}" || cp .env "${tmpf}"
@@ -338,9 +287,11 @@ jobs:
               echo "Refreshed SSLIP_HOST in existing ${REPO_DIR}/.env"
             fi
             echo "=== .env written ==="
+            ls -la .env
+            echo "=== .env keys ==="
             cut -d= -f1 .env
 
-            unset TOKEN CLONE_URL POSTGRES_PASSWORD CNS_CORS_ORIGINS REMOTE_ENV_B64 || true
+            unset TOKEN CLONE_URL POSTGRES_PASSWORD CNS_CORS_ORIGINS || true
             set -x
 
             echo "=== docker compose config ==="

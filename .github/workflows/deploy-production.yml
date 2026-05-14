@@ -133,6 +133,37 @@ jobs:
           echo "stack_base_url_sslip=$(terraform output -raw stack_base_url_sslip)" >> "$GITHUB_OUTPUT"
           echo "api_base_url_sslip=$(terraform output -raw api_base_url_sslip)" >> "$GITHUB_OUTPUT"
 
+      - name: Debug Terraform (pre-SSH)
+        working-directory: infra/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
+        run: |
+          set -euxo pipefail
+          echo "== steps.tf.outputs.public_ip == ${{ steps.tf.outputs.public_ip }}"
+          terraform output -no-color
+          echo "security_group_id=$(terraform output -raw security_group_id)"
+          echo "subnet_id=$(terraform output -raw subnet_id)"
+          echo "vpc_id=$(terraform output -raw vpc_id)"
+
+      - name: Wait for SSH
+        env:
+          IP: ${{ steps.tf.outputs.public_ip }}
+        run: |
+          set -euxo pipefail
+          for i in $(seq 1 30); do
+            if (command -v nc >/dev/null 2>&1 && nc -zvw2 "$IP" 22) || timeout 3 bash -c "echo >/dev/tcp/${IP}/22" 2>/dev/null; then
+              echo "SSH ready"
+              exit 0
+            fi
+            echo "Waiting for SSH... (${i}/30)"
+            sleep 10
+          done
+          echo "::error::SSH did not become ready"
+          exit 1
+
       - name: Deploy Docker stack on EC2 (sslip Caddy)
         uses: appleboy/ssh-action@v1.1.0
         with:

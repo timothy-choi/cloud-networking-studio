@@ -86,9 +86,13 @@ On **`push` to `main`** (and **`workflow_dispatch`**), the **`deploy`** job:
 2. Validates **`docker-compose.prod.yml`** via `docker compose config`.
 3. Builds the **frontend** once with default Vite env (sanity compile before cloud steps).
 4. Runs a **single shell step** under **`infra/terraform`**: writes **`backend.ci.hcl`**, **`rm -rf .terraform`**, **`terraform init -input=false -reconfigure`** (with **`TF_CLI_ARGS_init=-backend-config=backend.ci.hcl`** so the partial S3 backend is configured), then **`fmt -check`**, **`validate`**, **`plan`**, **`apply`**, then **`terraform output`** in the same step.
-5. **SSH** to the instance: clone or update repo, **`git checkout` the pushed SHA**, refresh **`SSLIP_HOST`**, bring up **Compose + sslip overlay**.
-6. Runs **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL=${stack_base_url_sslip}`** (waits longer for ACME via **`CNS_WAIT_ATTEMPTS`**).
-7. Runs **`vercel pull` / `vercel build` / `vercel deploy --prebuilt --prod`** with **`VITE_API_BASE_URL`** set to **`api_base_url_sslip`**.
+5. **Debug (pre-SSH):** prints **`terraform output`**, **`steps.tf.outputs.public_ip`**, and **`security_group_id`**, **`subnet_id`**, **`vpc_id`** (Terraform outputs).
+6. **Wait for SSH:** polls until **TCP port 22** on **`public_ip`** accepts connections (instance is in a **public subnet** with **`map_public_ip_on_launch`**, default route to the **internet gateway**, and an **Elastic IP** — see `infra/terraform/network.tf` and `ec2.tf`).
+7. **SSH** (`appleboy/ssh-action`) to the instance: clone or update repo, **`git checkout` the pushed SHA**, refresh **`SSLIP_HOST`**, bring up **Compose + sslip overlay**.
+8. Runs **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL=${stack_base_url_sslip}`** (waits longer for ACME via **`CNS_WAIT_ATTEMPTS`**).
+9. Runs **`vercel pull` / `vercel build` / `vercel deploy --prebuilt --prod`** with **`VITE_API_BASE_URL`** set to **`api_base_url_sslip`**.
+
+**SSH CIDR:** for **local or manual** Terraform, use **`ssh_allowed_cidr = "<MY_PUBLIC_IP>/32"`** in **`terraform.tfvars`**. For **`deploy-production.yml`**, set secret **`TF_VAR_SSH_ALLOWED_CIDR`** to **`MY_IP/32`** when only you SSH from home, or to **`0.0.0.0/0`** only if GitHub Actions must reach port 22 and you accept world-writable SSH for the lifetime of the rule (prefer **AWS SSM Session Manager** later to drop open SSH). **Ephemeral** workflow forces **`0.0.0.0/0`** in YAML (see **`docs/EPHEMERAL_CI_ENVIRONMENTS.md`**).
 
 `hashicorp/setup-terraform` is used only to install the Terraform CLI with **`terraform_wrapper: false`** so all **`terraform`** invocations run in plain shell blocks.
 

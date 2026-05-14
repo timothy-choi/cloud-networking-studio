@@ -3,6 +3,21 @@ output "public_ip" {
   value       = aws_eip.cns.public_ip
 }
 
+output "security_group_id" {
+  description = "Security group ID for the Compose host (SSH from ssh_allowed_cidr)."
+  value       = aws_security_group.instance.id
+}
+
+output "subnet_id" {
+  description = "Public subnet ID where the instance runs (routed to the VPC internet gateway)."
+  value       = aws_subnet.public.id
+}
+
+output "vpc_id" {
+  description = "VPC ID for the Compose stack."
+  value       = aws_vpc.main.id
+}
+
 output "public_url" {
   description = "HTTP URL for the stack (same host as Caddy on port 80 after you deploy Compose)."
   value       = "http://${aws_eip.cns.public_ip}"

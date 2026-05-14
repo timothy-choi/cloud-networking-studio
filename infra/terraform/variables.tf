@@ -20,7 +20,11 @@ variable "key_name" {
 
 variable "ssh_allowed_cidr" {
   type        = string
-  description = "CIDR allowed to reach SSH (port 22). Use your public IP /32 in production."
+  description = <<-EOT
+    CIDR allowed to reach SSH (port 22) on the instance security group.
+    For laptops or fixed bastions, use your public IPv4 with /32 (e.g. 203.0.113.10/32).
+    GitHub Actions hosted runners use unpredictable egress IPs — ephemeral CI in this repo sets 0.0.0.0/0 from the workflow (see docs/EPHEMERAL_CI_ENVIRONMENTS.md); tighten or use SSM Session Manager for production.
+  EOT
 }
 
 variable "instance_type" {

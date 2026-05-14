@@ -3,6 +3,7 @@ resource "aws_security_group" "instance" {
   description = "Cloud Networking Studio Compose host"
   vpc_id      = aws_vpc.main.id
 
+  # SSH: single ingress rule driven by var.ssh_allowed_cidr (e.g. MY_IP/32 for admin, 0.0.0.0/0 only when required for CI — see docs).
   ingress {
     description = "SSH"
     from_port   = 22

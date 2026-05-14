@@ -47,7 +47,8 @@ jobs:
           TF_VAR_project_name: cns
           TF_VAR_environment: ephemeral-${{ github.run_id }}
           TF_VAR_key_name: ${{ secrets.TF_VAR_KEY_NAME }}
-          TF_VAR_ssh_allowed_cidr: ${{ secrets.TF_VAR_SSH_ALLOWED_CIDR }}
+          # GitHub-hosted runners use dynamic egress IPs; SSH SG must allow 0.0.0.0/0 for ephemeral CI (see docs/EPHEMERAL_CI_ENVIRONMENTS.md).
+          TF_VAR_ssh_allowed_cidr: "0.0.0.0/0"
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_DYNAMODB_TABLE: ${{ secrets.TF_STATE_DYNAMODB_TABLE }}
           TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
@@ -80,6 +81,37 @@ jobs:
           echo "sslip_host=$(terraform output -raw sslip_host)" >> "$GITHUB_OUTPUT"
           echo "stack_base_url_sslip=$(terraform output -raw stack_base_url_sslip)" >> "$GITHUB_OUTPUT"
           echo "api_base_url_sslip=$(terraform output -raw api_base_url_sslip)" >> "$GITHUB_OUTPUT"
+
+      - name: Debug Terraform (pre-SSH)
+        working-directory: infra/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
+        run: |
+          set -euxo pipefail
+          echo "== steps.tf.outputs.public_ip == ${{ steps.tf.outputs.public_ip }}"
+          terraform output -no-color
+          echo "security_group_id=$(terraform output -raw security_group_id)"
+          echo "subnet_id=$(terraform output -raw subnet_id)"
+          echo "vpc_id=$(terraform output -raw vpc_id)"
+
+      - name: Wait for SSH
+        env:
+          IP: ${{ steps.tf.outputs.public_ip }}
+        run: |
+          set -euxo pipefail
+          for i in $(seq 1 30); do
+            if (command -v nc >/dev/null 2>&1 && nc -zvw2 "$IP" 22) || timeout 3 bash -c "echo >/dev/tcp/${IP}/22" 2>/dev/null; then
+              echo "SSH ready"
+              exit 0
+            fi
+            echo "Waiting for SSH... (${i}/30)"
+            sleep 10
+          done
+          echo "::error::SSH did not become ready"
+          exit 1
 
       - name: Bootstrap stack on EC2
         uses: appleboy/ssh-action@v1.1.0
@@ -134,7 +166,8 @@ jobs:
           TF_VAR_project_name: cns
           TF_VAR_environment: ephemeral-${{ github.run_id }}
           TF_VAR_key_name: ${{ secrets.TF_VAR_KEY_NAME }}
-          TF_VAR_ssh_allowed_cidr: ${{ secrets.TF_VAR_SSH_ALLOWED_CIDR }}
+          # GitHub-hosted runners use dynamic egress IPs; SSH SG must allow 0.0.0.0/0 for ephemeral CI (see docs/EPHEMERAL_CI_ENVIRONMENTS.md).
+          TF_VAR_ssh_allowed_cidr: "0.0.0.0/0"
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_DYNAMODB_TABLE: ${{ secrets.TF_STATE_DYNAMODB_TABLE }}
           TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"

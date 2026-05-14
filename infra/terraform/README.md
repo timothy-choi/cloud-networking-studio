@@ -88,6 +88,8 @@ terraform output
 
 ## SSH and deploy the app
 
+Networking: the instance is in a **public subnet** with **`map_public_ip_on_launch`**, a **default route** to the **internet gateway** (`network.tf`), **`associate_public_ip_address`**, and an **Elastic IP** (`ec2.tf`), so **`terraform output -raw public_ip`** is reachable on **22 / 80 / 443** once the instance is up. SSH ingress is restricted to **`var.ssh_allowed_cidr`** (`security.tf`); use **`MY_PUBLIC_IP/32`** from **`terraform.tfvars`** for day-to-day access. GitHub Actions ephemeral CI uses **`0.0.0.0/0`** in the workflow only for that job (see **`docs/EPHEMERAL_CI_ENVIRONMENTS.md`**).
+
 1. SSH (default user on Ubuntu AMIs is **`ubuntu`**):
 
    ```bash
@@ -132,6 +134,9 @@ Removes the VPC, instance, EIP, and related resources. **Data loss:** anything o
 | Output | Meaning |
 |--------|---------|
 | `public_ip` | Elastic IP (stable) |
+| `security_group_id` | Instance security group (SSH from `ssh_allowed_cidr`) |
+| `subnet_id` | Public subnet (IGW default route) |
+| `vpc_id` | VPC for the stack |
 | `public_url` | `http://<public_ip>` |
 | `sslip_host` | `<public_ip>.sslip.io` hostname |
 | `stack_base_url_sslip` | `https://<public_ip>.sslip.io` — use as **`CNS_BASE_URL`** for smoke scripts |

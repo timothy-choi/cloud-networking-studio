@@ -191,7 +191,7 @@ jobs:
           envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS
           script_stop: true
           script: |
-            set -euo pipefail
+            set -euxo pipefail
             sudo cloud-init status --wait || true
             echo "=== cloud-init status ==="
             sudo cloud-init status || true
@@ -220,7 +220,11 @@ jobs:
             docker compose version 2>/dev/null || sudo docker compose version
 
             COMPOSE=(sudo docker compose)
+            C_ARGS=(-f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env)
 
+            # xtrace off: clone URL and .env contain secrets (token, DB password, CORS).
+            set +x
+            echo "=== git clone / fetch / checkout (xtrace off — secrets) ==="
             REPO_DIR="${HOME}/cloud-networking-studio"
             REPO_SLUG="${{ github.repository }}"
             GIT_SHA="${{ github.sha }}"
@@ -234,6 +238,10 @@ jobs:
             git remote set-url origin "${CLONE_URL}"
             git fetch origin
             git checkout "${GIT_SHA}"
+            git rev-parse HEAD
+            git status --short
+
+            echo "=== write .env (values not printed) ==="
             if [[ ! -f .env ]]; then
               umask 077
               {
@@ -244,14 +252,43 @@ jobs:
                 echo "CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}"
                 echo "SSLIP_HOST=${SSLIP_HOST}"
               } > .env
-              echo "Created ${REPO_DIR}/.env from GitHub Actions secrets (no secret values logged)."
+              echo "Created ${REPO_DIR}/.env from GitHub Actions secrets."
             else
               tmpf="$(mktemp)"
               grep -v '^SSLIP_HOST=' .env >"${tmpf}" || cp .env "${tmpf}"
               mv "${tmpf}" .env
               echo "SSLIP_HOST=${SSLIP_HOST}" >> .env
+              echo "Refreshed SSLIP_HOST in existing ${REPO_DIR}/.env"
             fi
-            "${COMPOSE[@]}" -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
+            echo "=== .env keys (names only) ==="
+            cut -d= -f1 .env | sort -u
+
+            unset TOKEN CLONE_URL POSTGRES_PASSWORD CNS_CORS_ORIGINS || true
+            set -x
+
+            echo "=== docker compose config ==="
+            if ! "${COMPOSE[@]}" "${C_ARGS[@]}" config; then
+              echo "=== docker compose ps (after failed config) ==="
+              "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a || true
+              echo "=== docker compose logs (after failed config, tail=120) ==="
+              "${COMPOSE[@]}" "${C_ARGS[@]}" logs --tail=120 || true
+              exit 1
+            fi
+
+            echo "=== docker compose down ==="
+            "${COMPOSE[@]}" "${C_ARGS[@]}" down || true
+
+            echo "=== docker compose up -d --build ==="
+            if ! "${COMPOSE[@]}" "${C_ARGS[@]}" up -d --build; then
+              echo "=== docker compose ps (after failed up) ==="
+              "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a || true
+              echo "=== docker compose logs (after failed up, tail=120) ==="
+              "${COMPOSE[@]}" "${C_ARGS[@]}" logs --tail=120 || true
+              exit 1
+            fi
+
+            echo "=== docker compose ps ==="
+            "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a
 
       - name: Production smoke (EC2 via sslip)
         env:

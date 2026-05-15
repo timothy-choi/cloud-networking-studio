@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.controller import router as controller_router
 from app.api.deployments import router as deployments_router
 from app.api.failure_injections import router as failure_injections_router
+from app.api.metrics import router as metrics_router
 from app.api.runtime import router as runtime_router
 from app.api.topologies import router as topologies_router
 from app.api.traffic_tests import router as traffic_tests_router
@@ -38,6 +39,10 @@ OPENAPI_TAGS_METADATA: list[dict[str, str]] = [
     {
         "name": "failure-injections",
         "description": "Controlled disruption (**stop / restart / kill**) for resilience and drift scenarios.",
+    },
+    {
+        "name": "metrics",
+        "description": "Cross-topology **observability** counters and recent activity for dashboards (read-only).",
     },
     {
         "name": "health",
@@ -77,6 +82,7 @@ app.include_router(runtime_router)
 app.include_router(controller_router)
 app.include_router(traffic_tests_router)
 app.include_router(failure_injections_router)
+app.include_router(metrics_router)
 
 
 def _cors_origins() -> list[str]:

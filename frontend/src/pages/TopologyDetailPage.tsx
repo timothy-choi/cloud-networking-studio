@@ -1,6 +1,5 @@
 import { useMemo, useCallback, useState, useEffect, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { formatApiError } from '../api/client';
 import {
   deployTopology,
   destroyDeployment,
@@ -27,6 +26,7 @@ import { deriveControlPlanePhase } from '../lib/deploymentUiPhase';
 import { formatLinkEdgeLabel } from '../lib/flowTopology';
 import { inferRoutedLabRoles, latestTrafficBetweenSorted, scanDeploymentEventsForRoutedIssues } from '../lib/routedTopology';
 import { deriveRuntimeHealth, hasStoppedContainers } from '../lib/runtimeHealth';
+import { formatOperatorError, type OperatorErrorPresentation } from '../lib/operatorHints';
 import type { DeploymentStatus } from '../types/deployment';
 
 function Badge({ children }: { children: ReactNode }) {
@@ -97,7 +97,7 @@ export function TopologyDetailPage() {
   const { failures, refetch: refetchFailures, error: failuresPollErr } = useFailures(id || undefined);
 
   const [busy, setBusy] = useState<string | null>(null);
-  const [opsNote, setOpsNote] = useState<string | null>(null);
+  const [opsError, setOpsError] = useState<OperatorErrorPresentation | null>(null);
   const [pageToast, setPageToast] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
@@ -190,6 +190,15 @@ export function TopologyDetailPage() {
     return maxIso;
   }, [events]);
 
+  const latestSeverity = useMemo(() => {
+    const sorted = [...events].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+    const hit = sorted.find((e) => e.level === 'error' || e.level === 'warning');
+    if (!hit) return null;
+    return { level: hit.level, message: hit.message, created_at: hit.created_at };
+  }, [events]);
+
   const phaseInfo = useMemo(
     () => deriveControlPlanePhase(runtime, topology?.status ?? 'draft', busy, nodes.length),
     [runtime, topology?.status, busy, nodes.length],
@@ -197,7 +206,7 @@ export function TopologyDetailPage() {
 
   async function wrap(label: string, fn: () => Promise<void>) {
     setBusy(label);
-    setOpsNote(null);
+    setOpsError(null);
     setPageToast(null);
     try {
       await fn();
@@ -205,7 +214,7 @@ export function TopologyDetailPage() {
       setPageToast(`${label.replace(/-/g, ' ')} completed`);
       window.setTimeout(() => setPageToast(null), 4200);
     } catch (e) {
-      setOpsNote(formatApiError(e));
+      setOpsError(formatOperatorError(e));
     } finally {
       setBusy(null);
     }
@@ -274,12 +283,12 @@ export function TopologyDetailPage() {
               }
               void (async () => {
                 setDeleteBusy(true);
-                setOpsNote(null);
+                setOpsError(null);
                 try {
                   await deleteTopology(id);
                   navigate('/');
                 } catch (e) {
-                  setOpsNote(formatApiError(e));
+                  setOpsError(formatOperatorError(e));
                 } finally {
                   setDeleteBusy(false);
                 }
@@ -304,9 +313,20 @@ export function TopologyDetailPage() {
           </button>
         </div>
       )}
-      {opsNote && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-          {opsNote}
+      {opsError && (
+        <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+          <div className="font-semibold text-amber-950 dark:text-amber-50">Operation failed</div>
+          <p className="mt-1 whitespace-pre-wrap break-words">{opsError.headline}</p>
+          {opsError.suggestion ? (
+            <p className="mt-2 text-sm">
+              <span className="font-semibold">Suggested next step:</span> {opsError.suggestion}
+            </p>
+          ) : null}
+          <CollapsibleSection title="Raw error details" defaultOpen={false}>
+            <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-950/80 p-2 font-mono text-[11px] text-zinc-100">
+              {opsError.raw}
+            </pre>
+          </CollapsibleSection>
         </div>
       )}
       {pageToast && (
@@ -333,6 +353,8 @@ export function TopologyDetailPage() {
           lastRuntimePollAt={fmtClock(lastUpdatedAt)}
           lastEventsPollAt={fmtClock(eventsUpdatedAt)}
           latestEventAt={latestEventAt}
+          deploymentStatus={deploymentStatus}
+          latestSeverity={latestSeverity}
         />
       )}
 

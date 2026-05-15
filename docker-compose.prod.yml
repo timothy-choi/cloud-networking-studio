@@ -1,6 +1,9 @@
 # Production-style stack: Postgres + API + static UI + Caddy reverse proxy.
 # See docs/DEPLOYMENT.md — copy .env.example to .env and adjust secrets before exposing to the internet.
 #
+# Postgres is behind the Compose profile `localdb` so EC2 can run with AWS RDS only (external DATABASE_URL).
+# Local / CI with bundled Postgres: add `--profile localdb` to every `docker compose` command.
+#
 # Default URL: http://localhost (port 80). API: http://localhost/api/docs
 #
 # The backend mounts the host Docker socket below so `runtime_target: docker` can reach the real engine.
@@ -16,7 +19,10 @@ volumes:
   cns_pg_data:
 
 services:
+  # Start with: docker compose --profile localdb -f docker-compose.prod.yml up -d
+  # Omit the profile when using external DATABASE_URL (e.g. AWS RDS on EC2).
   postgres:
+    profiles: [localdb]
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -46,9 +52,6 @@ services:
       CNS_CONTROLLER_MODE: ${CNS_CONTROLLER_MODE:-manual}
       CNS_CORS_ORIGINS: ${CNS_CORS_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:80,http://127.0.0.1:80}
       CNS_CORS_ORIGIN_REGEX: ${CNS_CORS_ORIGIN_REGEX:-}
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks: [cns]
     healthcheck:
       test:

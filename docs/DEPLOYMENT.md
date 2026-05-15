@@ -8,7 +8,7 @@ This document covers **local production-style** deployment with Docker Compose a
 
 | Artifact | Purpose |
 |----------|---------|
-| [docker-compose.prod.yml](../docker-compose.prod.yml) | Postgres + FastAPI + static UI + **Caddy** reverse proxy |
+| [docker-compose.prod.yml](../docker-compose.prod.yml) | Optional Compose **Postgres** (profile **`localdb`**) + FastAPI + static UI + **Caddy** — or external **`DATABASE_URL`** (e.g. [RDS](RDS.md)) |
 | [backend/Dockerfile](../backend/Dockerfile) | Production API image (`uvicorn`) |
 | [frontend/Dockerfile](../frontend/Dockerfile) | Vite production build + **nginx** |
 | [deploy/Caddyfile.prod](../deploy/Caddyfile.prod) | Routes `/api/*` → backend, everything else → frontend |
@@ -40,7 +40,7 @@ Mitigations in real deployments: keep the API **private** (security groups, mTLS
 
 | Variable | Service | Description |
 |----------|---------|-------------|
-| `DATABASE_URL` | backend | PostgreSQL DSN (required in containers). Compose default points at the `postgres` service. |
+| `DATABASE_URL` | backend | PostgreSQL DSN (required in containers). With bundled Postgres, default points at the `postgres` service; with **AWS RDS**, set the RDS endpoint and credentials (see [RDS.md](RDS.md)). |
 | `CNS_ENVIRONMENT` | backend | Shown in `/health` (e.g. `production`). |
 | `CNS_CONTROLLER_MODE` | backend | Controller mode string (default `manual`). |
 | `CNS_CORS_ORIGINS` | backend | Comma-separated browser origins allowed by CORS (include your public site URL). |
@@ -65,18 +65,19 @@ Copy examples:
 
 ### Steps
 
-1. From the repository root, optionally create `.env` (see `.env.example`) to override passwords and ports.
+1. From the repository root, optionally create `.env` (see `.env.example`) to override passwords and ports. For **managed Postgres on AWS**, see [RDS.md](RDS.md).
 
-2. Build and start:
+2. Build and start (bundled Postgres requires the **`localdb`** profile):
 
    ```bash
-   docker compose -f docker-compose.prod.yml up --build -d
+   docker compose --profile localdb -f docker-compose.prod.yml up --build -d
    ```
 
 3. **Validate** compose syntax (also run in CI before `up`):
 
    ```bash
    docker compose -f docker-compose.prod.yml config --quiet
+   docker compose --profile localdb -f docker-compose.prod.yml config --quiet
    ```
 
 4. **Verification**
@@ -95,23 +96,23 @@ Copy examples:
 6. **Logs**
 
    ```bash
-   docker compose -f docker-compose.prod.yml logs -f backend
-   docker compose -f docker-compose.prod.yml logs -f caddy
+   docker compose --profile localdb -f docker-compose.prod.yml logs -f backend
+   docker compose --profile localdb -f docker-compose.prod.yml logs -f caddy
    ```
 
 7. **Stop / remove**
 
    ```bash
-   docker compose -f docker-compose.prod.yml down
+   docker compose --profile localdb -f docker-compose.prod.yml down
    # Remove DB volume as well (destructive):
-   docker compose -f docker-compose.prod.yml down -v
+   docker compose --profile localdb -f docker-compose.prod.yml down -v
    ```
 
 ---
 
 ## Continuous integration (GitHub Actions)
 
-On every push to `main` and on pull requests, CI runs **pytest**, a **production `npm run build`**, then **`docker compose -f docker-compose.prod.yml up -d --build`** on an `ubuntu-latest` runner, waits for HTTP readiness (up to 90 seconds), and runs **`scripts/prod_smoke_test.sh`** with **`CNS_HEAVY_SMOKE=1`** so **deploy + destroy** is exercised against the runner’s Docker engine (same socket mount as production compose).
+On every push to `main` and on pull requests, CI runs **pytest**, a **production `npm run build`**, then **`docker compose --profile localdb -f docker-compose.prod.yml up -d --build`** on an `ubuntu-latest` runner, waits for HTTP readiness (up to 90 seconds), and runs **`scripts/prod_smoke_test.sh`** with **`CNS_HEAVY_SMOKE=1`** so **deploy + destroy** is exercised against the runner’s Docker engine (same socket mount as production compose).
 
 Details, log capture on failure, and what is **not** covered: [CI.md](CI.md).
 
@@ -154,35 +155,37 @@ Edit `.env`: set a **strong** `POSTGRES_PASSWORD`, align `DATABASE_URL` if you c
 ### 5. Start the stack
 
 ```bash
-docker compose -f docker-compose.prod.yml up --build -d
+docker compose --profile localdb -f docker-compose.prod.yml up --build -d
 ```
+
+For **AWS RDS** instead of the Compose `postgres` service, omit **`--profile localdb`**, set **`DATABASE_URL`** to your RDS DSN, and follow [RDS.md](RDS.md).
 
 ### 6. Restart after code updates
 
 ```bash
 cd /opt/cns/cloud-networking-studio
 git pull
-docker compose -f docker-compose.prod.yml up --build -d
+docker compose --profile localdb -f docker-compose.prod.yml up --build -d
 ```
 
 ### 7. Logs and debugging
 
 ```bash
-docker compose -f docker-compose.prod.yml ps
-docker compose -f docker-compose.prod.yml logs --tail=200 backend postgres caddy
+docker compose --profile localdb -f docker-compose.prod.yml ps
+docker compose --profile localdb -f docker-compose.prod.yml logs --tail=200 backend postgres caddy
 ```
 
 Exec into Postgres if needed:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec postgres \
+docker compose --profile localdb -f docker-compose.prod.yml exec postgres \
   psql -U cns_user -d cloud_networking_studio
 ```
 
 ### 8. Cleanup on EC2
 
 ```bash
-docker compose -f docker-compose.prod.yml down -v
+docker compose --profile localdb -f docker-compose.prod.yml down -v
 ```
 
 ---

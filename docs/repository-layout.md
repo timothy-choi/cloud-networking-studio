@@ -36,6 +36,7 @@ cloud-networking-studio/
 | Business logic | `backend/app/services/` |
 | Docker / provider behavior | `backend/app/providers/` |
 | Cross-cutting config | `backend/app/core/config.py` |
+| AWS RDS (optional prod DB) | `docs/RDS.md`, `infra/terraform/rds.tf` |
 | Build dashboard UI | `frontend/` |
 | E2E demo | `scripts/demo_full_flow.sh` |
 

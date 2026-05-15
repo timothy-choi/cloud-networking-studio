@@ -101,7 +101,7 @@ Workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
 | **Frontend (production build)** | Node 22, `npm ci`, `npm run build` |
 | **Docker (backend image)** | `docker build -f backend/Dockerfile ./backend` |
 | **Docker (frontend image)** | `docker build -f frontend/Dockerfile ./frontend` |
-| **Compose (prod config)** | `docker compose -f docker-compose.prod.yml config --quiet` |
+| **Compose (prod config)** | `docker compose -f docker-compose.prod.yml config --quiet` and the same with **`--profile localdb`** |
 
 **Badge placeholders** (replace `OWNER` and `REPO` with your GitHub path):
 
@@ -207,7 +207,7 @@ API_BASE=http://127.0.0.1:8000 ./scripts/demo_full_flow.sh
 
 Step-by-step narration for **UI** and **CLI**: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
-**Production-style stack** (Postgres + API + static UI + Caddy on port **80**): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/EC2_RUNBOOK.md](docs/EC2_RUNBOOK.md) · `docker-compose.prod.yml` · copy [.env.example](.env.example) to `.env`.
+**Production-style stack** (optional Compose Postgres via profile **`localdb`**, API, static UI, Caddy on port **80**): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/RDS.md](docs/RDS.md) · [docs/EC2_RUNBOOK.md](docs/EC2_RUNBOOK.md) · `docker-compose.prod.yml` · copy [.env.example](.env.example) to `.env`.
 
 ---
 

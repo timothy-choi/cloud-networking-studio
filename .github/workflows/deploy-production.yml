@@ -66,7 +66,27 @@ jobs:
           pytest tests/ -q --tb=short
 
       - name: Validate production compose file
-        run: docker compose -f docker-compose.prod.yml config --quiet
+        run: |
+          docker compose -f docker-compose.prod.yml config --quiet
+          docker compose --profile localdb -f docker-compose.prod.yml config --quiet
+
+      - name: Require EC2 deploy secrets
+        env:
+          RDS_PASSWORD: ${{ secrets.RDS_PASSWORD }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          CNS_CORS_ORIGINS: ${{ secrets.CNS_CORS_ORIGINS }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -z "${CNS_CORS_ORIGINS:-}" ]] && missing+=(CNS_CORS_ORIGINS)
+          if [[ -z "${RDS_PASSWORD:-}" ]] && [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+            missing+=(RDS_PASSWORD_or_POSTGRES_PASSWORD)
+          fi
+          if [[ "${#missing[@]}" -gt 0 ]]; then
+            echo "::error::Missing required repository secret(s): ${missing[*]}. Add them for production EC2 deploy. See docs/CICD_DEPLOYMENT.md and docs/RDS.md"
+            exit 1
+          fi
+          echo "Required EC2 deploy secrets are set (values are not printed)."
 
       - name: Set up Node.js (frontend)
         uses: actions/setup-node@v4
@@ -96,6 +116,8 @@ jobs:
           TF_STATE_DYNAMODB_TABLE: ${{ secrets.TF_STATE_DYNAMODB_TABLE }}
           # Partial S3 backend: inject backend file path into init (init line stays `terraform init -input=false -reconfigure`).
           TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
+          TF_VAR_rds_enabled: ${{ vars.RDS_ENABLED == 'true' && 'true' || 'false' }}
+          TF_VAR_rds_master_password: ${{ secrets.RDS_PASSWORD || secrets.POSTGRES_PASSWORD }}
         run: |
           # Terraform commands must stay in this single block so backend init is guaranteed before plan/apply.
           set -euo pipefail
@@ -126,6 +148,10 @@ jobs:
           echo "stack_base_url_sslip_http=$(terraform output -raw stack_base_url_sslip_http)" >> "$GITHUB_OUTPUT"
           echo "api_base_url_sslip=$(terraform output -raw api_base_url_sslip)" >> "$GITHUB_OUTPUT"
           echo "api_base_url_sslip_http=$(terraform output -raw api_base_url_sslip_http)" >> "$GITHUB_OUTPUT"
+          echo "rds_address=$(terraform output -raw rds_address)" >> "$GITHUB_OUTPUT"
+          echo "rds_port=$(terraform output -raw rds_port)" >> "$GITHUB_OUTPUT"
+          echo "rds_database_name=$(terraform output -raw rds_database_name)" >> "$GITHUB_OUTPUT"
+          echo "rds_username=$(terraform output -raw rds_username)" >> "$GITHUB_OUTPUT"
 
       - name: Wait for SSH
         env:
@@ -143,36 +169,25 @@ jobs:
           echo "::error::SSH did not become ready"
           exit 1
 
-      - name: Require EC2 deploy secrets
-        env:
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          CNS_CORS_ORIGINS: ${{ secrets.CNS_CORS_ORIGINS }}
-        run: |
-          set -euo pipefail
-          missing=()
-          [[ -z "${POSTGRES_PASSWORD:-}" ]] && missing+=(POSTGRES_PASSWORD)
-          [[ -z "${CNS_CORS_ORIGINS:-}" ]] && missing+=(CNS_CORS_ORIGINS)
-          if [[ "${#missing[@]}" -gt 0 ]]; then
-            echo "::error::Missing required repository secret(s): ${missing[*]}. Add them for production EC2 deploy. See docs/CICD_DEPLOYMENT.md"
-            exit 1
-          fi
-          echo "Required EC2 deploy secrets are set (values are not printed)."
-
       - name: Deploy Docker stack on EC2 (Caddy HTTPS on sslip)
         uses: appleboy/ssh-action@v1.1.0
         env:
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_PASSWORD: ${{ secrets.RDS_PASSWORD || secrets.POSTGRES_PASSWORD }}
           CNS_CORS_ORIGINS: ${{ secrets.CNS_CORS_ORIGINS }}
           CNS_CADDY_SITE_ADDRESS: ${{ steps.tf.outputs.sslip_host }}
           CNS_CADDY_AUTO_HTTPS: "on"
           CADDYFILE_SSLIP: "./deploy/Caddyfile.sslip"
           CNS_ENVIRONMENT: "production"
           CNS_CONTROLLER_MODE: "manual"
+          RDS_ADDRESS: ${{ steps.tf.outputs.rds_address }}
+          RDS_PORT: ${{ steps.tf.outputs.rds_port }}
+          RDS_DATABASE_NAME: ${{ steps.tf.outputs.rds_database_name }}
+          RDS_USERNAME: ${{ steps.tf.outputs.rds_username }}
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_SSLIP
+          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_SSLIP,RDS_ADDRESS,RDS_PORT,RDS_DATABASE_NAME,RDS_USERNAME
           script_stop: true
           script: |
             #!/usr/bin/env bash
@@ -209,9 +224,6 @@ jobs:
             ensure_docker
             docker --version 2>/dev/null || sudo docker --version
             docker compose version 2>/dev/null || sudo docker compose version
-
-            COMPOSE=(sudo docker compose)
-            C_ARGS=(-f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env)
 
             # xtrace off: clone URL and .env contain secrets (token, DB password, CORS).
             set +x
@@ -251,6 +263,27 @@ jobs:
             CNS_CADDY_AUTO_HTTPS="${CNS_CADDY_AUTO_HTTPS:-off}"
             CADDYFILE_SSLIP="${CADDYFILE_SSLIP:-./deploy/Caddyfile.sslip}"
 
+            RDS_ADDR="$(printf '%s' "${RDS_ADDRESS:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            RDS_P_RAW="$(printf '%s' "${RDS_PORT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            RDS_P="${RDS_P_RAW:-5432}"
+            RDS_USER_RES="$(printf '%s' "${RDS_USERNAME:-cns_user}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            RDS_DB_RES="$(printf '%s' "${RDS_DATABASE_NAME:-cloud_networking_studio}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+
+            if [[ -n "${RDS_ADDR}" ]]; then
+              export _CNS_PY_HOST="${RDS_ADDR}"
+              export _CNS_PY_PORT="${RDS_P}"
+              export _CNS_PY_USER="${RDS_USER_RES}"
+              export _CNS_PY_DB="${RDS_DB_RES}"
+              export _CNS_PY_PW="${POSTGRES_PASSWORD}"
+              DATABASE_URL="$(python3 -c 'import os,urllib.parse as u; h=os.environ["_CNS_PY_HOST"]; pt=os.environ["_CNS_PY_PORT"]; user=u.quote(os.environ["_CNS_PY_USER"],safe=""); pw=u.quote(os.environ["_CNS_PY_PW"],safe=""); db=os.environ["_CNS_PY_DB"]; print("postgresql://"+user+":"+pw+"@"+h+":"+pt+"/"+db)')"
+              unset _CNS_PY_HOST _CNS_PY_PORT _CNS_PY_USER _CNS_PY_DB _CNS_PY_PW || true
+              COMPOSE=(sudo docker compose)
+            else
+              DATABASE_URL="postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio"
+              COMPOSE=(sudo docker compose --profile localdb)
+            fi
+            C_ARGS=(-f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env)
+
             umask 077
             {
               printf '%s\n' \
@@ -260,7 +293,7 @@ jobs:
                 "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE:-manual}" \
                 "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}" \
                 "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" \
-                "DATABASE_URL=postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio" \
+                "DATABASE_URL=${DATABASE_URL}" \
                 "SSLIP_HOST=${SH_SSLIP}" \
                 "CADDYFILE_SSLIP=${CADDYFILE_SSLIP}"
             } > .env
@@ -269,7 +302,7 @@ jobs:
             echo "=== .env keys ==="
             cut -d= -f1 .env
 
-            unset TOKEN CLONE_URL POSTGRES_PASSWORD CNS_CORS_ORIGINS || true
+            unset TOKEN CLONE_URL POSTGRES_PASSWORD CNS_CORS_ORIGINS DATABASE_URL RDS_ADDRESS RDS_PORT RDS_DATABASE_NAME RDS_USERNAME || true
             set -x
 
             echo "=== docker compose config ==="

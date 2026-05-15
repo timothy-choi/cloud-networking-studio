@@ -159,7 +159,7 @@ jobs:
             docker --version 2>/dev/null || sudo docker --version
             docker compose version 2>/dev/null || sudo docker compose version
 
-            COMPOSE=(sudo docker compose)
+            COMPOSE=(sudo docker compose --profile localdb)
             C_ARGS=(-f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env)
 
             set +x

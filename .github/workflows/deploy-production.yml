@@ -75,12 +75,6 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Frontend production build
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -313,21 +307,16 @@ jobs:
           SHELL: /bin/bash
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_VITE_API_BASE_URL: ${{ secrets.VERCEL_VITE_API_BASE_URL }}
           VITE_API_DEFAULT: ${{ steps.tf.outputs.api_base_url_sslip_http }}
         run: |
           set -euo pipefail
           export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-          echo "=== Vercel / shell debug ==="
-          which sh || true
-          which bash || true
-          echo "PATH=${PATH}"
-          node --version
-          npm --version
-          npx vercel --version
-          export VITE_API_BASE_URL="${VERCEL_VITE_API_BASE_URL:-${VITE_API_DEFAULT}}"
+          API_BASE_URL="${VERCEL_VITE_API_BASE_URL:-${VITE_API_DEFAULT}}"
+          export VITE_API_BASE_URL="${API_BASE_URL}"
           npm ci
-          npm install vercel@34 --no-save
-          npx vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
-          npx vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
-          npx vercel deploy --prebuilt --prod --yes --token="${{ secrets.VERCEL_TOKEN }}"
+          VITE_API_BASE_URL="${API_BASE_URL}" npm run build
+          npx vercel@54.0.0 pull --yes --environment=production --token "${VERCEL_TOKEN}"
+          npx vercel@54.0.0 build --prod --token "${VERCEL_TOKEN}"
+          npx vercel@54.0.0 deploy --prebuilt --prod --yes --token "${VERCEL_TOKEN}"

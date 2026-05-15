@@ -179,19 +179,20 @@ jobs:
           CADDYFILE_SSLIP: "./deploy/Caddyfile.sslip"
           CNS_ENVIRONMENT: "production"
           CNS_CONTROLLER_MODE: "manual"
-          RDS_ADDRESS: ${{ steps.tf.outputs.rds_address }}
+          RDS_ENDPOINT: ${{ steps.tf.outputs.rds_address }}
           RDS_PORT: ${{ steps.tf.outputs.rds_port }}
           RDS_DATABASE_NAME: ${{ steps.tf.outputs.rds_database_name }}
           RDS_USERNAME: ${{ steps.tf.outputs.rds_username }}
+          RDS_PASSWORD: ${{ secrets.RDS_PASSWORD }}
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_SSLIP,RDS_ADDRESS,RDS_PORT,RDS_DATABASE_NAME,RDS_USERNAME
+          envs: POSTGRES_PASSWORD,RDS_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_SSLIP,RDS_ENDPOINT,RDS_PORT,RDS_DATABASE_NAME,RDS_USERNAME
           script_stop: true
           script: |
             #!/usr/bin/env bash
-            set -euxo pipefail
+            set -euo pipefail
             sudo cloud-init status --wait || true
             echo "=== cloud-init status ==="
             sudo cloud-init status || true
@@ -246,6 +247,8 @@ jobs:
             echo "=== write .env (values not printed) ==="
 
             echo "POSTGRES_PASSWORD present? $([[ -n "${POSTGRES_PASSWORD:-}" ]] && echo yes || echo no)"
+            echo "RDS_PASSWORD present? $([[ -n "${RDS_PASSWORD:-}" ]] && echo yes || echo no)"
+            echo "RDS_ENDPOINT present? $([[ -n "${RDS_ENDPOINT:-}" ]] && echo yes || echo no)"
             echo "CNS_CORS_ORIGINS present? $([[ -n "${CNS_CORS_ORIGINS:-}" ]] && echo yes || echo no)"
 
             SSLIP_TF="${{ steps.tf.outputs.sslip_host }}"
@@ -263,25 +266,43 @@ jobs:
             CNS_CADDY_AUTO_HTTPS="${CNS_CADDY_AUTO_HTTPS:-off}"
             CADDYFILE_SSLIP="${CADDYFILE_SSLIP:-./deploy/Caddyfile.sslip}"
 
-            RDS_ADDR="$(printf '%s' "${RDS_ADDRESS:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            RDS_P_RAW="$(printf '%s' "${RDS_PORT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            RDS_P="${RDS_P_RAW:-5432}"
-            RDS_USER_RES="$(printf '%s' "${RDS_USERNAME:-cns_user}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            RDS_DB_RES="$(printf '%s' "${RDS_DATABASE_NAME:-cloud_networking_studio}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            RDS_EP="$(printf '%s' "${RDS_ENDPOINT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            RDS_P="$(printf '%s' "${RDS_PORT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [[ -z "${RDS_P}" ]]; then RDS_P="5432"; fi
+            RDS_USER="$(printf '%s' "${RDS_USERNAME:-cns_user}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            RDS_DB="$(printf '%s' "${RDS_DATABASE_NAME:-cloud_networking_studio}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 
-            if [[ -n "${RDS_ADDR}" ]]; then
-              export _CNS_PY_HOST="${RDS_ADDR}"
+            DATABASE_URL=""
+            COMPOSE=(sudo docker compose --profile localdb)
+
+            if [[ -n "${RDS_EP}" ]] && command -v python3 >/dev/null 2>&1; then
+              export _CNS_PY_HOST="${RDS_EP}"
               export _CNS_PY_PORT="${RDS_P}"
-              export _CNS_PY_USER="${RDS_USER_RES}"
-              export _CNS_PY_DB="${RDS_DB_RES}"
+              export _CNS_PY_USER="${RDS_USER}"
+              export _CNS_PY_DB="${RDS_DB}"
               export _CNS_PY_PW="${POSTGRES_PASSWORD}"
-              DATABASE_URL="$(python3 -c 'import os,urllib.parse as u; h=os.environ["_CNS_PY_HOST"]; pt=os.environ["_CNS_PY_PORT"]; user=u.quote(os.environ["_CNS_PY_USER"],safe=""); pw=u.quote(os.environ["_CNS_PY_PW"],safe=""); db=os.environ["_CNS_PY_DB"]; print("postgresql://"+user+":"+pw+"@"+h+":"+pt+"/"+db)')"
+              set +e
+              PYOUT="$(python3 -c 'import os,urllib.parse as u;h=os.environ["_CNS_PY_HOST"].strip();pt=(os.environ.get("_CNS_PY_PORT") or "5432").strip() or "5432";user=u.quote(os.environ["_CNS_PY_USER"].strip(),safe="");pw=u.quote(os.environ["_CNS_PY_PW"],safe="");db=os.environ["_CNS_PY_DB"].strip();print("postgresql://"+user+":"+pw+"@"+h+":"+pt+"/"+db)' 2>/dev/null)"
+              PYRC=$?
+              set -e
               unset _CNS_PY_HOST _CNS_PY_PORT _CNS_PY_USER _CNS_PY_DB _CNS_PY_PW || true
-              COMPOSE=(sudo docker compose)
-            else
+              if [[ "${PYRC}" -eq 0 ]] && [[ -n "${PYOUT}" ]]; then
+                DATABASE_URL="${PYOUT}"
+                COMPOSE=(sudo docker compose)
+              else
+                echo "::warning::Could not build RDS DATABASE_URL (python rc=${PYRC}); using Docker Postgres service."
+              fi
+            elif [[ -n "${RDS_EP}" ]]; then
+              echo "::warning::RDS_ENDPOINT set but python3 not found; using Docker Postgres service."
+            fi
+
+            if [[ -z "${DATABASE_URL}" ]]; then
               DATABASE_URL="postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio"
               COMPOSE=(sudo docker compose --profile localdb)
             fi
+
+            echo "DATABASE_URL present? $([[ -n "${DATABASE_URL}" ]] && echo yes || echo no)"
+
             C_ARGS=(-f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env)
 
             umask 077
@@ -298,11 +319,9 @@ jobs:
                 "CADDYFILE_SSLIP=${CADDYFILE_SSLIP}"
             } > .env
             echo "=== .env written ==="
-            ls -la .env
-            echo "=== .env keys ==="
             cut -d= -f1 .env
 
-            unset TOKEN CLONE_URL POSTGRES_PASSWORD CNS_CORS_ORIGINS DATABASE_URL RDS_ADDRESS RDS_PORT RDS_DATABASE_NAME RDS_USERNAME || true
+            unset TOKEN CLONE_URL POSTGRES_PASSWORD RDS_PASSWORD CNS_CORS_ORIGINS DATABASE_URL RDS_ENDPOINT RDS_PORT RDS_DATABASE_NAME RDS_USERNAME || true
             set -x
 
             echo "=== docker compose config ==="

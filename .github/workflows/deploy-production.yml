@@ -158,20 +158,21 @@ jobs:
           fi
           echo "Required EC2 deploy secrets are set (values are not printed)."
 
-      - name: Deploy Docker stack on EC2 (Caddy HTTP on sslip)
+      - name: Deploy Docker stack on EC2 (Caddy HTTPS on sslip)
         uses: appleboy/ssh-action@v1.1.0
         env:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           CNS_CORS_ORIGINS: ${{ secrets.CNS_CORS_ORIGINS }}
-          CNS_CADDY_SITE_ADDRESS: ":80"
-          CNS_CADDY_AUTO_HTTPS: "off"
+          CNS_CADDY_SITE_ADDRESS: ${{ steps.tf.outputs.sslip_host }}
+          CNS_CADDY_AUTO_HTTPS: "on"
+          CADDYFILE_SSLIP: "./deploy/Caddyfile.sslip"
           CNS_ENVIRONMENT: "production"
           CNS_CONTROLLER_MODE: "manual"
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE
+          envs: POSTGRES_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_SSLIP
           script_stop: true
           script: |
             #!/usr/bin/env bash
@@ -248,6 +249,7 @@ jobs:
 
             CNS_CADDY_SITE_ADDRESS="${CNS_CADDY_SITE_ADDRESS:-:80}"
             CNS_CADDY_AUTO_HTTPS="${CNS_CADDY_AUTO_HTTPS:-off}"
+            CADDYFILE_SSLIP="${CADDYFILE_SSLIP:-./deploy/Caddyfile.sslip}"
 
             umask 077
             {
@@ -260,7 +262,7 @@ jobs:
                 "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" \
                 "DATABASE_URL=postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio" \
                 "SSLIP_HOST=${SH_SSLIP}" \
-                "CADDYFILE_SSLIP=./deploy/Caddyfile.prod"
+                "CADDYFILE_SSLIP=${CADDYFILE_SSLIP}"
             } > .env
             echo "=== .env written ==="
             ls -la .env
@@ -294,11 +296,17 @@ jobs:
             echo "=== docker compose ps ==="
             "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a
 
-      - name: Production smoke (EC2 via HTTP sslip)
+      - name: Production smoke (EC2 via HTTPS sslip)
         env:
-          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip_http }}
+          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip }}
           CNS_WAIT_ATTEMPTS: "90"
         run: bash scripts/prod_smoke_test.sh
+
+      - name: Verify HTTPS API (sslip /api/health)
+        run: |
+          set -euo pipefail
+          SSLIP="${{ steps.tf.outputs.sslip_host }}"
+          curl -vk --connect-timeout 15 --max-time 90 "https://${SSLIP}/api/health"
 
       - name: Deploy to Vercel
         shell: bash
@@ -307,7 +315,7 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VITE_API_BASE_URL: ${{ secrets.VERCEL_VITE_API_BASE_URL || steps.tf.outputs.api_base_url_sslip_http }}
+          VITE_API_BASE_URL: ${{ secrets.VERCEL_VITE_API_BASE_URL || steps.tf.outputs.api_base_url_sslip }}
         run: |
           set -euo pipefail
           export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"

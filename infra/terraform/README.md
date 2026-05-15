@@ -142,7 +142,7 @@ Removes the VPC, instance, EIP, and related resources. **Data loss:** anything o
 | `stack_base_url_sslip` | `https://<public_ip>.sslip.io` — **`CNS_BASE_URL`** for **production** smoke (`deploy-production.yml`) |
 | `stack_base_url_sslip_http` | `http://<public_ip>.sslip.io` — **`CNS_BASE_URL`** for **ephemeral** PR smoke only (avoids short-lived ACME/TLS on sslip) |
 | `api_base_url_sslip` | `https://<public_ip>.sslip.io/api` — **`VITE_API_BASE_URL`** for Vercel builds |
-| `api_base_url_sslip_http` | `http://<public_ip>.sslip.io/api` — HTTP counterpart for debugging; not used in CI smoke today |
+| `api_base_url_sslip_http` | `http://<public_ip>.sslip.io/api` — HTTP counterpart for debugging or ephemeral smoke; production Vercel defaults to **`api_base_url_sslip`** (HTTPS). |
 | `ssh_command` | Example `ssh` line (adjust key path) |
 | `instance_id` | EC2 instance ID for support / debugging |
 

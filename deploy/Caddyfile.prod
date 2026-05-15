@@ -1,11 +1,11 @@
 # Reverse proxy for docker-compose.prod.yml — :80 only (TLS left to ALB, Caddy elsewhere, or extend this file).
 #
 # For public HTTPS on EC2 with automatic certs via sslip.io, merge **docker-compose.sslip.yml**
-# and **deploy/Caddyfile.sslip** (see docs/CICD_DEPLOYMENT.md).
+# and **deploy/Caddyfile.sslip** (TLS site **{$CNS_SSLIP_HOST}**; see docs/CICD_DEPLOYMENT.md).
 #
 # HTTP-only on sslip (e.g. ephemeral CI): set **CADDYFILE_SSLIP=./deploy/Caddyfile.prod** in `.env` so the
 # sslip compose overlay still publishes 443 but Caddy serves only **:80** with the routes below — no
-# `{$SSLIP_HOST}` TLS site, so there is **no automatic HTTP→HTTPS redirect** (see docker-compose.sslip.yml).
+# `{$CNS_SSLIP_HOST}` TLS site in **Caddyfile.sslip**, so there is **no automatic HTTP→HTTPS redirect** (see docker-compose.sslip.yml).
 # Pair with **CNS_CADDY_AUTO_HTTPS=off** in `.env` as documentation that TLS is intentionally disabled.
 #
 # Routing:

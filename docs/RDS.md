@@ -1,16 +1,16 @@
 # AWS RDS PostgreSQL (production)
 
-This repository supports **optional** Amazon RDS for PostgreSQL so production data can live **outside** the EC2 host disk. **Local development** and **CI** continue to use the **Docker Compose** `postgres` service (see profile `localdb` below). **Ephemeral PR stacks** keep **`rds_enabled = false`** in Terraform unless you deliberately change that.
+This repository supports **optional** Amazon RDS for PostgreSQL so production data can live **outside** the EC2 host disk. **Local development**, **CI**, and **`docker-compose.prod.yml`** all include a **Postgres** service; host port **5433** is published so **`pytest`** on your machine can use the same DSN as in [`backend/tests/conftest.py`](../backend/tests/conftest.py). **Ephemeral PR stacks** keep **`rds_enabled = false`** in Terraform unless you deliberately change that.
 
 ---
 
 ## Local Postgres vs RDS on EC2
 
-| Mode | Where Postgres runs | `docker-compose.prod.yml` |
-|------|---------------------|---------------------------|
-| **Local / CI** | Container on the same host as the API | Use **`--profile localdb`** so the `postgres` service starts. Default `DATABASE_URL` uses hostname **`postgres`**. |
-| **Production (Compose Postgres)** | Container on EC2 | Same as local: deploy writes `DATABASE_URL` pointing at **`postgres:5432`** and Compose uses **`--profile localdb`**. |
-| **Production (RDS)** | Managed RDS in the same VPC as EC2 | Omit the profile so **only** API, UI, and Caddy run. **`DATABASE_URL`** points at the RDS endpoint (from Terraform outputs + GitHub secret password). |
+| Mode | Where the API reads state | Compose `postgres` service |
+|------|---------------------------|----------------------------|
+| **Local / CI stack** | Default **`DATABASE_URL`** → hostname **`postgres:5432`** inside the network | **Runs**; backend **`depends_on`** DB health. |
+| **Host pytest / uvicorn** | **`127.0.0.1:5433`** (mapped from the same image) or root [`docker-compose.yml`](../docker-compose.yml) | Start with **`docker compose -f docker-compose.prod.yml up -d postgres`** or full stack. |
+| **Production (RDS)** | **`DATABASE_URL`** → RDS endpoint in **`.env`** | **Still defined** in the file; container may run alongside RDS. The backend **only** uses **`DATABASE_URL`**, so RDS data is authoritative. |
 
 The FastAPI app always reads **`DATABASE_URL`** from the environment ([`backend/app/core/config.py`](../backend/app/core/config.py)).
 
@@ -46,14 +46,14 @@ CI **backend tests** and **ephemeral** workflows do **not** enable RDS unless yo
 
 ---
 
-## Docker Compose profile `localdb`
+## Docker Compose (bundled Postgres)
 
 From the repo root:
 
 ```bash
-docker compose --profile localdb -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Without the profile, **`postgres` is not started**; set **`DATABASE_URL`** to an external DSN (e.g. RDS) in **`.env`**.
+Set **`DATABASE_URL`** in **`.env`** to an external DSN (e.g. RDS) when the database is not the default Compose service; the backend container still waits for the local **`postgres`** healthcheck before starting, then connects using **`DATABASE_URL`**.
 
 See also [DEPLOYMENT.md](DEPLOYMENT.md) and [CICD_DEPLOYMENT.md](CICD_DEPLOYMENT.md).

@@ -83,31 +83,31 @@ The repo declares a partial **`backend "s3" {}`** in `infra/terraform/backend.tf
 
 **GitHub Actions (`deploy-production.yml`):** before **Terraform apply**, the workflow checks repository secrets **`RDS_PASSWORD` or `POSTGRES_PASSWORD`** (either satisfies the DB secret requirement) and **`CNS_CORS_ORIGINS`**. On the instance, the SSH step **writes** **`~/cloud-networking-studio/.env`** from secrets and Terraform outputs (no secret values in logs). Production includes **`SSLIP_HOST`**, **`CADDYFILE_SSLIP=./deploy/Caddyfile.sslip`**, **`CNS_CADDY_SITE_ADDRESS=<EIP>.sslip.io`**, **`CNS_CADDY_AUTO_HTTPS=on`**, **`DATABASE_URL`** (Compose **`postgres`** service when RDS outputs are empty, otherwise **RDS** built from **`rds_address`** / **`rds_*`** outputs + the same password secret), and related **`CNS_*`** keys so Caddy serves **HTTPS** on sslip (Let's Encrypt) and **HTTP :80**. **`set +x`** is used while secrets are expanded; only **`.env` key names** are printed after write.
 
-**Optional AWS RDS:** set repository variable **`RDS_ENABLED=true`** so **`terraform apply`** passes **`TF_VAR_rds_enabled=true`**. Terraform outputs **`rds_address`**, **`rds_port`**, **`rds_database_name`**, and **`rds_username`** (never the password). The SSH deploy step omits Compose profile **`localdb`** when **`rds_address`** is non-empty so the **`postgres`** container is not started. See **`docs/RDS.md`**.
+**Optional AWS RDS:** set repository variable **`RDS_ENABLED=true`** so **`terraform apply`** passes **`TF_VAR_rds_enabled=true`**. Terraform outputs **`rds_address`**, **`rds_port`**, **`rds_database_name`**, and **`rds_username`** (never the password). The SSH deploy step sets **`DATABASE_URL`** to **RDS** when those outputs are present; the Compose **`postgres`** service may still start on the instance but the API uses **`DATABASE_URL`**. See **`docs/RDS.md`**.
 
 **`CNS_CORS_ORIGINS`** on the EC2 backend must allow the **Vercel** origin(s) and the **EC2 API origins** **`https://<EIP>.sslip.io`** and **`http://<EIP>.sslip.io`** (and `http://localhost` for local tools) as needed. See `backend/.env.example`.
 
 **`docker-compose.prod.yml`** reads **`POSTGRES_*`**, **`DATABASE_URL`**, **`CNS_*`**, etc. from **`.env`** when you pass **`--env-file .env`** (as the workflow does).
 
-**Bundled Postgres** on EC2 uses **`--profile localdb`**. When Terraform **`rds_address`** is non-empty, the SSH step uses plain **`sudo docker compose`** (no profile) and **`DATABASE_URL`** points at **RDS**. Example with bundled Postgres:
+**Bundled Postgres** starts with the rest of the stack (no Compose profile). Example on the instance:
 
 ```bash
-sudo docker compose --profile localdb -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
+sudo docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env up -d --build
 ```
 
-Plain **`docker-compose.prod.yml`** alone remains valid for **HTTP-only** local setups (`deploy/Caddyfile.prod`). **Bundled Postgres** requires **`--profile localdb`** on every `docker compose` invocation that should start **`postgres`**.
+Plain **`docker-compose.prod.yml`** is valid for **HTTP-only** local setups (`deploy/Caddyfile.prod`). Host port **5433** maps to Postgres for **`pytest`** on your laptop (see [docs/testing.md](testing.md)).
 
 ## GitHub Actions: `deploy-production.yml`
 
 On **`push` to `main`** (and **`workflow_dispatch`**), the **`deploy`** job:
 
 1. Runs **backend pytest** (with Postgres service on the runner).
-2. Validates **`docker-compose.prod.yml`** via `docker compose config` (with and without **`--profile localdb`**).
+2. Validates **`docker-compose.prod.yml`** via `docker compose config --quiet`.
 3. **Require EC2 deploy secrets:** fails early if **`CNS_CORS_ORIGINS`** is unset or if both **`RDS_PASSWORD`** and **`POSTGRES_PASSWORD`** are unset (either DB secret alone is enough).
 4. Sets up **Node.js 20** (for the Vercel deploy step).
 5. Runs **Terraform** under **`infra/terraform`**: **`backend.ci.hcl`**, **`terraform init`**, **`fmt -check`**, **`validate`**, **`plan`**, **`apply`**, **`terraform output`** (including sslip URLs for smoke, CORS, Vercel defaults, and optional **`rds_*`** fields when **`RDS_ENABLED`** is true). When **`RDS_ENABLED`**, **`TF_VAR_rds_master_password`** is taken from **`RDS_PASSWORD`** or **`POSTGRES_PASSWORD`**.
 6. **Wait for SSH** until **TCP port 22** on **`public_ip`** accepts connections.
-7. **SSH** (`appleboy/ssh-action`): **`cloud-init`**, **Docker** install if needed, clone/update **`~/cloud-networking-studio`**, **`git checkout`** pushed SHA, **write `.env`**, **`docker compose … up -d --build`** (with **`--profile localdb`** only when not using RDS; **compose logs** only if config/up fails).
+7. **SSH** (`appleboy/ssh-action`): **`cloud-init`**, **Docker** install if needed, clone/update **`~/cloud-networking-studio`**, **`git checkout`** pushed SHA, **write `.env`**, **`docker compose … up -d --build`** (**compose logs** only if config/up fails).
 8. **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL`** = **`stack_base_url_sslip`** (HTTPS).
 9. **`curl -vk https://<EIP>.sslip.io/api/health`** on the runner (explicit HTTPS check).
 10. **Vercel (static `dist`):** from the **repository root**, **`cd frontend`**, **`npm ci`**, **`VITE_API_BASE_URL=… npm run build`**, **`npx vercel@54.0.0 pull`** (linking), then **`npx vercel@54.0.0 deploy frontend/dist --prod --yes`**. No **`vercel build`** and no **`--prebuilt`**.

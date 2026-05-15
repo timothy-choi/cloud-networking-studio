@@ -66,6 +66,7 @@ flowchart LR
 **Portfolio-friendly docs (start here):**
 
 - [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — **Step 32** dashboard metrics, deployment timeline phases, operator-facing errors
+- [docs/AUTH.md](docs/AUTH.md) — **Step 34** users, projects, JWT auth, env vars, local vs production
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — control plane, topology model, Docker provider, traffic, failures, reconcile/heal (interviewer-oriented)
 - [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) — exact **UI** and **CLI** demo steps and what each proves
 - [docs/RESUME_NOTES.md](docs/RESUME_NOTES.md) — **three resume bullets**, talking points, challenges solved
@@ -101,7 +102,7 @@ Workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
 | **Frontend (production build)** | Node 22, `npm ci`, `npm run build` |
 | **Docker (backend image)** | `docker build -f backend/Dockerfile ./backend` |
 | **Docker (frontend image)** | `docker build -f frontend/Dockerfile ./frontend` |
-| **Compose (prod config)** | `docker compose -f docker-compose.prod.yml config --quiet` and the same with **`--profile localdb`** |
+| **Compose (prod config)** | `docker compose -f docker-compose.prod.yml config --quiet` |
 
 **Badge placeholders** (replace `OWNER` and `REPO` with your GitHub path):
 
@@ -146,16 +147,28 @@ Add images under `docs/images/` (or your portfolio site) and link them here. Sug
 
 ### Database
 
+**Option A — lightweight dev Postgres** ([`docker-compose.yml`](docker-compose.yml)):
+
 ```bash
 docker compose up -d postgres
-export DATABASE_URL="postgresql://cns_user:cns_password@localhost:5433/cloud_networking_studio"
+export DATABASE_URL="postgresql://cns_user:cns_password@127.0.0.1:5433/cloud_networking_studio"
 ```
+
+**Option B — production-style compose** (same **5433** mapping; use when testing the full stack or aligning with [`docker-compose.prod.yml`](docker-compose.prod.yml)):
+
+```bash
+docker compose -f docker-compose.prod.yml up -d postgres
+export DATABASE_URL="postgresql://cns_user:cns_password@127.0.0.1:5433/cloud_networking_studio"
+```
+
+Then run **`pytest`** from **`backend/`** (defaults match **`backend/tests/conftest.py`**). See [docs/testing.md](docs/testing.md) and [docs/RDS.md](docs/RDS.md) for RDS vs local Postgres.
 
 ### Backend
 
 ```bash
 cd backend
 pip install -r requirements.txt
+# Optional: copy backend/.env.example → backend/.env and set AUTH_SECRET_KEY / AUTH_REQUIRE_LOGIN (see docs/AUTH.md)
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -171,7 +184,7 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5174**. During **`npm run dev`**, the UI uses **`/api/...`** on the same origin and **Vite proxies** to FastAPI on **8000**. Keep **`uvicorn`** running on **8000** while using the UI.
+Open **http://localhost:5174**. During **`npm run dev`**, the UI uses **`/api/...`** on the same origin and **Vite proxies** to FastAPI on **8000**. Keep **`uvicorn`** running on **8000** while using the UI. With **`AUTH_REQUIRE_LOGIN=true`**, sign in at **`/login`** first; with the default relaxed dev settings, the dashboard loads using the API’s implicit dev user.
 
 **Production build:**
 
@@ -181,7 +194,7 @@ npm run build
 npm run preview   # optional — serves dist/
 ```
 
-**What the UI covers:** dashboard (health, topology list), topology detail with **React Flow studio** (nodes/links, templates including **routed host → router → service**, inspector with link addressing, deployment planning), **Runtime actions** (deploy, traffic, stop-node, reconcile, heal, destroy), **Routed traffic & validation** (directed ping/HTTP, quick-path buttons), deployment events, and raw JSON panels.
+**What the UI covers:** sign-in / register when auth is required, **project** selector and create-project flow, dashboard (health, **project-scoped** topology list), topology detail with **React Flow studio** (nodes/links, templates including **routed host → router → service**, inspector with link addressing, deployment planning), **Runtime actions** (deploy, traffic, stop-node, reconcile, heal, destroy), **Routed traffic & validation** (directed ping/HTTP, quick-path buttons), deployment events, and raw JSON panels.
 
 ### Topology studio (visual builder)
 
@@ -207,13 +220,13 @@ API_BASE=http://127.0.0.1:8000 ./scripts/demo_full_flow.sh
 
 Step-by-step narration for **UI** and **CLI**: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
-**Production-style stack** (optional Compose Postgres via profile **`localdb`**, API, static UI, Caddy on port **80**): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/RDS.md](docs/RDS.md) · [docs/EC2_RUNBOOK.md](docs/EC2_RUNBOOK.md) · `docker-compose.prod.yml` · copy [.env.example](.env.example) to `.env`.
+**Production-style stack** (Compose **Postgres** on host **5433**, API, static UI, Caddy on port **80**): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/RDS.md](docs/RDS.md) · [docs/EC2_RUNBOOK.md](docs/EC2_RUNBOOK.md) · `docker-compose.prod.yml` · copy [.env.example](.env.example) to `.env`.
 
 ---
 
 ## Routed topology example (curl)
 
-Same addressing as `scripts/demo_full_flow.sh` part B: **10.72.0.0/24** (`net-a`) and **10.73.0.0/24** (`net-b`). Replace `TOPOLOGY_ID`, `HOST_ID`, `ROUTER_ID`, `SERVICE_ID` with UUIDs returned by your API.
+Same addressing as `scripts/demo_full_flow.sh` part B: **10.72.0.0/24** (`net-a`) and **10.73.0.0/24** (`net-b`). Replace `TOPOLOGY_ID`, `HOST_ID`, `ROUTER_ID`, `SERVICE_ID` with UUIDs returned by your API. If **`AUTH_REQUIRE_LOGIN=true`**, add **`-H "Authorization: Bearer $TOKEN"`** to each request (see [docs/AUTH.md](docs/AUTH.md)).
 
 ```bash
 API=http://localhost:8000

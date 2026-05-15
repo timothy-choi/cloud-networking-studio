@@ -3,17 +3,20 @@
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func as sa_func, select
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.models.project import Project
 from app.models.topology import (
     Topology,
     TopologyLink,
     TopologyNode,
     TopologyStatus,
 )
+from app.models.user import User
 from app.schemas.topology import (
     TopologyCreate,
     TopologyLinkCreate,
@@ -24,6 +27,11 @@ from app.schemas.topology import (
     TopologyNodeUpdate,
     TopologyResponse,
     TopologyUpdate,
+)
+from app.services.access_control import (
+    default_project_for_user,
+    get_owned_project,
+    get_topology_for_user,
 )
 
 router = APIRouter(prefix="/topologies", tags=["topologies"])
@@ -39,16 +47,6 @@ def _merge_json_dict(
     if base is None:
         return dict(patch)
     return {**base, **patch}
-
-
-def _get_topology_or_404(db: Session, topology_id: UUID) -> Topology:
-    topo = db.get(Topology, topology_id)
-    if topo is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Topology not found",
-        )
-    return topo
 
 
 def _counts_for_topology(db: Session, topology_id: UUID) -> tuple[int, int]:
@@ -70,9 +68,23 @@ def _counts_for_topology(db: Session, topology_id: UUID) -> tuple[int, int]:
 def create_topology(
     body: TopologyCreate,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> Topology:
-    """Create and persist a topology definition."""
+    """Create and persist a topology definition inside a project you own."""
+    pid = body.project_id
+    if pid is None:
+        proj = default_project_for_user(db, user)
+        if proj is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Create a project first, or pass project_id.",
+            )
+        pid = proj.id
+    else:
+        get_owned_project(db, user, pid)
+
     topo = Topology(
+        project_id=pid,
         name=body.name,
         description=body.description,
         status=body.status or TopologyStatus.DRAFT,
@@ -91,9 +103,25 @@ def create_topology(
     response_model=list[TopologyResponse],
     summary="List topologies",
 )
-def list_topologies(db: Session = Depends(get_db)) -> list[TopologyResponse]:
-    """List topologies, newest first, with node/link counts for dashboards."""
-    stmt = select(Topology).order_by(Topology.created_at.desc())
+def list_topologies(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    project_id: UUID | None = Query(
+        default=None,
+        description="When set, only topologies in this project (must be owned by you).",
+    ),
+) -> list[TopologyResponse]:
+    """List topologies for your projects, newest first, with node/link counts."""
+    if project_id is not None:
+        get_owned_project(db, user, project_id)
+    stmt = (
+        select(Topology)
+        .join(Project, Topology.project_id == Project.id)
+        .where(Project.owner_user_id == user.id)
+    )
+    if project_id is not None:
+        stmt = stmt.where(Topology.project_id == project_id)
+    stmt = stmt.order_by(Topology.created_at.desc())
     rows = list(db.scalars(stmt).all())
     out: list[TopologyResponse] = []
     for topo in rows:
@@ -112,14 +140,9 @@ def list_topologies(db: Session = Depends(get_db)) -> list[TopologyResponse]:
 def get_topology(
     topology_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> TopologyResponse:
-    """Fetch a single topology by id."""
-    topo = db.get(Topology, topology_id)
-    if topo is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Topology not found",
-        )
+    topo = get_topology_for_user(db, user, topology_id)
     nc, lc = _counts_for_topology(db, topology_id)
     return TopologyResponse.model_validate(topo).model_copy(update={"node_count": nc, "link_count": lc})
 
@@ -132,9 +155,9 @@ def get_topology(
 def delete_topology(
     topology_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> Response:
-    """Remove topology row; cascades delete nodes, links, and deployment records."""
-    topo = _get_topology_or_404(db, topology_id)
+    topo = get_topology_for_user(db, user, topology_id)
     db.delete(topo)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -150,9 +173,9 @@ def create_topology_node(
     topology_id: UUID,
     body: TopologyNodeCreate,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> TopologyNode:
-    """Add a node to a topology graph."""
-    _get_topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     node = TopologyNode(
         topology_id=topology_id,
         name=body.name,
@@ -175,9 +198,9 @@ def create_topology_node(
 def list_topology_nodes(
     topology_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[TopologyNode]:
-    """List all nodes belonging to a topology."""
-    _get_topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     stmt = select(TopologyNode).where(TopologyNode.topology_id == topology_id)
     return list(db.scalars(stmt).all())
 
@@ -192,9 +215,9 @@ def create_topology_link(
     topology_id: UUID,
     body: TopologyLinkCreate,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> TopologyLink:
-    """Connect two nodes within the same topology."""
-    _get_topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
 
     src = db.get(TopologyNode, body.source_node_id)
     tgt = db.get(TopologyNode, body.target_node_id)
@@ -235,9 +258,9 @@ def create_topology_link(
 def list_topology_links(
     topology_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[TopologyLink]:
-    """List all links belonging to a topology."""
-    _get_topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     stmt = select(TopologyLink).where(TopologyLink.topology_id == topology_id)
     return list(db.scalars(stmt).all())
 
@@ -251,8 +274,9 @@ def patch_topology(
     topology_id: UUID,
     body: TopologyUpdate,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> Topology:
-    topo = _get_topology_or_404(db, topology_id)
+    topo = get_topology_for_user(db, user, topology_id)
     data = body.model_dump(exclude_unset=True)
     if "config" in data:
         topo.config = _merge_json_dict(topo.config, data.pop("config"))
@@ -273,8 +297,9 @@ def patch_topology_node(
     node_id: UUID,
     body: TopologyNodeUpdate,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> TopologyNode:
-    _get_topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     node = db.get(TopologyNode, node_id)
     if node is None or node.topology_id != topology_id:
         raise HTTPException(
@@ -300,8 +325,9 @@ def delete_topology_node(
     topology_id: UUID,
     node_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> Response:
-    _get_topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     node = db.get(TopologyNode, node_id)
     if node is None or node.topology_id != topology_id:
         raise HTTPException(
@@ -323,8 +349,9 @@ def patch_topology_link(
     link_id: UUID,
     body: TopologyLinkUpdate,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> TopologyLink:
-    _get_topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     link = db.get(TopologyLink, link_id)
     if link is None or link.topology_id != topology_id:
         raise HTTPException(
@@ -350,8 +377,9 @@ def delete_topology_link(
     topology_id: UUID,
     link_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> Response:
-    _get_topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     link = db.get(TopologyLink, link_id)
     if link is None or link.topology_id != topology_id:
         raise HTTPException(

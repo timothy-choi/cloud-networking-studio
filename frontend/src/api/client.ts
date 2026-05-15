@@ -36,12 +36,34 @@ export function getApiBase(): string {
   return 'http://localhost:8000';
 }
 
+export function getStoredAccessToken(): string | null {
+  try {
+    return sessionStorage.getItem('cns_access_token');
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredAccessToken(token: string | null): void {
+  try {
+    if (token) {
+      sessionStorage.setItem('cns_access_token', token);
+    } else {
+      sessionStorage.removeItem('cns_access_token');
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${getApiBase()}${path.startsWith('/') ? path : `/${path}`}`;
+  const token = getStoredAccessToken();
   const headers: HeadersInit = {
     Accept: 'application/json',
     ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
     ...(init?.headers ?? {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
   const res = await fetch(url, { ...init, headers });

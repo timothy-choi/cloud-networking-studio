@@ -7,7 +7,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.models.user import User
 from app.schemas.controller import (
     ControllerRunOnceResponse,
     ControllerStatusResponse,
@@ -15,6 +17,7 @@ from app.schemas.controller import (
     RestartedContainerRef,
 )
 from app.services import runtime_controller as controller_svc
+from app.services.access_control import get_deployment_for_user
 
 router = APIRouter(tags=["controller"])
 
@@ -24,8 +27,11 @@ router = APIRouter(tags=["controller"])
     response_model=ControllerStatusResponse,
     summary="Controller status",
 )
-def get_controller_status(db: Session = Depends(get_db)) -> ControllerStatusResponse:
-    snap = controller_svc.get_controller_status(db)
+def get_controller_status(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ControllerStatusResponse:
+    snap = controller_svc.get_controller_status(db, owner_user_id=user.id)
     return ControllerStatusResponse(
         controller_mode=snap.controller_mode,
         managed_deployments_count=snap.managed_deployments_count,
@@ -41,8 +47,11 @@ def get_controller_status(db: Session = Depends(get_db)) -> ControllerStatusResp
     response_model=ControllerRunOnceResponse,
     summary="Run controller reconcile sweep",
 )
-def post_controller_run_once(db: Session = Depends(get_db)) -> ControllerRunOnceResponse:
-    summary = controller_svc.run_controller_once(db)
+def post_controller_run_once(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ControllerRunOnceResponse:
+    summary = controller_svc.run_controller_once(db, owner_user_id=user.id)
     db.commit()
     return ControllerRunOnceResponse(
         deployments_checked=summary.deployments_checked,
@@ -62,14 +71,16 @@ def post_controller_run_once(db: Session = Depends(get_db)) -> ControllerRunOnce
 def post_deployment_heal(
     deployment_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> HealingResponse:
+    get_deployment_for_user(db, user, deployment_id)
     try:
         data = controller_svc.heal_deployment(db, deployment_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Deployment not found",
-        )
+        ) from None
     db.commit()
 
     rec = data.reconciliation

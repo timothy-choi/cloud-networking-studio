@@ -7,9 +7,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.deployment import DeploymentEvent, DeploymentEventLevel
+from app.models.user import User
 from app.services import runtime_state_service as runtime_svc
+from app.services.access_control import (
+    get_deployment_for_user,
+    get_node_for_user,
+    get_topology_for_user,
+)
 from app.schemas.runtime import (
     ReconciliationResponse,
     RuntimeDeploymentResponse,
@@ -33,7 +40,7 @@ def _topology_http(session, topology_id: UUID):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Topology not found",
-        )
+        ) from None
 
 
 def _deployment_http(session, deployment_id: UUID):
@@ -47,7 +54,7 @@ def _deployment_http(session, deployment_id: UUID):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Deployment not found",
-        )
+        ) from None
 
 
 @router.get(
@@ -58,7 +65,9 @@ def _deployment_http(session, deployment_id: UUID):
 def get_topology_runtime(
     topology_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> RuntimeTopologyResponse:
+    get_topology_for_user(db, user, topology_id)
     body = _topology_http(db, topology_id)
     db.commit()
     return body
@@ -72,7 +81,9 @@ def get_topology_runtime(
 def get_deployment_runtime(
     deployment_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> RuntimeDeploymentResponse:
+    get_deployment_for_user(db, user, deployment_id)
     body = _deployment_http(db, deployment_id)
     db.commit()
     return body
@@ -87,14 +98,16 @@ def get_node_logs(
     node_id: UUID,
     tail: int = Query(default=100, ge=1, le=10000),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> RuntimeLogsResponse:
+    get_node_for_user(db, user, node_id)
     try:
         body = runtime_svc.build_node_logs(db, node_id, tail)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Node not found",
-        )
+        ) from None
     if body is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -113,14 +126,16 @@ def get_node_logs(
 def get_node_stats(
     node_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> RuntimeStatsResponse:
+    get_node_for_user(db, user, node_id)
     try:
         body = runtime_svc.build_node_stats(db, node_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Node not found",
-        )
+        ) from None
     if body is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -140,14 +155,16 @@ def get_node_stats(
 def reconcile_deployment_route(
     deployment_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> ReconciliationResponse:
+    get_deployment_for_user(db, user, deployment_id)
     try:
         dep, result = runtime_svc.reconcile_deployment(db, deployment_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Deployment or topology not found",
-        )
+        ) from None
 
     tid = dep.topology_id
     db.add(

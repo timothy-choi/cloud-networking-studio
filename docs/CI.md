@@ -8,7 +8,7 @@ GitHub Actions runs on every push to `main` and on pull requests (see [.github/w
 |--------|---------|
 | **Backend (pytest)** | Unit and API tests against a service container Postgres; `CNS_USE_FAKE_DOCKER=1` so tests do not require a Docker engine. |
 | **Frontend (production build)** | `npm ci` and `npm run build` — catches TypeScript and bundling regressions. |
-| **Production stack smoke** | Builds and starts [`docker-compose.prod.yml`](../docker-compose.prod.yml) with **`--profile localdb`** on the runner, waits with [`scripts/wait_caddy_edge.sh`](../scripts/wait_caddy_edge.sh) / [`scripts/ci_wait_for_stack.sh`](../scripts/ci_wait_for_stack.sh) until **`/`** and **`/api/health`** succeed through Caddy, then runs [`scripts/prod_smoke_test.sh`](../scripts/prod_smoke_test.sh). |
+| **Production stack smoke** | Builds and starts [`docker-compose.prod.yml`](../docker-compose.prod.yml) on the runner, waits with [`scripts/wait_caddy_edge.sh`](../scripts/wait_caddy_edge.sh) / [`scripts/ci_wait_for_stack.sh`](../scripts/ci_wait_for_stack.sh) until **`/`** and **`/api/health`** succeed through Caddy, then runs [`scripts/prod_smoke_test.sh`](../scripts/prod_smoke_test.sh). |
 
 The smoke job proves that **images build**, **Compose wiring works**, **Postgres + API + static UI + Caddy** start together, and core **HTTP API** paths used by the dashboard respond.
 

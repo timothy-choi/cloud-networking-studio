@@ -104,13 +104,13 @@ Networking: the instance is in a **public subnet** with **`map_public_ip_on_laun
    cd cloud-networking-studio
    cp .env.example .env
    # edit .env — set POSTGRES_PASSWORD, CNS_CORS_ORIGINS (include Vercel origins), SSLIP_HOST=<EIP>.sslip.io
-   docker compose --profile localdb -f docker-compose.prod.yml -f docker-compose.sslip.yml up -d --build
+   docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml up -d --build
    ```
 
    For **HTTP only** on port 80 (unchanged default):
 
    ```bash
-   docker compose --profile localdb -f docker-compose.prod.yml up -d --build
+   docker compose -f docker-compose.prod.yml up -d --build
    ```
 
 3. Open **`http://<Elastic IP>`** or **`https://<Elastic IP>.sslip.io`** once Caddy and services are healthy.

@@ -2,12 +2,34 @@ import { useCallback, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { formatApiError, getControllerStatus, getHealth } from '../api/client';
 import { getMetricsSummary } from '../api/metrics';
+import { listProjects } from '../api/projects';
+import type { ProjectResponse } from '../api/projects';
 import { createDemoTopology, deleteTopology, listTopologies } from '../api/topologies';
 import { CreateBlankTopologyModal } from '../components/CreateBlankTopologyModal';
+import { CreateProjectModal } from '../components/CreateProjectModal';
 import { Spinner } from '../components/Spinner';
 import { usePolling } from '../hooks/usePolling';
 import type { ControllerStatusResponse, HealthResponse, TopologyResponse } from '../types';
 import type { MetricsSummaryResponse } from '../types/metrics';
+
+const PROJECT_SESSION_KEY = 'cns_selected_project_id';
+
+function readSessionProjectId(): string | null {
+  try {
+    return sessionStorage.getItem(PROJECT_SESSION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionProjectId(id: string | null): void {
+  try {
+    if (id) sessionStorage.setItem(PROJECT_SESSION_KEY, id);
+    else sessionStorage.removeItem(PROJECT_SESSION_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 function fmtWhen(iso: string): string {
   try {
@@ -43,54 +65,93 @@ export function DashboardPage() {
   const [healthErr, setHealthErr] = useState<string | null>(null);
   const [controller, setController] = useState<ControllerStatusResponse | null>(null);
   const [topologies, setTopologies] = useState<TopologyResponse[]>([]);
+  const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [listErr, setListErr] = useState<string | null>(null);
   const [templateLoading, setTemplateLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [blankOpen, setBlankOpen] = useState(false);
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [metrics, setMetrics] = useState<MetricsSummaryResponse | null>(null);
   const [metricsErr, setMetricsErr] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setHealthErr(null);
-    setListErr(null);
-    setMetricsErr(null);
-    setRefreshing(true);
-    try {
-      const [h, c, t, m] = await Promise.all([
-        getHealth(),
-        getControllerStatus().catch(() => null),
-        listTopologies(),
-        getMetricsSummary().catch(() => null),
-      ]);
-      setHealth(h);
-      setController(c);
-      setTopologies(t);
-      setMetrics(m);
-    } catch (e) {
-      setHealthErr(formatApiError(e));
-      setHealth(null);
-      setMetrics(null);
+  const refresh = useCallback(
+    async (projectIdOverride?: string | null) => {
+      setHealthErr(null);
+      setListErr(null);
+      setMetricsErr(null);
+      setRefreshing(true);
       try {
-        setTopologies(await listTopologies());
-      } catch (e2) {
-        setListErr(formatApiError(e2));
+        const projs = await listProjects();
+        setProjects(projs);
+        let nextSel: string | null = null;
+        if (projectIdOverride != null && projs.some((p) => p.id === projectIdOverride)) {
+          nextSel = projectIdOverride;
+        } else if (selectedProjectId && projs.some((p) => p.id === selectedProjectId)) {
+          nextSel = selectedProjectId;
+        } else {
+          const stored = readSessionProjectId();
+          if (stored && projs.some((p) => p.id === stored)) nextSel = stored;
+          else nextSel = projs[0]?.id ?? null;
+        }
+        setSelectedProjectId(nextSel);
+        writeSessionProjectId(nextSel);
+
+        const [h, c, t, m] = await Promise.all([
+          getHealth(),
+          getControllerStatus().catch(() => null),
+          listTopologies(nextSel ?? undefined),
+          getMetricsSummary().catch(() => null),
+        ]);
+        setHealth(h);
+        setController(c);
+        setTopologies(t);
+        setMetrics(m);
+      } catch (e) {
+        setHealthErr(formatApiError(e));
+        setHealth(null);
+        setMetrics(null);
+        try {
+          const projs = await listProjects();
+          setProjects(projs);
+          let nextSel: string | null = null;
+          if (projectIdOverride != null && projs.some((p) => p.id === projectIdOverride)) {
+            nextSel = projectIdOverride;
+          } else if (selectedProjectId && projs.some((p) => p.id === selectedProjectId)) {
+            nextSel = selectedProjectId;
+          } else {
+            const stored = readSessionProjectId();
+            if (stored && projs.some((p) => p.id === stored)) nextSel = stored;
+            else nextSel = projs[0]?.id ?? null;
+          }
+          setSelectedProjectId(nextSel);
+          writeSessionProjectId(nextSel);
+          setTopologies(await listTopologies(nextSel ?? undefined));
+        } catch (e2) {
+          setListErr(formatApiError(e2));
+        }
+        try {
+          setMetrics(await getMetricsSummary());
+        } catch {
+          setMetricsErr('Metrics summary unavailable');
+        }
+      } finally {
+        setRefreshing(false);
       }
-      try {
-        setMetrics(await getMetricsSummary());
-      } catch {
-        setMetricsErr('Metrics summary unavailable');
-      }
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
+    },
+    [selectedProjectId],
+  );
 
   usePolling(refresh, 10_000, true);
 
   async function onCreateFromTemplate() {
+    if (!selectedProjectId) {
+      alert('Create or select a project first.');
+      return;
+    }
     setTemplateLoading(true);
     try {
-      const { topologyId } = await createDemoTopology();
+      const { topologyId } = await createDemoTopology(selectedProjectId);
       await refresh();
       navigate(`/topologies/${topologyId}`);
     } catch (e) {
@@ -104,9 +165,19 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-8">
+      <CreateProjectModal
+        open={projectModalOpen}
+        onClose={() => setProjectModalOpen(false)}
+        onCreated={(p) => {
+          writeSessionProjectId(p.id);
+          void refresh(p.id);
+        }}
+      />
+
       <CreateBlankTopologyModal
         open={blankOpen}
         onClose={() => setBlankOpen(false)}
+        projectId={selectedProjectId}
         onCreated={(topologyId) => {
           void refresh();
           navigate(`/topologies/${topologyId}`);
@@ -123,6 +194,48 @@ export function DashboardPage() {
         <p className="mt-1 max-w-2xl text-sm text-cns-muted">
           Design environments, attach a runtime, and operate workloads. Topologies refresh every 10s.
         </p>
+      </div>
+
+      <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="min-w-[12rem] flex-1 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+            <span className="text-xs font-semibold uppercase tracking-wide text-cns-label">Project</span>
+            <select
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+              value={selectedProjectId ?? ''}
+              onChange={(e) => {
+                const id = e.target.value || null;
+                setSelectedProjectId(id);
+                writeSessionProjectId(id);
+                void refresh(id);
+              }}
+              disabled={projects.length === 0}
+            >
+              {projects.length === 0 ? <option value="">No projects yet</option> : null}
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => setProjectModalOpen(true)}
+            className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            New project
+          </button>
+        </div>
+        {projects.length === 0 ? (
+          <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
+            Create a project to own topologies and deployments. Registration also creates a starter workspace.
+          </p>
+        ) : (
+          <p className="mt-2 text-xs text-cns-muted">
+            Topology list is scoped to the selected project. Switch projects to see other labs.
+          </p>
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -242,14 +355,15 @@ export function DashboardPage() {
           <button
             type="button"
             onClick={() => setBlankOpen(true)}
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+            disabled={!selectedProjectId}
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
           >
             Create blank topology
           </button>
           <button
             type="button"
             onClick={() => void onCreateFromTemplate()}
-            disabled={templateLoading}
+            disabled={templateLoading || !selectedProjectId}
             className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 cns-disabled-control dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
           >
             {templateLoading ? 'Creating…' : 'Create from template'}

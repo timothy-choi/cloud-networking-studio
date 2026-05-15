@@ -1,6 +1,10 @@
 """ORM models — import order registers all tables on ``Base.metadata``."""
 
-# Topology first so graph entities exist before deployment FKs resolve at mapper config time.
+# Users and projects before topology FKs.
+from app.models.project import Project
+from app.models.user import User
+
+# Topology graph entities before deployment FKs.
 from app.models.topology import (
     NodeType,
     Topology,
@@ -30,6 +34,7 @@ __all__ = [
     "FailureInjectionFailureType",
     "FailureInjectionStatus",
     "NodeType",
+    "Project",
     "Topology",
     "TopologyLink",
     "TopologyNode",
@@ -38,4 +43,5 @@ __all__ = [
     "TrafficTestResult",
     "TrafficTestStatus",
     "TrafficTestType",
+    "User",
 ]

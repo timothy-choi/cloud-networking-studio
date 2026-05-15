@@ -1,3 +1,4 @@
+export * from './auth';
 export * from './topology';
 export * from './deployment';
 export * from './runtime';

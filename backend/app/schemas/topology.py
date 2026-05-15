@@ -51,7 +51,11 @@ class TopologyCreate(BaseModel):
     )
     config: dict[str, Any] | None = Field(
         default=None,
-        description="Opaque JSON bag for future planner hints.",
+        description="Optional opaque JSON blob stored with the topology row.",
+    )
+    project_id: UUID | None = Field(
+        default=None,
+        description="Owning project. When omitted, the first project for the current user is used.",
     )
 
 
@@ -76,6 +80,7 @@ class TopologyResponse(BaseModel):
     )
 
     id: UUID
+    project_id: UUID | None = None
     name: str
     description: str | None
     status: TopologyStatus

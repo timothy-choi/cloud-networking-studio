@@ -34,11 +34,28 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="CNS_CORS_ORIGIN_REGEX",
     )
-    # Default matches local docker-compose.dev (Postgres on host 5433). Production EC2 uses
-    # DATABASE_URL from `.env` (Compose `postgres` service or AWS RDS). See docs/RDS.md.
+    # Default matches local Docker Compose Postgres on host 5433 (docker-compose.yml or
+    # docker-compose.prod.yml). Production uses DATABASE_URL from `.env` (Compose `postgres` or RDS).
     database_url: str = Field(
         default="postgresql://cns_user:cns_password@localhost:5433/cloud_networking_studio",
         validation_alias=AliasChoices("DATABASE_URL", "database_url"),
+    )
+    # --- Auth (JWT + bcrypt). Production must set AUTH_SECRET_KEY. ---
+    auth_secret_key: str = Field(
+        default="local-dev-only-change-AUTH_SECRET_KEY-in-production-min-32-chars",
+        validation_alias="AUTH_SECRET_KEY",
+    )
+    auth_token_expire_minutes: int = Field(
+        default=60 * 24 * 7,
+        ge=5,
+        le=60 * 24 * 365,
+        validation_alias="AUTH_TOKEN_EXPIRE_MINUTES",
+    )
+    # When true, mutating and data APIs require a valid Bearer JWT (except /health, /auth/register, /auth/login).
+    # When false (default for local development), unauthenticated requests use a built-in dev user + default project.
+    auth_require_login: bool = Field(
+        default=False,
+        validation_alias="AUTH_REQUIRE_LOGIN",
     )
 
 

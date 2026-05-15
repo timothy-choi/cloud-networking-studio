@@ -56,3 +56,66 @@ variable "ubuntu_ami_name_pattern" {
   description = "DescribeImages name wildcard for Canonical Ubuntu server AMIs (owner 099720109477). Broaden (e.g. hvm-ssd*) if gp3-only or legacy names differ by region."
   default     = "ubuntu/images/hvm-ssd*/ubuntu-noble-24.04-amd64-server-*"
 }
+
+# --- Optional RDS PostgreSQL (production persistence; EC2 Compose uses external DATABASE_URL) ---
+
+variable "rds_enabled" {
+  type        = bool
+  description = "When true, provision AWS RDS PostgreSQL in the VPC and expose outputs for DATABASE_URL on EC2. Ephemeral/CI keep Docker Postgres unless you enable this explicitly."
+  default     = false
+}
+
+variable "rds_instance_class" {
+  type        = string
+  description = "RDS instance class (e.g. db.t4g.micro, db.t3.micro)."
+  default     = "db.t4g.micro"
+}
+
+variable "rds_allocated_storage" {
+  type        = number
+  description = "Allocated storage (GiB) for the RDS instance."
+  default     = 20
+}
+
+variable "rds_publicly_accessible" {
+  type        = bool
+  description = "When true, RDS gets a public DNS endpoint (still SG-restricted to the EC2 SG on 5432). Use false for VPC-only access from EC2."
+  default     = false
+}
+
+variable "rds_master_username" {
+  type        = string
+  description = "Master username for RDS (must match DATABASE_URL user on EC2)."
+  default     = "cns_user"
+}
+
+variable "rds_master_password" {
+  type        = string
+  sensitive   = true
+  description = "Master password for RDS. Leave empty to auto-generate (stored in Terraform state). Prefer TF_VAR_rds_master_password from GitHub Actions secrets (POSTGRES_PASSWORD or RDS_PASSWORD)."
+  default     = ""
+}
+
+variable "rds_database_name" {
+  type        = string
+  description = "Initial database name on RDS (matches docker-compose default DB name)."
+  default     = "cloud_networking_studio"
+}
+
+variable "rds_backup_retention_period" {
+  type        = number
+  description = "Automated backup retention in days (0 disables automated backups)."
+  default     = 7
+}
+
+variable "rds_deletion_protection" {
+  type        = bool
+  description = "When true, RDS cannot be deleted without disabling this flag first."
+  default     = false
+}
+
+variable "public_subnet_b_cidr" {
+  type        = string
+  description = "Second public subnet CIDR (different AZ) for RDS DB subnet group when rds_enabled."
+  default     = "10.0.2.0/24"
+}

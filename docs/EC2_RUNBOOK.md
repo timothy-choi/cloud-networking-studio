@@ -1,6 +1,6 @@
 # EC2 deployment runbook (single instance)
 
-Deploy **Cloud Networking Studio** on one EC2 host using [docker-compose.prod.yml](../docker-compose.prod.yml) (Postgres, API, static UI, Caddy). For environment variables and architecture, see [DEPLOYMENT.md](DEPLOYMENT.md).
+Deploy **Cloud Networking Studio** on one EC2 host using [docker-compose.prod.yml](../docker-compose.prod.yml) (optional Compose Postgres behind profile **`localdb`**, API, static UI, Caddy). For **AWS RDS** instead of Compose Postgres, see [RDS.md](RDS.md). For environment variables and architecture, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 **Assumptions:** You have an AWS account, a VPC with a public subnet (or private subnet + bastion), and an SSH key pair. Default path below uses **Amazon Linux 2023** and installs **Docker Engine** with the **Compose v2** plugin.
 
@@ -132,9 +132,9 @@ nano .env   # or vim
 From the repository root (`/opt/cns/cloud-networking-studio`):
 
 ```bash
-docker compose -f docker-compose.prod.yml config
-docker compose -f docker-compose.prod.yml config --quiet   # optional: same check, no YAML dump
-docker compose -f docker-compose.prod.yml up --build -d
+docker compose --profile localdb -f docker-compose.prod.yml config
+docker compose --profile localdb -f docker-compose.prod.yml config --quiet   # optional: same check, no YAML dump
+docker compose --profile localdb -f docker-compose.prod.yml up --build -d
 ./scripts/prod_smoke_test.sh
 ```
 
@@ -145,14 +145,14 @@ First boot builds images and waits on Postgres/backend health before starting Ca
 ## 7. Check logs
 
 ```bash
-docker compose -f docker-compose.prod.yml ps
-docker compose -f docker-compose.prod.yml logs --tail=200 caddy backend postgres
+docker compose --profile localdb -f docker-compose.prod.yml ps
+docker compose --profile localdb -f docker-compose.prod.yml logs --tail=200 caddy backend postgres
 ```
 
 Follow logs (Ctrl+C to stop):
 
 ```bash
-docker compose -f docker-compose.prod.yml logs -f --tail=100 backend frontend
+docker compose --profile localdb -f docker-compose.prod.yml logs -f --tail=100 backend frontend
 ```
 
 Or use the helper (same idea, from your laptop or the instance after cloning):
@@ -203,7 +203,7 @@ Recreate/update containers from the current compose file (keeps the named Postgr
 ```bash
 cd /opt/cns/cloud-networking-studio
 git pull
-docker compose -f docker-compose.prod.yml up --build -d
+docker compose --profile localdb -f docker-compose.prod.yml up --build -d
 ```
 
 Quick bounce **without** rebuilding images:
@@ -219,13 +219,13 @@ Quick bounce **without** rebuilding images:
 Stop containers (data volume **retained**):
 
 ```bash
-docker compose -f docker-compose.prod.yml stop
+docker compose --profile localdb -f docker-compose.prod.yml stop
 ```
 
 Start again:
 
 ```bash
-docker compose -f docker-compose.prod.yml start
+docker compose --profile localdb -f docker-compose.prod.yml start
 ```
 
 Or `up -d` as in section 6.
@@ -238,7 +238,7 @@ Or `up -d` as in section 6.
 
 ```bash
 cd /opt/cns/cloud-networking-studio
-docker compose -f docker-compose.prod.yml down -v
+docker compose --profile localdb -f docker-compose.prod.yml down -v
 ```
 
 Optional: remove the clone and free disk:
@@ -262,7 +262,7 @@ aws ec2 terminate-instances --instance-ids i-xxxxxxxx
 To let the API create **real** containers on the Docker daemon, uncomment the **`/var/run/docker.sock`** bind mount under **`backend`** in `docker-compose.prod.yml`, then recreate:
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build backend
+docker compose --profile localdb -f docker-compose.prod.yml up -d --build backend
 ```
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for security implications.
@@ -276,7 +276,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for security implications.
 | `permission denied` on Docker socket | User in **`docker`** group; re-login after `usermod` |
 | Port 80 in use | Set `CADDY_HTTP_PORT=8080` in `.env`, `up -d` again, open that port in the security group |
 | Browser CORS errors | `CNS_CORS_ORIGINS` must match the site origin exactly |
-| Backend unhealthy | `docker compose logs backend postgres` — wrong `DATABASE_URL` or Postgres not ready |
+| Backend unhealthy | `docker compose --profile localdb -f docker-compose.prod.yml logs backend postgres` — wrong `DATABASE_URL` or Postgres not ready |
 | Cannot reach instance | Security group, subnet routing, instance public IP |
 
 ---

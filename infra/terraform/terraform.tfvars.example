@@ -19,3 +19,10 @@ ubuntu_ami_name_pattern  = "ubuntu/images/hvm-ssd*/ubuntu-noble-24.04-amd64-serv
 # Optional overrides:
 # vpc_cidr           = "10.0.0.0/16"
 # public_subnet_cidr = "10.0.1.0/24"
+# public_subnet_b_cidr = "10.0.2.0/24" # second AZ; used when rds_enabled
+
+# Optional RDS PostgreSQL — see ../../docs/RDS.md (do not commit passwords)
+# rds_enabled               = true
+# rds_instance_class        = "db.t4g.micro" # or db.t3.micro
+# rds_publicly_accessible   = false
+# rds_master_password       = "use-tf-env-or-secret-not-this-file"

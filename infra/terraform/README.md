@@ -1,6 +1,6 @@
 # Terraform — Cloud Networking Studio (AWS)
 
-This directory provisions a **small dedicated VPC**, a **public subnet**, a **security group**, an **Ubuntu 24.04 EC2** instance (Docker Engine + Compose plugin pre-installed via `user_data`), and an **Elastic IP** for a stable public address. Application containers are started separately (`docker compose` on the instance, or via CI over SSH). See [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [docs/CICD_DEPLOYMENT.md](../../docs/CICD_DEPLOYMENT.md), and [docs/EPHEMERAL_CI_ENVIRONMENTS.md](../../docs/EPHEMERAL_CI_ENVIRONMENTS.md).
+This directory provisions a **small dedicated VPC**, **two public subnets** (two AZs; second is for an optional **RDS** DB subnet group), **security groups**, an **Ubuntu 24.04 EC2** instance (Docker Engine + Compose plugin pre-installed via `user_data`), and an **Elastic IP** for a stable public address. Application containers are started separately (`docker compose` on the instance, or via CI over SSH). Optional **RDS PostgreSQL** is controlled by **`rds_enabled`** (see [docs/RDS.md](../../docs/RDS.md)). See [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [docs/CICD_DEPLOYMENT.md](../../docs/CICD_DEPLOYMENT.md), and [docs/EPHEMERAL_CI_ENVIRONMENTS.md](../../docs/EPHEMERAL_CI_ENVIRONMENTS.md).
 
 ## Prerequisites
 
@@ -74,7 +74,7 @@ terraform plan
 terraform apply
 ```
 
-- **`terraform init`** — downloads the AWS provider and creates `.terraform/` (ignored by git).
+- **`terraform init`** — downloads providers (**AWS**, **random**) and creates `.terraform/` (ignored by git).
 - **`terraform fmt`** — normalizes formatting (run after edits).
 - **`terraform validate`** — static checks (run after `init`).
 - **`terraform plan`** — shows the execution plan (requires valid AWS credentials).
@@ -104,13 +104,13 @@ Networking: the instance is in a **public subnet** with **`map_public_ip_on_laun
    cd cloud-networking-studio
    cp .env.example .env
    # edit .env — set POSTGRES_PASSWORD, CNS_CORS_ORIGINS (include Vercel origins), SSLIP_HOST=<EIP>.sslip.io
-   docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml up -d --build
+   docker compose --profile localdb -f docker-compose.prod.yml -f docker-compose.sslip.yml up -d --build
    ```
 
    For **HTTP only** on port 80 (unchanged default):
 
    ```bash
-   docker compose -f docker-compose.prod.yml up -d --build
+   docker compose --profile localdb -f docker-compose.prod.yml up -d --build
    ```
 
 3. Open **`http://<Elastic IP>`** or **`https://<Elastic IP>.sslip.io`** once Caddy and services are healthy.
@@ -123,7 +123,7 @@ For a fuller EC2 checklist, see [docs/EC2_RUNBOOK.md](../../docs/EC2_RUNBOOK.md)
 terraform destroy
 ```
 
-Removes the VPC, instance, EIP, and related resources. **Data loss:** anything only on the instance disk is gone; use backups or external volumes if you need durability beyond this lab template.
+Removes the VPC, instance, EIP, and related resources. **Data loss:** anything only on the instance disk is gone; **RDS** (if enabled) is **not** destroyed by default when managed in the same state — check `rds_deletion_protection` and run **`terraform destroy`** only after snapshots or when you intend to drop the database. Use backups or external volumes if you need durability beyond this lab template.
 
 **Production:** the `deploy-production` GitHub Action **never** runs `terraform destroy`. Only this manual command (or a dedicated workflow you add) removes prod infra.
 
@@ -145,6 +145,10 @@ Removes the VPC, instance, EIP, and related resources. **Data loss:** anything o
 | `api_base_url_sslip_http` | `http://<public_ip>.sslip.io/api` — HTTP counterpart for debugging or ephemeral smoke; production Vercel defaults to **`api_base_url_sslip`** (HTTPS). |
 | `ssh_command` | Example `ssh` line (adjust key path) |
 | `instance_id` | EC2 instance ID for support / debugging |
+| `rds_address` | RDS hostname when `rds_enabled` (else empty); use in `DATABASE_URL` on EC2 |
+| `rds_port` | RDS port when enabled (else empty; use **5432** when connecting) |
+| `rds_database_name` | RDS database name when enabled (else empty) |
+| `rds_username` | RDS master username when enabled (else empty); password is **never** an output |
 
 ## Lock file
 

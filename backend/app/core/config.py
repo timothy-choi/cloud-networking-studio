@@ -1,6 +1,6 @@
 """Application configuration loaded from environment and optional `.env` file."""
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,9 +34,11 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="CNS_CORS_ORIGIN_REGEX",
     )
-    # Default matches docker-compose (Postgres published on host port 5433). Override via .env.
-    database_url: str = (
-        "postgresql://cns_user:cns_password@localhost:5433/cloud_networking_studio"
+    # Default matches local docker-compose.dev (Postgres on host 5433). Production EC2 uses
+    # DATABASE_URL from `.env` (Compose `postgres` service or AWS RDS). See docs/RDS.md.
+    database_url: str = Field(
+        default="postgresql://cns_user:cns_password@localhost:5433/cloud_networking_studio",
+        validation_alias=AliasChoices("DATABASE_URL", "database_url"),
     )
 
 

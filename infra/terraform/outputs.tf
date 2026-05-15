@@ -57,3 +57,25 @@ output "instance_id" {
   description = "EC2 instance ID."
   value       = aws_instance.cns.id
 }
+
+# --- RDS (empty when var.rds_enabled is false; password is never output) ---
+
+output "rds_address" {
+  description = "RDS hostname for DATABASE_URL on EC2 (empty if RDS disabled)."
+  value       = length(aws_db_instance.cns) > 0 ? aws_db_instance.cns[0].address : ""
+}
+
+output "rds_port" {
+  description = "RDS port (empty string if RDS disabled)."
+  value       = length(aws_db_instance.cns) > 0 ? tostring(aws_db_instance.cns[0].port) : ""
+}
+
+output "rds_database_name" {
+  description = "RDS initial database name (matches Terraform var.rds_database_name)."
+  value       = length(aws_db_instance.cns) > 0 ? aws_db_instance.cns[0].db_name : ""
+}
+
+output "rds_username" {
+  description = "RDS master username (not a secret; password is never output)."
+  value       = length(aws_db_instance.cns) > 0 ? aws_db_instance.cns[0].username : ""
+}

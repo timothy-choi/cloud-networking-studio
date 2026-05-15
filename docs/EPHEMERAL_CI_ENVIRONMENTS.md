@@ -2,7 +2,7 @@
 
 **Step 31 context:** This workflow is **only for pull requests (same repo) and manual runs**. It is **not** the production `main` deploy. It provisions **temporary** AWS resources, deploys the app, smoke-tests over **HTTP**, then **always destroys** Terraform state and infra.
 
-The workflow **`.github/workflows/ephemeral-infra-smoke.yml`** provisions a **short-lived** Terraform stack (VPC, EC2, EIP), deploys **`docker-compose.prod.yml` + `docker-compose.sslip.yml`**, writes **`.env`** on the instance (including **`CADDYFILE_SSLIP=./deploy/Caddyfile.prod`** so Caddy serves **HTTP :80** only on sslip), runs **`scripts/prod_smoke_test.sh`** against **`http://<EIP>.sslip.io`**, then runs **`terraform destroy`** with **`if: always()`**.
+The workflow **`.github/workflows/ephemeral-infra-smoke.yml`** provisions a **short-lived** Terraform stack (VPC, EC2, EIP), deploys **`docker-compose.prod.yml` + `docker-compose.sslip.yml`** with **`--profile localdb`** so the bundled **Postgres** container starts, writes **`.env`** on the instance (including **`CADDYFILE_SSLIP=./deploy/Caddyfile.prod`** so Caddy serves **HTTP :80** only on sslip), runs **`scripts/prod_smoke_test.sh`** against **`http://<EIP>.sslip.io`**, then runs **`terraform destroy`** with **`if: always()`**.
 
 ## How it differs from production (`main`)
 

@@ -273,7 +273,6 @@ jobs:
             RDS_DB="$(printf '%s' "${RDS_DATABASE_NAME:-cloud_networking_studio}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 
             DATABASE_URL=""
-            COMPOSE=(sudo docker compose --profile localdb)
 
             if [[ -n "${RDS_EP}" ]] && command -v python3 >/dev/null 2>&1; then
               export _CNS_PY_HOST="${RDS_EP}"
@@ -288,7 +287,6 @@ jobs:
               unset _CNS_PY_HOST _CNS_PY_PORT _CNS_PY_USER _CNS_PY_DB _CNS_PY_PW || true
               if [[ "${PYRC}" -eq 0 ]] && [[ -n "${PYOUT}" ]]; then
                 DATABASE_URL="${PYOUT}"
-                COMPOSE=(sudo docker compose)
               else
                 echo "::warning::Could not build RDS DATABASE_URL (python rc=${PYRC}); using Docker Postgres service."
               fi
@@ -298,10 +296,16 @@ jobs:
 
             if [[ -z "${DATABASE_URL}" ]]; then
               DATABASE_URL="postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio"
-              COMPOSE=(sudo docker compose --profile localdb)
             fi
 
-            echo "DATABASE_URL present? $([[ -n "${DATABASE_URL}" ]] && echo yes || echo no)"
+            if [[ "${DATABASE_URL}" == *"@postgres:"* ]]; then
+              DB_MODE="localdb"
+              COMPOSE=(sudo docker compose --profile localdb)
+            else
+              DB_MODE="external"
+              COMPOSE=(sudo docker compose)
+            fi
+            echo "database mode: ${DB_MODE}"
 
             C_ARGS=(-f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env)
 
@@ -334,7 +338,12 @@ jobs:
             fi
 
             echo "=== docker compose down ==="
-            "${COMPOSE[@]}" "${C_ARGS[@]}" down || true
+            if [[ "${DB_MODE}" == "localdb" ]]; then
+              echo "Removing Compose volumes so Postgres re-initializes with POSTGRES_PASSWORD from .env."
+              "${COMPOSE[@]}" "${C_ARGS[@]}" down -v --remove-orphans || true
+            else
+              "${COMPOSE[@]}" "${C_ARGS[@]}" down || true
+            fi
 
             echo "=== docker compose up -d --build ==="
             if ! "${COMPOSE[@]}" "${C_ARGS[@]}" up -d --build; then

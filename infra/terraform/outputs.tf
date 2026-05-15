@@ -29,7 +29,7 @@ output "sslip_host" {
 }
 
 output "stack_base_url_sslip" {
-  description = "HTTPS origin for the EC2 stack via sslip (production smoke, Vercel-related flows). Ephemeral CI smoke uses stack_base_url_sslip_http until TLS on sslip is polished."
+  description = "HTTPS origin for the EC2 stack via sslip (production smoke + Vercel-related flows). Ephemeral PR smoke uses stack_base_url_sslip_http only."
   value       = "https://${aws_eip.cns.public_ip}.sslip.io"
 }
 

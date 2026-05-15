@@ -16,6 +16,8 @@ services:
       - "443:443"
     environment:
       SSLIP_HOST: ${SSLIP_HOST:?Set SSLIP_HOST to your EIP sslip hostname, e.g. 203.0.113.7.sslip.io}
+      # Same hostname as SSLIP_HOST; Caddyfile.sslip uses {$CNS_SSLIP_HOST} for the HTTPS site block.
+      CNS_SSLIP_HOST: ${SSLIP_HOST:?Set SSLIP_HOST to your EIP sslip hostname, e.g. 203.0.113.7.sslip.io}
       CNS_CADDY_AUTO_HTTPS: ${CNS_CADDY_AUTO_HTTPS:-on}
     volumes:
       - ${CADDYFILE_SSLIP:-./deploy/Caddyfile.sslip}:/etc/caddy/Caddyfile:ro

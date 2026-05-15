@@ -37,12 +37,23 @@ flowchart LR
 
 ## Vercel project settings
 
+In the **Vercel dashboard** (Project → Settings → General), align with **`deploy-production.yml`**:
+
 | Setting | Value |
 |--------|--------|
-| Root directory | `frontend` |
-| Build command | `npm run build` (CI uses `vercel build` with the same env; see workflow) |
-| Output directory | `dist` |
-| Production API base (CI) | Set in **`deploy-production.yml`**: optional repository secret **`VERCEL_VITE_API_BASE_URL`** (e.g. `http://203.0.113.7.sslip.io/api`). If unset, defaults to Terraform **`api_base_url_sslip_http`**. |
+| **Root Directory** | **Repository root** — leave **empty** (or `./`). **Do not** set this to **`frontend`**. |
+
+**Why:** CI builds the SPA with **Vite** on the runner (`cd frontend`, `npm ci`, `VITE_API_BASE_URL=… npm run build`), producing **`frontend/dist`**. It then deploys **static files only** from the **monorepo root** with:
+
+```bash
+npx vercel@54.0.0 deploy frontend/dist --prod --yes --token "$VERCEL_TOKEN"
+```
+
+If **Root Directory** is **`frontend`**, Vercel resolves that path again under `frontend/` and can error with paths like **`frontend/dist/frontend`**.
+
+CI runs **`vercel pull`** inside **`frontend/`** for project linking (`.vercel` next to the app). It does **not** run **`vercel build`** (no Vercel remote build) and does **not** use **`--prebuilt`**.
+
+**Production API base (CI):** Optional repository secret **`VERCEL_VITE_API_BASE_URL`** (e.g. `http://<EIP>.sslip.io/api`). If unset, CI uses Terraform **`api_base_url_sslip_http`** as **`VITE_API_BASE_URL`** for the local **`npm run build`**.
 
 Example (matches current EC2 HTTP default):
 
@@ -70,7 +81,7 @@ The repo declares a partial **`backend "s3" {}`** in `infra/terraform/backend.tf
 
 ## EC2 bootstrap and `.env`
 
-**GitHub Actions (`deploy-production.yml`):** before SSH deploy, the workflow checks repository secrets **`POSTGRES_PASSWORD`** and **`CNS_CORS_ORIGINS`**. On the instance, if **`~/cloud-networking-studio/.env` does not exist**, the SSH step creates it with a **heredoc** (no secret values in logs). The file includes **`DATABASE_URL`**, **`SSLIP_HOST`**, **`CADDYFILE_SSLIP=./deploy/Caddyfile.prod`**, and **`CNS_CADDY_AUTO_HTTPS=off`** so Caddy stays on **HTTP :80** for the sslip hostname. **`set +x`** is used while secrets are expanded; only **`.env` key names** are printed after write. If **`.env` already exists** (manual install), the workflow **only refreshes `SSLIP_HOST`**.
+**GitHub Actions (`deploy-production.yml`):** before SSH deploy, the workflow checks repository secrets **`POSTGRES_PASSWORD`** and **`CNS_CORS_ORIGINS`**. On the instance, the SSH step **writes** **`~/cloud-networking-studio/.env`** from secrets and Terraform outputs (no secret values in logs). The file includes **`DATABASE_URL`**, **`SSLIP_HOST`**, **`CADDYFILE_SSLIP=./deploy/Caddyfile.prod`**, and **`CNS_CADDY_AUTO_HTTPS=off`** so Caddy stays on **HTTP :80** for the sslip hostname. **`set +x`** is used while secrets are expanded; only **`.env` key names** are printed after write.
 
 **`CNS_CORS_ORIGINS`** on the EC2 backend must allow the **Vercel** origin(s) and, for the current HTTP EC2 API, **`http://<EIP>.sslip.io`** (and `https://…` too if you use mixed origins). See `backend/.env.example`.
 
@@ -90,13 +101,13 @@ On **`push` to `main`** (and **`workflow_dispatch`**), the **`deploy`** job:
 
 1. Runs **backend pytest** (with Postgres service on the runner).
 2. Validates **`docker-compose.prod.yml`** via `docker compose config`.
-3. Builds the **frontend** once with default Vite env (sanity compile before cloud steps).
+3. Sets up **Node.js 20** (for the Vercel deploy step).
 4. Runs **Terraform** under **`infra/terraform`**: **`backend.ci.hcl`**, **`terraform init`**, **`fmt -check`**, **`validate`**, **`plan`**, **`apply`**, **`terraform output`** (including HTTP sslip URLs for smoke and Vercel defaults).
 5. **Wait for SSH** until **TCP port 22** on **`public_ip`** accepts connections.
 6. **Require EC2 deploy secrets:** fails early if **`POSTGRES_PASSWORD`** or **`CNS_CORS_ORIGINS`** are unset.
-7. **SSH** (`appleboy/ssh-action`): **`cloud-init`**, **Docker** install if needed, clone/update **`~/cloud-networking-studio`**, **`git checkout`** pushed SHA, **write or refresh `.env`**, **`docker compose … up -d --build`** (with **compose logs** only if config/up fails).
+7. **SSH** (`appleboy/ssh-action`): **`cloud-init`**, **Docker** install if needed, clone/update **`~/cloud-networking-studio`**, **`git checkout`** pushed SHA, **write `.env`**, **`docker compose … up -d --build`** (with **compose logs** only if config/up fails).
 8. **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL`** = **`stack_base_url_sslip_http`**.
-9. **`vercel pull` / `vercel build` / `vercel deploy --prebuilt --prod`** with **`VITE_API_BASE_URL`** from **`VERCEL_VITE_API_BASE_URL`** or **`api_base_url_sslip_http`**.
+9. **Vercel (static `dist`):** from the **repository root**, **`cd frontend`**, **`npm ci`**, **`VITE_API_BASE_URL=… npm run build`**, **`npx vercel@54.0.0 pull`** (linking), then **`npx vercel@54.0.0 deploy frontend/dist --prod --yes`**. No **`vercel build`** and no **`--prebuilt`**.
 
 **SSH CIDR:** for **local or manual** Terraform, use **`ssh_allowed_cidr = "<MY_PUBLIC_IP>/32"`** in **`terraform.tfvars`**. For **`deploy-production.yml`**, set secret **`TF_VAR_SSH_ALLOWED_CIDR`** appropriately for who may SSH to the instance. **Ephemeral** forces **`0.0.0.0/0`** for GitHub-hosted runners (see **`docs/EPHEMERAL_CI_ENVIRONMENTS.md`**).
 
@@ -118,8 +129,8 @@ Browsers load the SPA from **Vercel** (`https://*.vercel.app`) but call the **EC
 | EC2 (compose on instance) | **`POSTGRES_PASSWORD`**, **`CNS_CORS_ORIGINS`** | Required: create or validate **`.env`** on first deploy (see **EC2 bootstrap**). Include Vercel origins and **`http://<EIP>.sslip.io`** (and `https://…` if used). |
 | EC2 | `EC2_SSH_PRIVATE_KEY` | PEM for `appleboy/ssh-action` |
 | EC2 | `EC2_SSH_USER` | e.g. `ubuntu` |
-| Vercel | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | `vercel pull` / `build` / `deploy` |
-| Vercel (optional) | **`VERCEL_VITE_API_BASE_URL`** | Overrides **`VITE_API_BASE_URL`** for `vercel build` (e.g. `http://<EIP>.sslip.io/api`). If unset, CI uses Terraform **`api_base_url_sslip_http`**. |
+| Vercel | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | **`vercel pull`** (in `frontend/`) and **`vercel deploy frontend/dist`** from repo root |
+| Vercel (optional) | **`VERCEL_VITE_API_BASE_URL`** | Overrides **`VITE_API_BASE_URL`** for the **local** **`npm run build`** in **`frontend/`** (e.g. `http://<EIP>.sslip.io/api`). If unset, CI uses Terraform **`api_base_url_sslip_http`**. |
 
 Never commit keys, `terraform.tfvars`, or tokens. Fork PRs do not receive secrets (ephemeral workflow skips them).
 

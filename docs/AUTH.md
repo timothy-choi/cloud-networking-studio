@@ -32,6 +32,13 @@ Set these in **`backend/.env`** (when running uvicorn from `backend/`) or in you
 
 Send **`Authorization: Bearer <access_token>`** on protected routes when **`AUTH_REQUIRE_LOGIN=true`**, and whenever you want to act as a specific registered user in dev.
 
+### Browser session (logout and stuck state)
+
+- **Log out** (header on authenticated pages) calls **`POST /auth/logout`** when possible, then always clears **`sessionStorage`** (JWT + selected project) and sends you to **`/login`** — it does **not** re-call **`/auth/me`**, so you are not immediately “re-logged in” as the implicit dev user.
+- **Clear stored session** on the sign-in / register screens drops the same keys without calling the server (useful if a token is invalid or the API changed).
+- Open **`/login?reset=1`** (or register with the same query) to auto-clear on load once.
+- Set **`VITE_AUTH_SKIP_IMPLICIT_ME=true`** in **`frontend/.env`** if the backend never serves an implicit user without a token and you want the SPA to treat “no JWT” as logged out on first paint (skips **`GET /auth/me`** when there is no token).
+
 ---
 
 ## Local development

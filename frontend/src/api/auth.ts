@@ -1,4 +1,5 @@
-import { apiFetch, setStoredAccessToken } from './client';
+import { clearAuthSessionStorage } from '../auth/storage';
+import { apiFetch } from './client';
 import type { UserPublic } from '../types/auth';
 
 export interface TokenResponse {
@@ -33,10 +34,13 @@ export async function fetchMe(): Promise<MeResponse> {
   return apiFetch<MeResponse>('/auth/me');
 }
 
+/** Best-effort server hint; local session is cleared regardless of response. */
 export async function logoutApi(): Promise<void> {
   try {
     await apiFetch('/auth/logout', { method: 'POST' });
+  } catch {
+    // Network / 5xx — still drop client session
   } finally {
-    setStoredAccessToken(null);
+    clearAuthSessionStorage();
   }
 }

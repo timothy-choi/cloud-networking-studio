@@ -17,16 +17,16 @@ export function Layout() {
               Control plane
             </span>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {user ? (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="max-w-[10rem] truncate text-zinc-700 dark:text-zinc-300" title={user.email}>
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/80 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900/60">
+                <span className="max-w-[12rem] truncate font-medium text-zinc-800 dark:text-zinc-100" title={user.email}>
                   {user.display_name}
                 </span>
                 <button
                   type="button"
                   onClick={() => void logout()}
-                  className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                  className="shrink-0 rounded-md border border-zinc-400 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-900 shadow-sm hover:bg-zinc-100 dark:border-zinc-500 dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700"
                 >
                   Log out
                 </button>

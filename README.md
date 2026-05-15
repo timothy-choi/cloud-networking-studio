@@ -99,7 +99,7 @@ Workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
 | Job | What it validates |
 |-----|-------------------|
 | **Backend (pytest)** | Python 3.12, Postgres 16 service, `pytest tests/ -q` with `CNS_USE_FAKE_DOCKER=1` |
-| **Frontend (production build)** | Node 22, `npm ci`, `npm run build` |
+| **Frontend (production build)** | Node 22, `npm ci`, `npm run test`, `npm run build` |
 | **Docker (backend image)** | `docker build -f backend/Dockerfile ./backend` |
 | **Docker (frontend image)** | `docker build -f frontend/Dockerfile ./frontend` |
 | **Compose (prod config)** | `docker compose -f docker-compose.prod.yml config --quiet` |

@@ -11,12 +11,11 @@ import { Spinner } from '../components/Spinner';
 import { usePolling } from '../hooks/usePolling';
 import type { ControllerStatusResponse, HealthResponse, TopologyResponse } from '../types';
 import type { MetricsSummaryResponse } from '../types/metrics';
-
-const PROJECT_SESSION_KEY = 'cns_selected_project_id';
+import { CNS_SELECTED_PROJECT_KEY } from '../auth/storage';
 
 function readSessionProjectId(): string | null {
   try {
-    return sessionStorage.getItem(PROJECT_SESSION_KEY);
+    return sessionStorage.getItem(CNS_SELECTED_PROJECT_KEY);
   } catch {
     return null;
   }
@@ -24,8 +23,8 @@ function readSessionProjectId(): string | null {
 
 function writeSessionProjectId(id: string | null): void {
   try {
-    if (id) sessionStorage.setItem(PROJECT_SESSION_KEY, id);
-    else sessionStorage.removeItem(PROJECT_SESSION_KEY);
+    if (id) sessionStorage.setItem(CNS_SELECTED_PROJECT_KEY, id);
+    else sessionStorage.removeItem(CNS_SELECTED_PROJECT_KEY);
   } catch {
     // ignore
   }

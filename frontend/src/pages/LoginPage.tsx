@@ -1,15 +1,22 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { formatApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, clearSession } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get('reset') === '1') {
+      clearSession();
+    }
+  }, [searchParams, clearSession]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -67,6 +74,16 @@ export function LoginPage() {
           Register
         </Link>
       </p>
+      <div className="border-t border-zinc-200 pt-4 dark:border-zinc-700">
+        <p className="text-center text-xs text-cns-muted">Stuck after a token or server change?</p>
+        <button
+          type="button"
+          onClick={() => clearSession()}
+          className="mt-2 w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/70"
+        >
+          Clear stored session
+        </button>
+      </div>
     </div>
     </div>
   );

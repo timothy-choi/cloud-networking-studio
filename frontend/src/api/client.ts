@@ -1,5 +1,6 @@
 /** Typed fetch helper + API base from Vite env. */
 
+import { CNS_ACCESS_TOKEN_KEY } from '../auth/storage';
 import type { ControllerStatusResponse, HealthResponse } from '../types/health';
 
 export class ApiError extends Error {
@@ -38,7 +39,7 @@ export function getApiBase(): string {
 
 export function getStoredAccessToken(): string | null {
   try {
-    return sessionStorage.getItem('cns_access_token');
+    return sessionStorage.getItem(CNS_ACCESS_TOKEN_KEY);
   } catch {
     return null;
   }
@@ -47,9 +48,9 @@ export function getStoredAccessToken(): string | null {
 export function setStoredAccessToken(token: string | null): void {
   try {
     if (token) {
-      sessionStorage.setItem('cns_access_token', token);
+      sessionStorage.setItem(CNS_ACCESS_TOKEN_KEY, token);
     } else {
-      sessionStorage.removeItem('cns_access_token');
+      sessionStorage.removeItem(CNS_ACCESS_TOKEN_KEY);
     }
   } catch {
     // ignore

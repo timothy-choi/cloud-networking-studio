@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
@@ -308,12 +308,30 @@ def get_deployment(
 )
 def list_deployment_events(
     deployment_id: UUID,
+    order: str = Query(
+        default="asc",
+        description="Sort order by created_at: asc (oldest first, default) or desc (newest first).",
+        pattern="^(asc|desc)$",
+    ),
+    level: DeploymentEventLevel | None = Query(
+        default=None,
+        description="When set, only events with this severity are returned.",
+    ),
+    q: str | None = Query(
+        default=None,
+        max_length=500,
+        description="Case-insensitive substring filter on message.",
+    ),
     db: Session = Depends(get_db),
 ) -> list[DeploymentEvent]:
     _deployment_or_404(db, deployment_id)
-    stmt = (
-        select(DeploymentEvent)
-        .where(DeploymentEvent.deployment_id == deployment_id)
-        .order_by(DeploymentEvent.created_at.asc())
-    )
+    stmt = select(DeploymentEvent).where(DeploymentEvent.deployment_id == deployment_id)
+    if level is not None:
+        stmt = stmt.where(DeploymentEvent.level == level)
+    if q and q.strip():
+        stmt = stmt.where(DeploymentEvent.message.ilike(f"%{q.strip()}%"))
+    if order == "desc":
+        stmt = stmt.order_by(DeploymentEvent.created_at.desc())
+    else:
+        stmt = stmt.order_by(DeploymentEvent.created_at.asc())
     return list(db.scalars(stmt).all())

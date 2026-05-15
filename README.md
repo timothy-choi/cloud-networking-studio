@@ -65,6 +65,7 @@ flowchart LR
 
 **Portfolio-friendly docs (start here):**
 
+- [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — **Step 32** dashboard metrics, deployment timeline phases, operator-facing errors
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — control plane, topology model, Docker provider, traffic, failures, reconcile/heal (interviewer-oriented)
 - [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) — exact **UI** and **CLI** demo steps and what each proves
 - [docs/RESUME_NOTES.md](docs/RESUME_NOTES.md) — **three resume bullets**, talking points, challenges solved
@@ -308,7 +309,7 @@ UI notes: [docs/frontend-mvp-and-observability.md](docs/frontend-mvp-and-observa
 
 | Doc | Purpose |
 |-----|---------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Portfolio architecture overview (control plane, topology, Docker, reconcile/heal) |
+| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Step 32: dashboard metrics, deployment timeline, operator error hints |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production Compose, EC2, troubleshooting, next infra steps |
 | [docs/EC2_RUNBOOK.md](docs/EC2_RUNBOOK.md) | Single-instance EC2: Docker, clone, `.env`, compose, smoke, cleanup |
 | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | Exact UI + CLI demo flows |

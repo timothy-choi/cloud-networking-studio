@@ -63,6 +63,7 @@ export function DeploymentEventStream({
   const [filter, setFilter] = useState<LevelFilter>('all');
   const [newestFirst, setNewestFirst] = useState(true);
   const [showInspection, setShowInspection] = useState(false);
+  const [messageQuery, setMessageQuery] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
 
   const baseEvents = useMemo(() => {
@@ -72,12 +73,14 @@ export function DeploymentEventStream({
 
   const filtered = useMemo(() => {
     const rows = filter === 'all' ? baseEvents : baseEvents.filter((e) => e.level === filter);
-    return [...rows].sort((a, b) => {
+    const q = messageQuery.trim().toLowerCase();
+    const mq = q ? rows.filter((e) => e.message.toLowerCase().includes(q)) : rows;
+    return [...mq].sort((a, b) => {
       const ta = new Date(a.created_at).getTime();
       const tb = new Date(b.created_at).getTime();
       return newestFirst ? tb - ta : ta - tb;
     });
-  }, [baseEvents, filter, newestFirst]);
+  }, [baseEvents, filter, newestFirst, messageQuery]);
 
   const displayRows = useMemo(() => buildRows(filtered), [filtered]);
 
@@ -121,6 +124,13 @@ export function DeploymentEventStream({
           />
           Newest first
         </label>
+        <input
+          type="search"
+          value={messageQuery}
+          onChange={(e) => setMessageQuery(e.target.value)}
+          placeholder="Search message…"
+          className="min-w-[8rem] max-w-[14rem] rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+        />
         {hideInspectionByDefault ? (
           <label className="flex items-center gap-1.5 text-[11px] text-cns-muted">
             <input

@@ -301,7 +301,6 @@ jobs:
         run: bash scripts/prod_smoke_test.sh
 
       - name: Deploy to Vercel
-        working-directory: frontend
         shell: bash
         env:
           SHELL: /bin/bash
@@ -312,7 +311,12 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+          API_BASE_URL="${VITE_API_BASE_URL}"
+          cd frontend
           npm ci
-          VITE_API_BASE_URL="${VITE_API_BASE_URL}" npm run build
+          VITE_API_BASE_URL="${API_BASE_URL}" npm run build
           npx vercel@54.0.0 pull --yes --environment=production --token "${VERCEL_TOKEN}"
-          npx vercel@54.0.0 deploy ./dist --prod --yes --token "${VERCEL_TOKEN}"
+          cd ..
+          ls -la frontend
+          ls -la frontend/dist
+          npx vercel@54.0.0 deploy frontend/dist --prod --yes --token "${VERCEL_TOKEN}"

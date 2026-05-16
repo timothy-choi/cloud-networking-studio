@@ -183,8 +183,16 @@ docker compose -f docker-compose.prod.yml exec postgres \
 
 ### 8. Cleanup on EC2
 
+**HTTP-only** stack (no **`docker-compose.caddy-https.yml`**): **`down -v`** removes containers and the **`postgres_data`** volume (destructive).
+
 ```bash
 docker compose -f docker-compose.prod.yml down -v
+```
+
+**Production HTTPS** (merge **`docker-compose.caddy-https.yml`**, **`CNS_CADDY_AUTO_HTTPS=on`**): **do not** run **`down -v`**. It deletes Compose volumes **`caddy_data`** and **`caddy_config`**, where Caddy stores **Let's Encrypt** state; the next **`up`** re-requests certificates and can hit **rate limits**. Use **`docker compose … down`** (no **`-v`**) for routine restarts, or remove **only** the Postgres volume by name if you must reset the database.
+
+```bash
+docker compose -f docker-compose.prod.yml -f docker-compose.caddy-https.yml --env-file .env down
 ```
 
 ---

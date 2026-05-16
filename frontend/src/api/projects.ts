@@ -7,6 +7,8 @@ export interface ProjectResponse {
   description: string | null;
   created_at: string;
   updated_at: string;
+  /** Current user's role in this project (from authenticated list/get responses). */
+  my_role?: 'owner' | 'member' | 'viewer' | null;
 }
 
 export async function listProjects(): Promise<ProjectResponse[]> {

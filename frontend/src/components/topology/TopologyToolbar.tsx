@@ -32,6 +32,9 @@ export interface TopologyToolbarProps {
   linkDraftSourceId?: string | null;
   linkDraftSourceName?: string | null;
   onToggleLinkMode?: () => void;
+  /** View-only project role — disables edits, deploy, and destructive actions. */
+  viewerMode?: boolean;
+  viewerHint?: string;
 }
 
 function Btn({
@@ -92,10 +95,13 @@ export function TopologyToolbar({
   linkDraftSourceId = null,
   linkDraftSourceName = null,
   onToggleLinkMode,
+  viewerMode = false,
+  viewerHint = 'View-only access: you can inspect this lab but not edit, deploy, or tear down resources.',
 }: TopologyToolbarProps) {
   const d = busy !== null || locked;
+  const ro = viewerMode;
   const clutter = nodeCount >= 16;
-  const deployDisabled = d || deployBlocked;
+  const deployDisabled = d || deployBlocked || ro;
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-zinc-700/80 bg-gradient-to-b from-zinc-900 to-zinc-950 p-3 shadow-lg">
@@ -105,18 +111,24 @@ export function TopologyToolbar({
         </div>
       ) : null}
 
+      {ro ? (
+        <div className="rounded-md border border-sky-800/50 bg-sky-950/35 px-2.5 py-2 text-[11px] leading-snug text-sky-100">
+          {viewerHint}
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
         <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-cns-inverse-label">Add</span>
-        <Btn disabled={d} onClick={onAddHost}>
+        <Btn disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onAddHost}>
           Host
         </Btn>
-        <Btn disabled={d} onClick={onAddService}>
+        <Btn disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onAddService}>
           Service
         </Btn>
-        <Btn disabled={d} onClick={onAddRouter}>
+        <Btn disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onAddRouter}>
           Router
         </Btn>
-        <Btn disabled={d} onClick={onAddSwitch}>
+        <Btn disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onAddSwitch}>
           Switch
         </Btn>
       </div>
@@ -126,7 +138,7 @@ export function TopologyToolbar({
           <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-cns-inverse-label">
             Connect
           </span>
-          <Btn variant={linkMode ? 'primary' : 'default'} disabled={d} onClick={onToggleLinkMode}>
+          <Btn variant={linkMode ? 'primary' : 'default'} disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onToggleLinkMode}>
             {linkMode ? 'Link mode on' : 'Link mode'}
           </Btn>
           {linkMode ? (
@@ -141,20 +153,20 @@ export function TopologyToolbar({
 
       <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-2">
         <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-cns-inverse-label">Layout</span>
-        <Btn disabled={d} onClick={onAutoLayout}>
+        <Btn disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onAutoLayout}>
           Auto layout
         </Btn>
-        <Btn disabled={d} onClick={onFit}>
+        <Btn disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onFit}>
           Zoom fit
         </Btn>
-        <Btn variant="subtle" disabled={d || !hasSelection} onClick={onDeleteSelection}>
+        <Btn variant="subtle" disabled={d || ro || !hasSelection} title={ro ? viewerHint : undefined} onClick={onDeleteSelection}>
           Delete selected
         </Btn>
         <label className="ml-auto flex items-center gap-2 text-[11px] text-cns-inverse-muted">
           <span className="hidden sm:inline">Use template</span>
           <select
             className="max-w-[13rem] rounded-md border border-zinc-600 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100"
-            disabled={d}
+            disabled={d || ro}
             defaultValue=""
             onChange={(e) => {
               const id = e.target.value;
@@ -176,7 +188,15 @@ export function TopologyToolbar({
 
       <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-2">
         <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-cns-inverse-label">Topology</span>
-        <Btn disabled={d} onClick={onSaveTopology} title="Writes canvas positions to the API. Use inspector Apply to save name, image, IP, and link CIDR edits.">
+        <Btn
+          disabled={d || ro}
+          title={
+            ro
+              ? viewerHint
+              : 'Writes canvas positions to the API. Use inspector Apply to save name, image, IP, and link CIDR edits.'
+          }
+          onClick={onSaveTopology}
+        >
           Save layout
         </Btn>
         {deployBlocked && deployBlockReasons.length > 0 ? (
@@ -194,19 +214,26 @@ export function TopologyToolbar({
           disabled={deployDisabled}
           onClick={onDeploy}
           title={
-            deployBlocked
-              ? deployBlockReasons.join(' ')
-              : deployWarnings.length
-                ? 'Deploy enabled — review warnings above.'
-                : undefined
+            ro
+              ? viewerHint
+              : deployBlocked
+                ? deployBlockReasons.join(' ')
+                : deployWarnings.length
+                  ? 'Deploy enabled — review warnings above.'
+                  : undefined
           }
         >
           Deploy to runtime
         </Btn>
-        <Btn variant="danger" disabled={d} onClick={onClear}>
+        <Btn variant="danger" disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onClear}>
           Clear all
         </Btn>
-        <Btn variant="subtle" disabled={d} onClick={onResetDemoLab} title="Replaces graph with a small sample (host + service + link)">
+        <Btn
+          variant="subtle"
+          disabled={d || ro}
+          title={ro ? viewerHint : 'Replaces graph with a small sample (host + service + link)'}
+          onClick={onResetDemoLab}
+        >
           Replace with sample lab
         </Btn>
         {busy ? (

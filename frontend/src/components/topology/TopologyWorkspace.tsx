@@ -166,6 +166,8 @@ interface InnerProps {
   controllerBusy?: string | null;
   /** Detail-page action in flight — disables topology toolbar while reconcile/heal/deploy run. */
   globalBusy?: boolean;
+  /** When true, canvas editing and deploy are disabled (project viewer role). */
+  readOnlyTopology?: boolean;
   onRefresh: () => Promise<void>;
 }
 
@@ -177,6 +179,7 @@ function TopologyWorkspaceInner({
   runtime,
   controllerBusy = null,
   globalBusy = false,
+  readOnlyTopology = false,
   onRefresh,
 }: InnerProps) {
   const { fitView } = useReactFlow();
@@ -511,14 +514,17 @@ function TopologyWorkspaceInner({
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
+        if (readOnlyTopology) return;
         void kbRef.current.deleteSelection();
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
+        if (readOnlyTopology) return;
         void kbRef.current.savePositions();
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
         e.preventDefault();
+        if (readOnlyTopology) return;
         void kbRef.current.duplicateSelection();
       }
       if (e.key.toLowerCase() === 'f' && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -528,7 +534,7 @@ function TopologyWorkspaceInner({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [fitView]);
+  }, [fitView, readOnlyTopology]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -577,6 +583,7 @@ function TopologyWorkspaceInner({
             return next;
           });
         }}
+        viewerMode={readOnlyTopology}
         templates={[
           {
             id: 'client-server',

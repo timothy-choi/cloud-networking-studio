@@ -19,6 +19,8 @@ export interface TopologyResponse {
   /** Present on list/detail API responses. */
   node_count?: number | null;
   link_count?: number | null;
+  /** Current user's role in the topology's project. */
+  my_role?: 'owner' | 'member' | 'viewer' | null;
 }
 
 export interface TopologyCreate {

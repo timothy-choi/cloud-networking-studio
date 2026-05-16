@@ -425,7 +425,10 @@ jobs:
           npm ci
           VITE_API_BASE_URL="${API_BASE_URL}" npm run build
           npx vercel@54.0.0 pull --yes --environment=production --token "${VERCEL_TOKEN}"
+          cp vercel.json dist/vercel.json
           cd ..
-          ls -la frontend
+          echo "=== ls -la frontend/dist ==="
           ls -la frontend/dist
+          echo "=== cat frontend/dist/vercel.json ==="
+          cat frontend/dist/vercel.json
           npx vercel@54.0.0 deploy frontend/dist --prod --yes --token "${VERCEL_TOKEN}"

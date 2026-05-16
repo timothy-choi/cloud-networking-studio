@@ -55,6 +55,18 @@ Use the same pattern with **``docker compose -f docker-compose.prod.yml …``** 
 
 ---
 
+## Production smoke (`scripts/prod_smoke_test.sh`)
+
+CI, EC2 deploy, and ephemeral PR stacks run this script against the public base URL (paths under **`/api/…`** through Caddy). After **Step 34** it:
+
+1. Waits for **`GET /`** and **`GET /api/health`** (with tunable curl timeouts and inner retries for slow **sslip.io** DNS — see **`CNS_CURL_*`** in the script header).
+2. Asserts **`POST /api/topologies`** **without** `Authorization` returns **401** (requires **`AUTH_REQUIRE_LOGIN=true`** on the backend, as in CI and recommended production **`.env`**).
+3. **Registers** via **`POST /api/auth/register`** as `smoke+<timestamp>@example.com` (or **logs in** on **409** duplicate), stores **`access_token`**, then creates a topology under a **project** using **`Authorization: Bearer …`**.
+
+Set **`AUTH_SMOKE=0`** for health-only checks (no JWT / topology). See [CI.md](CI.md) and [EC2_RUNBOOK.md](EC2_RUNBOOK.md).
+
+---
+
 ## Local development
 
 1. Start Postgres (`docker compose up -d postgres` or `docker compose -f docker-compose.prod.yml up -d postgres`) and the API as in the [README](../README.md#quickstart).

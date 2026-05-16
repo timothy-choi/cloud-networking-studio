@@ -53,6 +53,9 @@ services:
       CNS_CONTROLLER_MODE: ${CNS_CONTROLLER_MODE:-manual}
       CNS_CORS_ORIGINS: ${CNS_CORS_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:80,http://127.0.0.1:80}
       CNS_CORS_ORIGIN_REGEX: ${CNS_CORS_ORIGIN_REGEX:-}
+      # Step 34 auth: smoke tests expect AUTH_REQUIRE_LOGIN=true (set in CI / .env for production-like runs).
+      AUTH_REQUIRE_LOGIN: ${AUTH_REQUIRE_LOGIN:-false}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-local-dev-only-change-AUTH_SECRET_KEY-in-production-min-32-chars}
     networks: [cns]
     depends_on:
       postgres:

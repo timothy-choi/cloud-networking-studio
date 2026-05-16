@@ -108,7 +108,7 @@ On **`push` to `main`** (and **`workflow_dispatch`**), the **`deploy`** job:
 5. Runs **Terraform** under **`infra/terraform`**: **`backend.ci.hcl`**, **`terraform init`**, **`fmt -check`**, **`validate`**, **`plan`**, **`apply`**, **`terraform output`** (including sslip URLs for smoke, CORS, Vercel defaults, and optional **`rds_*`** fields when **`RDS_ENABLED`** is true). When **`RDS_ENABLED`**, **`TF_VAR_rds_master_password`** is taken from **`RDS_PASSWORD`** or **`POSTGRES_PASSWORD`**.
 6. **Wait for SSH** until **TCP port 22** on **`public_ip`** accepts connections.
 7. **SSH** (`appleboy/ssh-action`): **`cloud-init`**, **Docker** install if needed, clone/update **`~/cloud-networking-studio`**, **`git checkout`** pushed SHA, **write `.env`**, **`docker compose … up -d --build`** (**compose logs** only if config/up fails).
-8. **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL`** = **`stack_base_url_sslip`** (HTTPS).
+8. **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL`** = **`stack_base_url_sslip`** (HTTPS). After **Step 34** the script authenticates (register/login), uses **Bearer** tokens for topology APIs, and expects **401** for unauthenticated topology **POST** when **`AUTH_REQUIRE_LOGIN=true`** (set in the workflow-written **`.env`**).
 9. **`curl -vk https://<EIP>.sslip.io/api/health`** on the runner (explicit HTTPS check).
 10. **Vercel (static `dist`):** from the **repository root**, **`cd frontend`**, **`npm ci`**, **`VITE_API_BASE_URL=… npm run build`**, **`npx vercel@54.0.0 pull`** (linking), then **`npx vercel@54.0.0 deploy frontend/dist --prod --yes`**. No **`vercel build`** and no **`--prebuilt`**.
 

@@ -317,7 +317,8 @@ jobs:
                 "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" \
                 "DATABASE_URL=${DATABASE_URL}" \
                 "SSLIP_HOST=${SH_SSLIP}" \
-                "CADDYFILE_SSLIP=${CADDYFILE_SSLIP}"
+                "CADDYFILE_SSLIP=${CADDYFILE_SSLIP}" \
+                "AUTH_REQUIRE_LOGIN=true"
             } > .env
             echo "=== .env written ==="
             cut -d= -f1 .env

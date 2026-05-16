@@ -96,6 +96,8 @@ jobs:
         run: docker compose -f docker-compose.prod.yml config --quiet
 
       - name: Start production stack
+        env:
+          AUTH_REQUIRE_LOGIN: "true"
         run: docker compose -f docker-compose.prod.yml up -d --build
 
       - name: Wait for stack (HTTP, up to 90s)

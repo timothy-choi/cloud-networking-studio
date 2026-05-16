@@ -10,9 +10,11 @@
 #   AUTH_SMOKE=0 ./scripts/prod_smoke_test.sh          # health + edge wait only
 #   CNS_HEAVY_SMOKE=1 ./scripts/prod_smoke_test.sh   # also deploy + destroy (needs Docker from backend)
 #   ./scripts/prod_smoke_test.sh --heavy             # same as CNS_HEAVY_SMOKE=1
+#   CNS_SMOKE_API_ONLY=1 …                          # dedicated API host (e.g. https://api.example.com): wait /api/health only; skip GET /
 #
 # Env (optional):
-#   CNS_BASE_URL               must be http://… for sslip EC2 smoke (no curl -L; avoids 308→HTTPS TLS failures)
+#   CNS_BASE_URL               full-stack: http://… for sslip EC2 (no curl -L). API-only: https://api… is OK.
+#   CNS_SMOKE_API_ONLY         set 1 when BASE is API-only (no SPA on same host); edge wait skips GET /
 #   CNS_CURL_CONNECT_TIMEOUT       default 25 (DNS/TCP; sslip.io can be slow)
 #   CNS_CURL_MAX_TIME              default 120
 #   CNS_CURL_RETRIES               default 4 — inner GET retries (wait_caddy_edge.sh)
@@ -38,6 +40,7 @@ for arg in "$@"; do
     -h | --help)
       echo "usage: $0 [--heavy]"
       echo "  CNS_BASE_URL                    default http://127.0.0.1 — sslip: use http://<EIP>.sslip.io (no -L; avoid 308→HTTPS)"
+      echo "  CNS_SMOKE_API_ONLY=1            wait GET /api/health only (custom domain: app on Vercel, API on BASE)"
       echo "  AUTH_SMOKE=0                    health + edge wait only (no JWT / topology checks)"
       echo "  CNS_HEAVY_SMOKE=1               optional deploy/destroy against real Docker (CI sets this when enabled)"
       echo "  CNS_WAIT_ATTEMPTS               passed to wait_caddy_edge (default 30)"
@@ -69,9 +72,15 @@ need_cmd jq
 BASE="${CNS_BASE_URL:-http://127.0.0.1}"
 BASE="${BASE%/}"
 
-# Smoke does not use curl -L: 3xx to HTTPS would fail the edge wait. Use http://<EIP>.sslip.io for EC2 until HTTPS/ACME is reliable (see docs/CICD_DEPLOYMENT.md).
-if [[ "$BASE" == https://* ]]; then
-  echo "WARNING: CNS_BASE_URL is HTTPS — prod smoke expects HTTP on sslip (no -L). Prefer Terraform stack_base_url_sslip_http or set CNS_BASE_URL=http://…" >&2
+API_ONLY=0
+if [[ "${CNS_SMOKE_API_ONLY:-0}" == "1" || "${CNS_SMOKE_API_ONLY:-}" == "true" ]]; then
+  API_ONLY=1
+fi
+
+# Smoke does not use curl -L: 3xx to HTTPS would fail the edge wait. Full-stack sslip should use http://…
+# API-only mode (CNS_SMOKE_API_ONLY=1) targets a dedicated HTTPS API host — HTTPS without warning is expected.
+if [[ "$API_ONLY" -ne 1 ]] && [[ "$BASE" == https://* ]]; then
+  echo "WARNING: CNS_BASE_URL is HTTPS — full-stack prod smoke expects HTTP on sslip (no -L). Prefer Terraform stack_base_url_sslip_http or set CNS_BASE_URL=http://… (or set CNS_SMOKE_API_ONLY=1 for API-only hosts)." >&2
 fi
 
 CURL_CT="${CNS_CURL_CONNECT_TIMEOUT:-25}"
@@ -104,10 +113,15 @@ dump_compose_logs() {
 }
 
 curl_verbose_edge() {
-  echo "=== curl -v GET ${BASE}/ ===" >&2
-  curl -v --connect-timeout "$CURL_CT" --max-time "$CURL_MT" "${BASE}/" 2>&1 || true
-  echo "=== curl -v GET ${BASE}/api/health ===" >&2
-  curl -v --connect-timeout "$CURL_CT" --max-time "$CURL_MT" "${BASE}/api/health" 2>&1 || true
+  if [[ "$API_ONLY" -eq 1 ]]; then
+    echo "=== curl -v GET ${BASE}/api/health (API-only smoke) ===" >&2
+    curl -v --connect-timeout "$CURL_CT" --max-time "$CURL_MT" "${BASE}/api/health" 2>&1 || true
+  else
+    echo "=== curl -v GET ${BASE}/ ===" >&2
+    curl -v --connect-timeout "$CURL_CT" --max-time "$CURL_MT" "${BASE}/" 2>&1 || true
+    echo "=== curl -v GET ${BASE}/api/health ===" >&2
+    curl -v --connect-timeout "$CURL_CT" --max-time "$CURL_MT" "${BASE}/api/health" 2>&1 || true
+  fi
 }
 
 # Retry on empty HTTP code (000), curl failure, or transient 502/503/504 from edge.
@@ -173,7 +187,7 @@ debug_topology_post() {
 }
 
 echo "=== Cloud Networking Studio — production smoke ==="
-echo "base_url=${BASE}  heavy=${HEAVY}  AUTH_SMOKE=${AUTH_SMOKE:-1}  curl_ct=${CURL_CT} curl_mt=${CURL_MT} api_retries=${API_RETRIES}"
+echo "base_url=${BASE}  api_only=${API_ONLY}  heavy=${HEAVY}  AUTH_SMOKE=${AUTH_SMOKE:-1}  curl_ct=${CURL_CT} curl_mt=${CURL_MT} api_retries=${API_RETRIES}"
 echo
 
 CADDY_READY=0
@@ -183,15 +197,28 @@ export CNS_CURL_CONNECT_TIMEOUT="${CNS_CURL_CONNECT_TIMEOUT:-$CURL_CT}"
 export CNS_CURL_MAX_TIME="${CNS_CURL_MAX_TIME:-$CURL_MT}"
 export CNS_CURL_RETRIES="${CNS_CURL_RETRIES:-4}"
 
-if bash "$SCRIPT_DIR/wait_caddy_edge.sh" "$BASE" "$WAIT_ATTEMPTS" 2 "$BODY"; then
+WAIT_EDGE_ARGS=( "$BASE" "$WAIT_ATTEMPTS" 2 "$BODY" )
+if [[ "$API_ONLY" -eq 1 ]]; then
+  WAIT_EDGE_ARGS+=( api-only )
+fi
+
+if bash "$SCRIPT_DIR/wait_caddy_edge.sh" "${WAIT_EDGE_ARGS[@]}"; then
   CADDY_READY=1
-  ok "GET / (frontend via Caddy) HTTP 200 after edge wait"
-  ok "GET /api/health (API via Caddy) HTTP 200 with JSON status"
+  if [[ "$API_ONLY" -eq 1 ]]; then
+    ok "GET /api/health (API) HTTP 200 with JSON status"
+  else
+    ok "GET / (frontend via Caddy) HTTP 200 after edge wait"
+    ok "GET /api/health (API via Caddy) HTTP 200 with JSON status"
+  fi
   health_raw="$(cat "$BODY")"
   preview="$(printf '%s' "$health_raw" | tr -d '\n' | head -c 120)"
   echo "       ${preview}…"
 else
-  bad "Caddy edge not ready within ${WAIT_ATTEMPTS} attempts × 2s (GET / and GET /api/health)"
+  if [[ "$API_ONLY" -eq 1 ]]; then
+    bad "API not ready within ${WAIT_ATTEMPTS} attempts × 2s (GET /api/health)"
+  else
+    bad "Caddy edge not ready within ${WAIT_ATTEMPTS} attempts × 2s (GET / and GET /api/health)"
+  fi
 fi
 
 if [[ "$CADDY_READY" -ne 1 ]]; then

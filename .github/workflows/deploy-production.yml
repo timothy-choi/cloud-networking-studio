@@ -384,6 +384,7 @@ jobs:
       - name: Production smoke (EC2 via HTTPS API host)
         env:
           CNS_BASE_URL: ${{ steps.prod_api.outputs.https_origin }}
+          CNS_SMOKE_API_ONLY: "1"
           CNS_WAIT_ATTEMPTS: "90"
         run: bash scripts/prod_smoke_test.sh
 

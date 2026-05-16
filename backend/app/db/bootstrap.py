@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.models.project import Project
+from app.models.project_membership import ProjectMembership
 from app.models.topology import Topology
 from app.models.user import User
 
@@ -20,6 +21,23 @@ DEV_USER_DISPLAY = "Local Dev"
 DEFAULT_PROJECT_NAME = "Default workspace"
 # Short placeholder only (bcrypt 72-byte limit); dev user is not meant for password login.
 _DEV_PLACEHOLDER_PASSWORD = "n0pe-dev"
+
+
+def _ensure_owner_membership(db: Session, *, project_id, user_id) -> None:
+    m = db.scalar(
+        select(ProjectMembership.id).where(
+            ProjectMembership.project_id == project_id,
+            ProjectMembership.user_id == user_id,
+        )
+    )
+    if m is None:
+        db.add(
+            ProjectMembership(
+                project_id=project_id,
+                user_id=user_id,
+                role="owner",
+            )
+        )
 
 
 def ensure_dev_user_and_project(db: Session) -> tuple[User, Project]:
@@ -48,6 +66,8 @@ def ensure_dev_user_and_project(db: Session) -> tuple[User, Project]:
         db.add(proj)
         db.flush()
 
+    _ensure_owner_membership(db, project_id=proj.id, user_id=user.id)
+
     db.commit()
     db.refresh(user)
     db.refresh(proj)
@@ -61,7 +81,7 @@ def get_or_create_dev_user(db: Session) -> User:
 
 
 def run_startup_datafixes(engine: Engine) -> None:
-    """Backfill topology.project_id for rows predating project scoping."""
+    """Backfill topology.project_id and project owner memberships."""
     with Session(engine) as db:
         _, proj = ensure_dev_user_and_project(db)
         db.execute(
@@ -69,4 +89,6 @@ def run_startup_datafixes(engine: Engine) -> None:
             .where(Topology.project_id.is_(None))
             .values(project_id=proj.id)
         )
+        for row in db.scalars(select(Project)).all():
+            _ensure_owner_membership(db, project_id=row.id, user_id=row.owner_user_id)
         db.commit()

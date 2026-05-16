@@ -16,7 +16,11 @@ from app.schemas.failure_injection import (
     FailureInjectionResponse,
 )
 from app.services import failure_injection_service as fi_svc
-from app.services.access_control import get_failure_injection_for_user, get_topology_for_user
+from app.services.access_control import (
+    get_failure_injection_for_user,
+    get_topology_for_user,
+    require_topology_editor,
+)
 
 router = APIRouter(tags=["failure-injections"])
 
@@ -33,7 +37,7 @@ def inject_stop_node(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> FailureInjectionResponse:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
     try:
         fi = fi_svc.run_failure_injection(
             db,
@@ -67,7 +71,7 @@ def inject_restart_node(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> FailureInjectionResponse:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
     try:
         fi = fi_svc.run_failure_injection(
             db,
@@ -101,7 +105,7 @@ def inject_kill_node(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> FailureInjectionResponse:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
     try:
         fi = fi_svc.run_failure_injection(
             db,

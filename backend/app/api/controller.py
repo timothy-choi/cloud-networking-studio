@@ -17,7 +17,7 @@ from app.schemas.controller import (
     RestartedContainerRef,
 )
 from app.services import runtime_controller as controller_svc
-from app.services.access_control import get_deployment_for_user
+from app.services.access_control import require_deployment_editor
 
 router = APIRouter(tags=["controller"])
 
@@ -31,7 +31,7 @@ def get_controller_status(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ControllerStatusResponse:
-    snap = controller_svc.get_controller_status(db, owner_user_id=user.id)
+    snap = controller_svc.get_controller_status(db, user_id=user.id)
     return ControllerStatusResponse(
         controller_mode=snap.controller_mode,
         managed_deployments_count=snap.managed_deployments_count,
@@ -51,7 +51,7 @@ def post_controller_run_once(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ControllerRunOnceResponse:
-    summary = controller_svc.run_controller_once(db, owner_user_id=user.id)
+    summary = controller_svc.run_controller_once(db, user_id=user.id)
     db.commit()
     return ControllerRunOnceResponse(
         deployments_checked=summary.deployments_checked,
@@ -73,7 +73,7 @@ def post_deployment_heal(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> HealingResponse:
-    get_deployment_for_user(db, user, deployment_id)
+    require_deployment_editor(db, user, deployment_id)
     try:
         data = controller_svc.heal_deployment(db, deployment_id)
     except ValueError:

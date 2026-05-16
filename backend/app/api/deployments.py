@@ -15,7 +15,7 @@ from app.db.session import get_db
 from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLevel, DeploymentStatus
 from app.models.topology import Topology
 from app.models.user import User
-from app.services.access_control import get_deployment_for_user, get_topology_for_user
+from app.services.access_control import get_deployment_for_user, require_deployment_editor, require_topology_editor
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
 from app.schemas.deployment import DeploymentEventResponse, DeploymentResponse
 from app.services.deployment_planner import build_deployment_plan
@@ -26,7 +26,7 @@ router = APIRouter(tags=["deployments"])
 
 
 def _topology_for_deploy(db: Session, user: User, topology_id: UUID) -> Topology:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
     stmt = (
         select(Topology)
         .where(Topology.id == topology_id)
@@ -212,7 +212,7 @@ def destroy_deployment(
     user: User = Depends(get_current_user),
 ) -> Deployment:
     """Remove Docker resources labeled for this topology and mark deployment stopped."""
-    dep = get_deployment_for_user(db, user, deployment_id)
+    dep = require_deployment_editor(db, user, deployment_id)
     topo = db.get(Topology, dep.topology_id)
     if topo is None:
         raise HTTPException(

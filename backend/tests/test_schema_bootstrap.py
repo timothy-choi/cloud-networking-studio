@@ -15,6 +15,7 @@ def test_import_all_orm_modules_registers_users_table():
     assert "users" in names
     assert "projects" in names
     assert "topologies" in names
+    assert "project_memberships" in names
 
 
 def test_verify_core_schema_after_create_all(engine_db):
@@ -23,6 +24,6 @@ def test_verify_core_schema_after_create_all(engine_db):
     insp = inspect(engine)
     assert "users" in insp.get_table_names()
     assert "projects" in insp.get_table_names()
-    assert "topologies" in insp.get_table_names()
+    assert "project_memberships" in insp.get_table_names()
     cols = {c["name"] for c in insp.get_columns("topologies")}
     assert "project_id" in cols

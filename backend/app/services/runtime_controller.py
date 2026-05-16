@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLevel, DeploymentStatus
 from app.models.project import Project
+from app.models.project_membership import ProjectMembership
 from app.models.topology import Topology, TopologyNode
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
 from app.providers.runtime_types import ProviderHealingResult, ProviderReconciliationResult
@@ -56,16 +57,22 @@ def _active_status_filter():
     return Deployment.status == DeploymentStatus.SUCCEEDED
 
 
+def _member_project_filter(user_id: UUID):
+    return Project.id.in_(
+        select(ProjectMembership.project_id).where(ProjectMembership.user_id == user_id)
+    )
+
+
 def get_controller_status(
-    session: Session, *, owner_user_id: UUID | None = None
+    session: Session, *, user_id: UUID | None = None
 ) -> ControllerStatusSnapshot:
-    if owner_user_id is not None:
+    if user_id is not None:
         managed_stmt = (
             select(func.count())
             .select_from(Deployment)
             .join(Topology, Deployment.topology_id == Topology.id)
             .join(Project, Topology.project_id == Project.id)
-            .where(_docker_managed_filter(), Project.owner_user_id == owner_user_id)
+            .where(_docker_managed_filter(), _member_project_filter(user_id))
         )
         active_stmt = (
             select(func.count())
@@ -75,7 +82,7 @@ def get_controller_status(
             .where(
                 _docker_managed_filter(),
                 _active_status_filter(),
-                Project.owner_user_id == owner_user_id,
+                _member_project_filter(user_id),
             )
         )
     else:
@@ -104,12 +111,12 @@ def get_controller_status(
 
 
 def run_controller_once(
-    session: Session, *, owner_user_id: UUID | None = None
+    session: Session, *, user_id: UUID | None = None
 ) -> ControllerRunSummary:
     """Reconcile every active Docker deployment; emit controller deployment events."""
     global _last_controller_run_at
 
-    if owner_user_id is not None:
+    if user_id is not None:
         stmt = (
             select(Deployment)
             .join(Topology, Deployment.topology_id == Topology.id)
@@ -117,7 +124,7 @@ def run_controller_once(
             .where(
                 _docker_managed_filter(),
                 _active_status_filter(),
-                Project.owner_user_id == owner_user_id,
+                _member_project_filter(user_id),
             )
         )
     else:

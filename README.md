@@ -70,6 +70,7 @@ flowchart LR
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — control plane, topology model, Docker provider, traffic, failures, reconcile/heal (interviewer-oriented)
 - [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) — exact **UI** and **CLI** demo steps and what each proves
 - [docs/RESUME_NOTES.md](docs/RESUME_NOTES.md) — **three resume bullets**, talking points, challenges solved
+- [docs/CICD_DEPLOYMENT.md](docs/CICD_DEPLOYMENT.md) — **Step 31** production deploy (EC2 Caddy HTTPS on **`api.cloudnetstudio.com`**, Vercel **`app`**, Cloudflare **DNS only**)
 - [docs/CI.md](docs/CI.md) — what GitHub Actions runs (including production Compose smoke)
 
 **Technical deep dives:**

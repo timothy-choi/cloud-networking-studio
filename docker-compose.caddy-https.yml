@@ -1,0 +1,39 @@
+# Overlay for docker-compose.prod.yml — public **80** + **443** with TLS on **CNS_CADDY_SITE_ADDRESS**.
+#
+# Production (`main`) uses this with **deploy/Caddyfile.public-https** and a real DNS name (e.g. api.example.com).
+# ACME certificates persist in **caddy_data** / **caddy_config**.
+#
+# **Ephemeral / HTTP-only:** keep using **docker-compose.sslip.yml** with **CADDYFILE_SSLIP=./deploy/Caddyfile.prod**,
+# **CNS_CADDY_AUTO_HTTPS=off**, **CNS_CADDY_SITE_ADDRESS=:80**.
+#
+# Usage on EC2 (set **CNS_CADDY_SITE_ADDRESS**, **SSLIP_HOST**, **CNS_SSLIP_HOST** to the same public hostname in `.env`):
+#   docker compose -f docker-compose.prod.yml -f docker-compose.caddy-https.yml --env-file .env up -d --build
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+services:
+  caddy:
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CNS_CADDY_SITE_ADDRESS: ${CNS_CADDY_SITE_ADDRESS:?Set CNS_CADDY_SITE_ADDRESS to your public API hostname (e.g. api.example.com)}
+      SSLIP_HOST: ${SSLIP_HOST:?Set SSLIP_HOST to the same hostname (legacy compose key; used for healthchecks)}
+      CNS_SSLIP_HOST: ${CNS_SSLIP_HOST:?Set CNS_SSLIP_HOST to the same hostname (legacy alias)}
+      CNS_CADDY_AUTO_HTTPS: ${CNS_CADDY_AUTO_HTTPS:-on}
+    volumes:
+      - ${CADDYFILE_CADDY:-./deploy/Caddyfile.public-https}:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget -qO- --header=Host:$${CNS_CADDY_SITE_ADDRESS} http://127.0.0.1/api/health | grep -q status
+          && test -n "$$(wget -qO- --header=Host:$${CNS_CADDY_SITE_ADDRESS} http://127.0.0.1/ | head -c 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 18
+      start_period: 45s

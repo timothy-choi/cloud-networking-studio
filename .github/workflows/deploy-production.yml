@@ -1,4 +1,4 @@
-# Production: push to main → Terraform (S3, persistent EC2) → EC2 Compose (Caddy HTTPS on sslip + HTTP smoke) → Vercel.
+# Production: push to main → Terraform (S3, persistent EC2) → EC2 Compose (Caddy HTTPS on custom API domain + HTTP smoke) → Vercel.
 # Does not destroy infra. See docs/CICD_DEPLOYMENT.md (Step 31: main vs PR workflows).
 
 name: Deploy production
@@ -69,7 +69,8 @@ jobs:
         run: |
           set -euo pipefail
           docker compose -f docker-compose.prod.yml config --quiet
-          SSLIP_HOST=203.0.113.7.sslip.io docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml config --quiet
+          CNS_CADDY_SITE_ADDRESS=api.example.com SSLIP_HOST=api.example.com CNS_SSLIP_HOST=api.example.com \
+            docker compose -f docker-compose.prod.yml -f docker-compose.caddy-https.yml config --quiet
 
       - name: Require EC2 deploy secrets
         env:
@@ -88,6 +89,18 @@ jobs:
             exit 1
           fi
           echo "Required EC2 deploy secrets are set (values are not printed)."
+
+      - name: Set production API host defaults
+        id: prod_api
+        run: |
+          set -euo pipefail
+          H="api.cloudnetstudio.com"
+          if [[ -n "${{ vars.CNS_PRODUCTION_API_HOST }}" ]]; then
+            H="${{ vars.CNS_PRODUCTION_API_HOST }}"
+          fi
+          echo "api_host=${H}" >> "$GITHUB_OUTPUT"
+          echo "http_origin=http://${H}" >> "$GITHUB_OUTPUT"
+          echo "https_origin=https://${H}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Node.js (frontend)
         uses: actions/setup-node@v4
@@ -170,14 +183,14 @@ jobs:
           echo "::error::SSH did not become ready"
           exit 1
 
-      - name: Deploy Docker stack on EC2 (Caddy HTTPS on sslip; smoke stays HTTP)
+      - name: Deploy Docker stack on EC2 (Caddy HTTPS on custom API domain; smoke stays HTTP)
         uses: appleboy/ssh-action@v1.1.0
         env:
           POSTGRES_PASSWORD: ${{ secrets.RDS_PASSWORD || secrets.POSTGRES_PASSWORD }}
           CNS_CORS_ORIGINS: ${{ secrets.CNS_CORS_ORIGINS }}
-          CNS_CADDY_SITE_ADDRESS: ${{ steps.tf.outputs.sslip_host }}
+          CNS_CADDY_SITE_ADDRESS: ${{ steps.prod_api.outputs.api_host }}
           CNS_CADDY_AUTO_HTTPS: "on"
-          CADDYFILE_SSLIP: "./deploy/Caddyfile.sslip"
+          CADDYFILE_CADDY: "./deploy/Caddyfile.public-https"
           CNS_ENVIRONMENT: "production"
           CNS_CONTROLLER_MODE: "manual"
           RDS_ENDPOINT: ${{ steps.tf.outputs.rds_address }}
@@ -185,11 +198,12 @@ jobs:
           RDS_DATABASE_NAME: ${{ steps.tf.outputs.rds_database_name }}
           RDS_USERNAME: ${{ steps.tf.outputs.rds_username }}
           RDS_PASSWORD: ${{ secrets.RDS_PASSWORD }}
+          CNS_LEGACY_SSLIP_HTTP: ${{ steps.tf.outputs.stack_base_url_sslip_http }}
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: POSTGRES_PASSWORD,RDS_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_SSLIP,RDS_ENDPOINT,RDS_PORT,RDS_DATABASE_NAME,RDS_USERNAME
+          envs: POSTGRES_PASSWORD,RDS_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_CADDY,RDS_ENDPOINT,RDS_PORT,RDS_DATABASE_NAME,RDS_USERNAME,CNS_LEGACY_SSLIP_HTTP
           script_stop: true
           script: |
             #!/usr/bin/env bash
@@ -252,10 +266,9 @@ jobs:
             echo "RDS_ENDPOINT present? $([[ -n "${RDS_ENDPOINT:-}" ]] && echo yes || echo no)"
             echo "CNS_CORS_ORIGINS present? $([[ -n "${CNS_CORS_ORIGINS:-}" ]] && echo yes || echo no)"
 
-            SSLIP_TF="${{ steps.tf.outputs.sslip_host }}"
-            SH_SSLIP="$(printf '%s' "${SSLIP_TF}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            if [[ -z "${SH_SSLIP}" ]]; then
-              echo "::error::SSH deploy: sslip host from workflow is empty after trim."
+            PUB_HOST="$(printf '%s' "${CNS_CADDY_SITE_ADDRESS:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [[ -z "${PUB_HOST}" ]]; then
+              echo "::error::SSH deploy: CNS_CADDY_SITE_ADDRESS empty after trim."
               exit 1
             fi
             if [[ -z "${POSTGRES_PASSWORD:-}" ]] || [[ -z "${CNS_CORS_ORIGINS:-}" ]]; then
@@ -263,9 +276,15 @@ jobs:
               exit 1
             fi
 
-            CNS_CADDY_SITE_ADDRESS="${CNS_CADDY_SITE_ADDRESS:-${SH_SSLIP}}"
+            CNS_REQUIRED_CORS_ORIGINS="https://app.cloudnetstudio.com,http://${PUB_HOST},https://${PUB_HOST}"
+            if [[ -n "${CNS_LEGACY_SSLIP_HTTP:-}" ]]; then
+              CNS_REQUIRED_CORS_ORIGINS="${CNS_REQUIRED_CORS_ORIGINS},${CNS_LEGACY_SSLIP_HTTP}"
+            fi
+            CNS_CORS_ORIGINS="${CNS_CORS_ORIGINS},${CNS_REQUIRED_CORS_ORIGINS}"
+
+            CNS_CADDY_SITE_ADDRESS="${PUB_HOST}"
             CNS_CADDY_AUTO_HTTPS="${CNS_CADDY_AUTO_HTTPS:-on}"
-            CADDYFILE_SSLIP="${CADDYFILE_SSLIP:-./deploy/Caddyfile.sslip}"
+            CADDYFILE_CADDY="${CADDYFILE_CADDY:-./deploy/Caddyfile.public-https}"
 
             RDS_EP="$(printf '%s' "${RDS_ENDPOINT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
             RDS_P="$(printf '%s' "${RDS_PORT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
@@ -307,7 +326,7 @@ jobs:
             COMPOSE=(sudo docker compose)
             echo "database mode: ${DB_MODE}"
 
-            C_ARGS=(-f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env)
+            C_ARGS=(-f docker-compose.prod.yml -f docker-compose.caddy-https.yml --env-file .env)
 
             umask 077
             {
@@ -319,15 +338,15 @@ jobs:
                 "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}" \
                 "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" \
                 "DATABASE_URL=${DATABASE_URL}" \
-                "SSLIP_HOST=${SH_SSLIP}" \
-                "CNS_SSLIP_HOST=${SH_SSLIP}" \
-                "CADDYFILE_SSLIP=${CADDYFILE_SSLIP}" \
+                "SSLIP_HOST=${PUB_HOST}" \
+                "CNS_SSLIP_HOST=${PUB_HOST}" \
+                "CADDYFILE_CADDY=${CADDYFILE_CADDY}" \
                 "AUTH_REQUIRE_LOGIN=true"
             } > .env
             echo "=== .env written ==="
             cut -d= -f1 .env
 
-            unset TOKEN CLONE_URL POSTGRES_PASSWORD RDS_PASSWORD CNS_CORS_ORIGINS DATABASE_URL RDS_ENDPOINT RDS_PORT RDS_DATABASE_NAME RDS_USERNAME || true
+            unset TOKEN CLONE_URL POSTGRES_PASSWORD RDS_PASSWORD CNS_CORS_ORIGINS CNS_LEGACY_SSLIP_HTTP DATABASE_URL RDS_ENDPOINT RDS_PORT RDS_DATABASE_NAME RDS_USERNAME || true
             set -x
 
             echo "=== docker compose config ==="
@@ -362,21 +381,21 @@ jobs:
             echo "=== docker compose ps ==="
             "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a
 
-      - name: Production smoke (EC2 via HTTP sslip)
+      - name: Production smoke (EC2 via HTTPS API host)
         env:
-          CNS_BASE_URL: ${{ steps.tf.outputs.stack_base_url_sslip_http }}
+          CNS_BASE_URL: ${{ steps.prod_api.outputs.https_origin }}
           CNS_WAIT_ATTEMPTS: "90"
         run: bash scripts/prod_smoke_test.sh
 
-      - name: Verify HTTP API (sslip /api/health)
+      - name: Verify HTTP API (/api/health, follow redirect to HTTPS)
         run: |
           set -euo pipefail
-          curl -sfS --connect-timeout 20 --max-time 90 "${{ steps.tf.outputs.stack_base_url_sslip_http }}/api/health" | jq -e '.status' >/dev/null
+          curl -vL --connect-timeout 20 --max-time 90 "${{ steps.prod_api.outputs.http_origin }}/api/health" | jq -e '.status' >/dev/null
 
-      - name: Verify HTTPS API (sslip /api/health)
+      - name: Verify HTTPS API (/api/health)
         run: |
           set -euo pipefail
-          URL="${{ steps.tf.outputs.stack_base_url_sslip }}/api/health"
+          URL="${{ steps.prod_api.outputs.https_origin }}/api/health"
           for i in $(seq 1 18); do
             if curl -sfS --connect-timeout 25 --max-time 90 "$URL" | jq -e '.status' >/dev/null 2>&1; then
               echo "HTTPS /api/health OK (attempt ${i})"
@@ -396,11 +415,12 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VITE_API_BASE_URL: ${{ secrets.VERCEL_VITE_API_BASE_URL || steps.tf.outputs.api_base_url_sslip }}
+          VITE_API_BASE_URL: ${{ secrets.VERCEL_VITE_API_BASE_URL }}
+          PROD_VITE_API_DEFAULT: ${{ steps.prod_api.outputs.https_origin }}/api
         run: |
           set -euo pipefail
           export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-          API_BASE_URL="${VITE_API_BASE_URL}"
+          API_BASE_URL="${VITE_API_BASE_URL:-$PROD_VITE_API_DEFAULT}"
           cd frontend
           npm ci
           VITE_API_BASE_URL="${API_BASE_URL}" npm run build

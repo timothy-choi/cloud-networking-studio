@@ -5,10 +5,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth import router as auth_router
 from app.api.controller import router as controller_router
 from app.api.deployments import router as deployments_router
 from app.api.failure_injections import router as failure_injections_router
 from app.api.metrics import router as metrics_router
+from app.api.projects import router as projects_router
 from app.api.runtime import router as runtime_router
 from app.api.topologies import router as topologies_router
 from app.api.traffic_tests import router as traffic_tests_router
@@ -16,6 +18,14 @@ from app.core.config import settings
 from app.db.session import Base, engine
 
 OPENAPI_TAGS_METADATA: list[dict[str, str]] = [
+    {
+        "name": "auth",
+        "description": "Register, login, and current user (**JWT** bearer tokens).",
+    },
+    {
+        "name": "projects",
+        "description": "Workspaces that own topologies; all lab resources are scoped under projects.",
+    },
     {
         "name": "topologies",
         "description": "Persisted graph of networks, nodes, and links—the **desired state** before runtime provisioning.",
@@ -64,7 +74,10 @@ async def lifespan(app: FastAPI):
     """Register models and create tables (Alembic replaces create_all later)."""
     import app.models  # noqa: F401 — register tables on Base.metadata
 
+    from app.db.bootstrap import run_startup_datafixes
+
     Base.metadata.create_all(bind=engine)
+    run_startup_datafixes(engine)
     yield
 
 
@@ -76,6 +89,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(auth_router)
+app.include_router(projects_router)
 app.include_router(topologies_router)
 app.include_router(deployments_router)
 app.include_router(runtime_router)

@@ -1,5 +1,6 @@
 /** Typed fetch helper + API base from Vite env. */
 
+import { CNS_ACCESS_TOKEN_KEY } from '../auth/storage';
 import type { ControllerStatusResponse, HealthResponse } from '../types/health';
 
 export class ApiError extends Error {
@@ -36,12 +37,34 @@ export function getApiBase(): string {
   return 'http://localhost:8000';
 }
 
+export function getStoredAccessToken(): string | null {
+  try {
+    return sessionStorage.getItem(CNS_ACCESS_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredAccessToken(token: string | null): void {
+  try {
+    if (token) {
+      sessionStorage.setItem(CNS_ACCESS_TOKEN_KEY, token);
+    } else {
+      sessionStorage.removeItem(CNS_ACCESS_TOKEN_KEY);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${getApiBase()}${path.startsWith('/') ? path : `/${path}`}`;
+  const token = getStoredAccessToken();
   const headers: HeadersInit = {
     Accept: 'application/json',
     ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
     ...(init?.headers ?? {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
   const res = await fetch(url, { ...init, headers });

@@ -15,13 +15,20 @@ See [.github/workflows/ci.yml](../.github/workflows/ci.yml) for exact CI command
 
 ## Running tests locally
 
-1. Start Postgres (compose recommended):
+1. Start Postgres and expose **host port 5433** (either file works; credentials match defaults):
 
    ```bash
+   # Minimal local DB (repo root)
    docker compose up -d postgres
    ```
 
-2. Export `DATABASE_URL` consistent with your DB.
+   Or only the DB from the production-style file:
+
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d postgres
+   ```
+
+2. **`DATABASE_URL`:** leave unset to use the default in [`backend/tests/conftest.py`](../backend/tests/conftest.py) (`127.0.0.1:5433`, database **`cloud_networking_studio`**), or export a DSN that matches your container.
 
 3. From **`backend/`**:
 
@@ -29,6 +36,11 @@ See [.github/workflows/ci.yml](../.github/workflows/ci.yml) for exact CI command
    pip install -r requirements.txt
    pytest
    ```
+
+### Local Postgres vs RDS
+
+- **Local / CI on your machine:** Postgres listens on **`127.0.0.1:5433`** (mapped from Docker). **`pytest`** uses that URL unless you override **`DATABASE_URL`**.
+- **Production RDS:** the running application uses **`DATABASE_URL`** pointing at AWS; that does not change how you run **`pytest`** locally — you still need a reachable Postgres for integration tests unless you skip them.
 
 Optional verbosity:
 

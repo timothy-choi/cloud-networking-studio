@@ -30,6 +30,7 @@ cloud-networking-studio/
 
 | Task | Location |
 |------|----------|
+| Auth / tenants | [docs/AUTH.md](docs/AUTH.md) |
 | Add/modify HTTP routes | `backend/app/api/` |
 | Persist new entities | `backend/app/models/` + migrations if you add Alembic |
 | OpenAPI / request bodies | `backend/app/schemas/` |

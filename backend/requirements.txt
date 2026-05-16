@@ -7,3 +7,9 @@ python-dotenv
 pytest
 httpx
 docker>=7.0.0
+PyJWT>=2.8.0
+passlib[bcrypt]>=1.7.4
+# bcrypt 4.1+ breaks passlib's bcrypt handler in several setups; stay on 4.0.x until passlib catches up.
+bcrypt>=4.0.1,<4.1
+email-validator>=2.0.0
+python-multipart>=0.0.9

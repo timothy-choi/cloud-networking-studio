@@ -1,8 +1,10 @@
 # Production-style stack: Postgres + API + static UI + Caddy reverse proxy.
 # See docs/DEPLOYMENT.md — copy .env.example to .env and adjust secrets before exposing to the internet.
 #
-# Postgres is behind the Compose profile `localdb` so EC2 can run with AWS RDS only (external DATABASE_URL).
-# Local / CI with bundled Postgres: add `--profile localdb` to every `docker compose` command.
+# Postgres is always part of this file so `docker compose -f docker-compose.prod.yml up -d` works locally
+# and in CI. Host port 5433 maps to Postgres for pytest / tools on the host (see backend/tests/conftest.py).
+# For AWS RDS (or any external DB), set DATABASE_URL in `.env`; the backend uses that DSN. A local
+# Postgres container may still run — it is unused when DATABASE_URL points elsewhere (see docs/RDS.md).
 #
 # Default URL: http://localhost (port 80). API: http://localhost/api/docs
 #
@@ -16,24 +18,23 @@ networks:
     driver: bridge
 
 volumes:
-  cns_pg_data:
+  postgres_data:
 
 services:
-  # Start with: docker compose --profile localdb -f docker-compose.prod.yml up -d
-  # Omit the profile when using external DATABASE_URL (e.g. AWS RDS on EC2).
   postgres:
-    profiles: [localdb]
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-cloud_networking_studio}
       POSTGRES_USER: ${POSTGRES_USER:-cns_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cns_password}
+    ports:
+      - "5433:5432"
     volumes:
-      - cns_pg_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     networks: [cns]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cns_user -d cloud_networking_studio"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -53,6 +54,9 @@ services:
       CNS_CORS_ORIGINS: ${CNS_CORS_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:80,http://127.0.0.1:80}
       CNS_CORS_ORIGIN_REGEX: ${CNS_CORS_ORIGIN_REGEX:-}
     networks: [cns]
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [

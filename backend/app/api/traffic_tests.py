@@ -7,26 +7,18 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models.topology import Topology
+from app.models.user import User
 from app.schemas.traffic_test import (
     HttpTrafficTestRequest,
     PingTrafficTestRequest,
     TrafficTestResponse,
 )
 from app.services import traffic_test_service as tt_svc
+from app.services.access_control import get_topology_for_user, get_traffic_test_for_user
 
 router = APIRouter(tags=["traffic-tests"])
-
-
-def _topology_or_404(db: Session, topology_id: UUID) -> Topology:
-    topo = db.get(Topology, topology_id)
-    if topo is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Topology not found",
-        )
-    return topo
 
 
 @router.post(
@@ -39,8 +31,9 @@ def create_ping_traffic_test(
     topology_id: UUID,
     body: PingTrafficTestRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> TrafficTestResponse:
-    _topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     try:
         tt = tt_svc.run_ping_test(
             db,
@@ -73,8 +66,9 @@ def create_http_traffic_test(
     topology_id: UUID,
     body: HttpTrafficTestRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> TrafficTestResponse:
-    _topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     try:
         tt = tt_svc.run_http_test(
             db,
@@ -111,14 +105,9 @@ def create_http_traffic_test(
 def get_traffic_test(
     traffic_test_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> TrafficTestResponse:
-    tt = tt_svc.get_traffic_test(db, traffic_test_id)
-    if tt is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Traffic test not found",
-        )
-    return tt
+    return get_traffic_test_for_user(db, user, traffic_test_id)
 
 
 @router.get(
@@ -129,6 +118,7 @@ def get_traffic_test(
 def list_topology_traffic_tests(
     topology_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[TrafficTestResponse]:
-    _topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     return tt_svc.list_traffic_tests_for_topology(db, topology_id)

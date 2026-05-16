@@ -14,8 +14,9 @@ import type {
 } from '../types/topology';
 import type { RuntimeTopologyResponse } from '../types/runtime';
 
-export async function listTopologies(): Promise<TopologyResponse[]> {
-  return apiFetch<TopologyResponse[]>('/topologies');
+export async function listTopologies(projectId?: string | null): Promise<TopologyResponse[]> {
+  const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+  return apiFetch<TopologyResponse[]>(`/topologies${q}`);
 }
 
 export async function getTopology(topologyId: string): Promise<TopologyResponse> {
@@ -175,7 +176,7 @@ export async function deleteLink(topologyId: string, linkId: string): Promise<vo
  * Creates a starter lab (host + service + link) for quick UI testing — similar shape to `scripts/demo_full_flow.sh`.
  * Prefer “Create blank topology” for user-authored designs.
  */
-export async function createDemoTopology(): Promise<{ topologyId: string }> {
+export async function createDemoTopology(projectId?: string | null): Promise<{ topologyId: string }> {
   const tag = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
   const thirdOctet = 80 + Math.floor(Math.random() * 120);
   const cidr = `10.${thirdOctet}.0.0/24`;
@@ -189,6 +190,7 @@ export async function createDemoTopology(): Promise<{ topologyId: string }> {
     networking_mode: 'docker_bridge',
     status: 'draft',
     config: null,
+    ...(projectId ? { project_id: projectId } : {}),
   });
 
   const host = await createNode(topo.id, {

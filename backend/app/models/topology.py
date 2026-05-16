@@ -14,6 +14,7 @@ from app.db.session import Base
 
 if TYPE_CHECKING:
     from app.models.deployment import Deployment
+    from app.models.project import Project
 
 
 class TopologyStatus(str, enum.Enum):
@@ -51,6 +52,12 @@ class Topology(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     name: Mapped[str] = mapped_column(String(255), index=True)
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[TopologyStatus] = mapped_column(
@@ -86,6 +93,7 @@ class Topology(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    project: Mapped["Project | None"] = relationship(back_populates="topologies")
 
 
 class TopologyNode(Base):

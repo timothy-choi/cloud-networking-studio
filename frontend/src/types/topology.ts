@@ -14,6 +14,8 @@ export interface TopologyResponse {
   config: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+  /** Owning project when using multi-tenant projects. */
+  project_id?: string | null;
   /** Present on list/detail API responses. */
   node_count?: number | null;
   link_count?: number | null;
@@ -26,6 +28,8 @@ export interface TopologyCreate {
   networking_mode: string;
   status?: TopologyStatus | null;
   config?: Record<string, unknown> | null;
+  /** When omitted, the API uses your default/first project. */
+  project_id?: string | null;
 }
 
 export interface TopologyNodeResponse {

@@ -7,26 +7,18 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.failure_injection import FailureInjectionFailureType
-from app.models.topology import Topology
+from app.models.user import User
 from app.schemas.failure_injection import (
     FailureInjectionRequest,
     FailureInjectionResponse,
 )
 from app.services import failure_injection_service as fi_svc
+from app.services.access_control import get_failure_injection_for_user, get_topology_for_user
 
 router = APIRouter(tags=["failure-injections"])
-
-
-def _topology_or_404(db: Session, topology_id: UUID) -> Topology:
-    topo = db.get(Topology, topology_id)
-    if topo is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Topology not found",
-        )
-    return topo
 
 
 @router.post(
@@ -39,8 +31,9 @@ def inject_stop_node(
     topology_id: UUID,
     body: FailureInjectionRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> FailureInjectionResponse:
-    _topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     try:
         fi = fi_svc.run_failure_injection(
             db,
@@ -72,8 +65,9 @@ def inject_restart_node(
     topology_id: UUID,
     body: FailureInjectionRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> FailureInjectionResponse:
-    _topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     try:
         fi = fi_svc.run_failure_injection(
             db,
@@ -105,8 +99,9 @@ def inject_kill_node(
     topology_id: UUID,
     body: FailureInjectionRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> FailureInjectionResponse:
-    _topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     try:
         fi = fi_svc.run_failure_injection(
             db,
@@ -136,14 +131,9 @@ def inject_kill_node(
 def get_failure_injection(
     failure_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> FailureInjectionResponse:
-    fi = fi_svc.get_failure_injection(db, failure_id)
-    if fi is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Failure injection not found",
-        )
-    return fi
+    return get_failure_injection_for_user(db, user, failure_id)
 
 
 @router.get(
@@ -154,6 +144,7 @@ def get_failure_injection(
 def list_topology_failures(
     topology_id: UUID,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[FailureInjectionResponse]:
-    _topology_or_404(db, topology_id)
+    get_topology_for_user(db, user, topology_id)
     return fi_svc.list_failure_injections_for_topology(db, topology_id)

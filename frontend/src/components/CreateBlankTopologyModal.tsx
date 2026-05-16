@@ -8,9 +8,11 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onCreated: (topologyId: string) => void;
+  /** Topologies are created inside this project. */
+  projectId: string | null;
 }
 
-export function CreateBlankTopologyModal({ open, onClose, onCreated }: Props) {
+export function CreateBlankTopologyModal({ open, onClose, onCreated, projectId }: Props) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [runtimeTarget, setRuntimeTarget] = useState('docker');
@@ -36,6 +38,7 @@ export function CreateBlankTopologyModal({ open, onClose, onCreated }: Props) {
         networking_mode: networkingMode.trim() || 'docker_bridge',
         status: 'draft',
         config: null,
+        ...(projectId ? { project_id: projectId } : {}),
       };
       const topo = await createTopology(body);
       onCreated(topo.id);

@@ -66,9 +66,7 @@ jobs:
           pytest tests/ -q --tb=short
 
       - name: Validate production compose file
-        run: |
-          docker compose -f docker-compose.prod.yml config --quiet
-          docker compose --profile localdb -f docker-compose.prod.yml config --quiet
+        run: docker compose -f docker-compose.prod.yml config --quiet
 
       - name: Require EC2 deploy secrets
         env:
@@ -300,11 +298,10 @@ jobs:
 
             if [[ "${DATABASE_URL}" == *"@postgres:"* ]]; then
               DB_MODE="localdb"
-              COMPOSE=(sudo docker compose --profile localdb)
             else
               DB_MODE="external"
-              COMPOSE=(sudo docker compose)
             fi
+            COMPOSE=(sudo docker compose)
             echo "database mode: ${DB_MODE}"
 
             C_ARGS=(-f docker-compose.prod.yml -f docker-compose.sslip.yml --env-file .env)

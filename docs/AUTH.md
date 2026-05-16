@@ -59,7 +59,7 @@ Use the same pattern with **``docker compose -f docker-compose.prod.yml …``** 
 
 CI, EC2 deploy, and ephemeral PR stacks run this script against the public base URL (paths under **`/api/…`** through Caddy). After **Step 34** it:
 
-1. Waits for **`GET /`** and **`GET /api/health`** on the smoke base URL (production **`deploy-production.yml`** uses **`https://api.cloudnetstudio.com`** by default, or **`CNS_PRODUCTION_API_HOST`**, without **`-L`**). Tunable **`CNS_CURL_*`** and inner retries help slow DNS.
+1. Waits for edge readiness: **full-stack** (EC2/sslip) **`GET /`** and **`GET /api/health`**; with **`CNS_SMOKE_API_ONLY=1`** (production **`deploy-production.yml`**) only **`GET /api/health`** because the API host has no SPA (app is on **Vercel**). Base URL is **`https://api.cloudnetstudio.com`** by default (or **`CNS_PRODUCTION_API_HOST`**), without **`-L`**. Tunable **`CNS_CURL_*`** and inner retries help slow DNS.
 2. Asserts **`POST /api/topologies`** **without** `Authorization` returns **401** (requires **`AUTH_REQUIRE_LOGIN=true`** on the backend, as in CI and recommended production **`.env`**).
 3. **Registers** via **`POST /api/auth/register`** as `smoke+<timestamp>@example.com` (or **logs in** on **409** duplicate), stores **`access_token`**, then creates a topology under a **project** using **`Authorization: Bearer …`**.
 

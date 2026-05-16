@@ -328,6 +328,29 @@ jobs:
 
             C_ARGS=(-f docker-compose.prod.yml -f docker-compose.caddy-https.yml --env-file .env)
 
+            # When CNS_CADDY_AUTO_HTTPS=on, never run `docker compose down -v`: it removes caddy_data /
+            # caddy_config and forces fresh Let's Encrypt issuances (rate limits).
+            run_compose() {
+              if [[ "${CNS_CADDY_AUTO_HTTPS:-}" == "on" ]]; then
+                local saw_down=0 i arg
+                for ((i=1; i<=$#; i++)); do
+                  if [[ "${!i}" == "down" ]]; then
+                    saw_down=1
+                  fi
+                done
+                if [[ "${saw_down}" -eq 1 ]]; then
+                  for ((i=1; i<=$#; i++)); do
+                    arg="${!i}"
+                    if [[ "${arg}" == "-v" ]] || [[ "${arg}" == "--volumes" ]]; then
+                      echo "::error::Refusing docker compose down with volume removal (-v/--volumes) when CNS_CADDY_AUTO_HTTPS=on (deletes caddy_data/caddy_config; new LE certs → rate limits). Use docker compose down without -v/--volumes. See docs/CICD_DEPLOYMENT.md."
+                      exit 1
+                    fi
+                  done
+                fi
+              fi
+              "${COMPOSE[@]}" "$@"
+            }
+
             umask 077
             {
               printf '%s\n' \
@@ -350,36 +373,34 @@ jobs:
             set -x
 
             echo "=== docker compose config ==="
-            if ! "${COMPOSE[@]}" "${C_ARGS[@]}" config; then
+            if ! run_compose "${C_ARGS[@]}" config; then
               echo "=== docker compose ps (after failed config) ==="
-              "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a || true
+              run_compose "${C_ARGS[@]}" ps -a || true
               echo "=== docker compose logs (after failed config, tail=120) ==="
-              "${COMPOSE[@]}" "${C_ARGS[@]}" logs --tail=120 || true
+              run_compose "${C_ARGS[@]}" logs --tail=120 || true
               exit 1
             fi
 
-            echo "=== docker compose down ==="
-            if [[ "${DB_MODE}" == "localdb" ]]; then
-              echo "Removing Compose volumes so Postgres re-initializes with POSTGRES_PASSWORD from .env."
-              "${COMPOSE[@]}" "${C_ARGS[@]}" down -v --remove-orphans || true
-            else
-              "${COMPOSE[@]}" "${C_ARGS[@]}" down || true
-            fi
+            echo "=== docker compose down (no -v: keeps postgres_data, caddy_data, caddy_config) ==="
+            run_compose "${C_ARGS[@]}" down || true
 
-            echo "=== docker compose up -d --build ==="
-            if ! "${COMPOSE[@]}" "${C_ARGS[@]}" up -d --build; then
+            echo "=== docker compose up -d --build --remove-orphans ==="
+            if ! run_compose "${C_ARGS[@]}" up -d --build --remove-orphans; then
               echo "=== docker compose ps (after failed up) ==="
-              "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a || true
+              run_compose "${C_ARGS[@]}" ps -a || true
               echo "=== docker compose logs (after failed up, tail=120) ==="
-              "${COMPOSE[@]}" "${C_ARGS[@]}" logs --tail=120 || true
+              run_compose "${C_ARGS[@]}" logs --tail=120 || true
               exit 1
             fi
 
-            echo "=== caddy logs (tail=120) ==="
-            "${COMPOSE[@]}" "${C_ARGS[@]}" logs caddy --tail=120 || true
+            echo "=== docker volume ls (caddy TLS volumes — never docker volume rm in production) ==="
+            sudo docker volume ls | grep -i caddy || true
 
             echo "=== docker compose ps ==="
-            "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a
+            run_compose "${C_ARGS[@]}" ps
+
+            echo "=== docker compose logs caddy (tail=80) ==="
+            run_compose "${C_ARGS[@]}" logs caddy --tail=80 || true
 
       - name: Production smoke (EC2 via HTTPS API host)
         env:

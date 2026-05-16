@@ -34,7 +34,9 @@ flowchart LR
 ```
 
 - **Vercel** serves the SPA; the browser calls the **EC2** API origin baked into **`VITE_API_BASE_URL`** at build time (production CI defaults to **`https://api.cloudnetstudio.com/api`** unless **`VERCEL_VITE_API_BASE_URL`** or **`CNS_PRODUCTION_API_HOST`** overrides it).
-- **EC2 Caddy** terminates **TLS** for **`https://<API host>`** using **`deploy/Caddyfile.public-https`**; **Let's Encrypt** state lives in Compose volumes **`caddy_data`** and **`caddy_config`**. The security group allows **TCP 22 / 80 / 443** (**80** and **443** are **`0.0.0.0/0`** for the web). **`docker-compose.caddy-https.yml`** publishes **`80:80`** and **`443:443`**. After each successful **`docker compose up`**, the workflow prints **`docker compose … logs caddy --tail=120`** from the instance for debugging.
+- **EC2 Caddy** terminates **TLS** for **`https://<API host>`** using **`deploy/Caddyfile.public-https`**; **Let's Encrypt** state lives in Compose volumes **`caddy_data`** and **`caddy_config`**. The security group allows **TCP 22 / 80 / 443** (**80** and **443** are **`0.0.0.0/0`** for the web). **`docker-compose.caddy-https.yml`** publishes **`80:80`** and **`443:443`**. After each successful **`docker compose up`**, the workflow prints **`docker volume ls | grep caddy`**, **`docker compose ps`**, and **`docker compose … logs caddy --tail=80`** from the instance for debugging.
+
+**Never delete `caddy_data` or `caddy_config` in production** (for example with **`docker compose down -v`**, **`docker volume rm …`**, or pruning those volumes). Removing them makes Caddy request new Let's Encrypt certificates and can exhaust **Let's Encrypt rate limits**. The production deploy script refuses **`down -v`** when **`CNS_CADDY_AUTO_HTTPS=on`**. If you must reset **only** bundled Postgres data, remove the **`postgres_data`** volume by name (see **`docker volume ls`**) instead of wiping the whole project with **`-v`**.
 
 ## Vercel project settings
 
@@ -97,7 +99,7 @@ The repo declares a partial **`backend "s3" {}`** in `infra/terraform/backend.tf
 
 **GitHub Actions (`deploy-production.yml`):** before **Terraform apply**, the workflow checks repository secrets **`RDS_PASSWORD` or `POSTGRES_PASSWORD`** (either satisfies the DB secret requirement) and **`CNS_CORS_ORIGINS`**. On the instance, the SSH step **writes** **`~/cloud-networking-studio/.env`** from secrets and Terraform outputs (no secret values in logs). Production sets **`CNS_CADDY_SITE_ADDRESS`**, **`SSLIP_HOST`**, **`CNS_SSLIP_HOST`** to the same public API hostname (default **`api.cloudnetstudio.com`**; override with repository **Variable** **`CNS_PRODUCTION_API_HOST`**), **`CADDYFILE_CADDY=./deploy/Caddyfile.public-https`**, **`CNS_CADDY_AUTO_HTTPS=on`**, appends required **`CNS_CORS_ORIGINS`** entries (app + API + legacy sslip HTTP), **`DATABASE_URL`**, and related **`CNS_*`** keys. **`set +x`** is used while secrets are expanded; only **`.env` key names** are printed after write.
 
-**Note:** When the stack uses **bundled Postgres** (`DATABASE_URL` points at **`@postgres:`**), the deploy script runs **`docker compose … down -v`**, which **removes all project volumes** including **`caddy_data`** (ACME is re-issued on the next **`up`**). With **RDS**, the script runs **`down`** without **`-v`**, so **ACME** state in **`caddy_data`** persists across deploys.
+**HTTPS deploy:** **`CNS_CADDY_SITE_ADDRESS`** defaults to **`api.cloudnetstudio.com`** (override with repository **Variable** **`CNS_PRODUCTION_API_HOST`**). The SSH step sets **`CNS_CADDY_AUTO_HTTPS=on`**. The script runs **`docker compose … down`** without **`-v`**, then **`up -d --build --remove-orphans`**, so **`caddy_data`** / **`caddy_config`** and **`postgres_data`** survive deploys.
 
 **`CNS_CORS_ORIGINS`** on the EC2 backend must allow the **Vercel** app origin (**`https://app.cloudnetstudio.com`**) and the **API** origins (**`http://`/`https://api.cloudnetstudio.com`**). The deploy script appends a fixed set including **`http://<ElasticIP>.sslip.io`** for break-glass HTTP access; add any other origins in the **`CNS_CORS_ORIGINS`** secret. See `backend/.env.example`.
 
@@ -108,7 +110,7 @@ The repo declares a partial **`backend "s3" {}`** in `infra/terraform/backend.tf
 **Bundled Postgres** starts with the rest of the stack (no Compose profile). Example on the instance:
 
 ```bash
-sudo docker compose -f docker-compose.prod.yml -f docker-compose.caddy-https.yml --env-file .env up -d --build
+sudo docker compose -f docker-compose.prod.yml -f docker-compose.caddy-https.yml --env-file .env up -d --build --remove-orphans
 ```
 
 Plain **`docker-compose.prod.yml`** is valid for **HTTP-only** local setups (`deploy/Caddyfile.prod`). Host port **5433** maps to Postgres for **`pytest`** on your laptop (see [docs/testing.md](testing.md)).
@@ -124,7 +126,7 @@ On **`push` to `main`** (and **`workflow_dispatch`**), the **`deploy`** job:
 5. Sets up **Node.js 20** (for the Vercel deploy step).
 6. Runs **Terraform** under **`infra/terraform`**: **`backend.ci.hcl`**, **`terraform init`**, **`fmt -check`**, **`validate`**, **`plan`**, **`apply`**, **`terraform output`** (including **`public_ip`**, sslip URLs for reference, and optional **`rds_*`** fields when **`RDS_ENABLED`** is true). When **`RDS_ENABLED`**, **`TF_VAR_rds_master_password`** is taken from **`RDS_PASSWORD`** or **`POSTGRES_PASSWORD`**.
 7. **Wait for SSH** until **TCP port 22** on **`public_ip`** accepts connections.
-8. **SSH** (`appleboy/ssh-action`): **`cloud-init`**, **Docker** install if needed, clone/update **`~/cloud-networking-studio`**, **`git checkout`** pushed SHA, **write `.env`**, **`docker compose … up -d --build`**, **`docker compose … logs caddy --tail=120`** (compose logs for full stack only if config/up fails).
+8. **SSH** (`appleboy/ssh-action`): **`cloud-init`**, **Docker** install if needed, clone/update **`~/cloud-networking-studio`**, **`git checkout`** pushed SHA, **write `.env`**, **`docker compose … down`** (no **`-v`**), **`docker compose … up -d --build --remove-orphans`**, then **`docker volume ls | grep caddy`**, **`docker compose ps`**, **`docker compose … logs caddy --tail=80`** (full-stack compose logs only if config/up fails).
 9. **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL`** = **`https://<API host>`** and **`CNS_SMOKE_API_ONLY=1`** (no **`-L`**): waits for **`GET /api/health`** only (SPA is on Vercel, not the API host). After **Step 34** the script authenticates (register/login), uses **Bearer** tokens for topology APIs, and expects **401** for unauthenticated topology **POST** when **`AUTH_REQUIRE_LOGIN=true`** (set in the workflow-written **`.env`**).
 10. **`curl -vL`** **`http://<API host>/api/health`** on the runner (follow redirect to HTTPS).
 11. Retries **`curl -sfS`** on **`https://<API host>/api/health`**; on failure prints **`curl -vk`** for TLS debugging.

@@ -236,7 +236,9 @@ Or `up -d` as in section 6.
 
 ## 11. Cleanup (remove containers and Postgres data)
 
-**Destructive** — deletes the Compose project and the **`cns_pg_data`** volume:
+**Destructive** — deletes the Compose project and **named volumes** when you pass **`-v`** (including **`postgres_data`** for the default **`docker-compose.prod.yml`** project).
+
+**If you use Caddy HTTPS** (`docker-compose.caddy-https.yml`, **`CNS_CADDY_AUTO_HTTPS=on`**): **never** use **`down -v`** in production. It removes **`caddy_data`** / **`caddy_config`** (Let's Encrypt certificates and ACME state); the next start can exhaust **Let's Encrypt rate limits**. Use **`down`** without **`-v`**, or **`docker volume rm`** **only** the Postgres volume if you intend to wipe the database.
 
 ```bash
 cd /opt/cns/cloud-networking-studio

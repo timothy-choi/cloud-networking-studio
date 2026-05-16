@@ -29,22 +29,22 @@ output "sslip_host" {
 }
 
 output "stack_base_url_sslip" {
-  description = "HTTPS origin for the EC2 stack via sslip (production smoke + Vercel-related flows). Ephemeral PR smoke uses stack_base_url_sslip_http only."
+  description = "HTTPS origin for the EC2 stack via sslip (optional; ACME on sslip can fail). Prefer stack_base_url_sslip_http for smoke until TLS is polished."
   value       = "https://${aws_eip.cns.public_ip}.sslip.io"
 }
 
 output "stack_base_url_sslip_http" {
-  description = "HTTP origin for sslip (ephemeral CI smoke: CNS_BASE_URL + /api/health). Avoids ACME/TLS issues on short-lived instances."
+  description = "HTTP origin for sslip (production + ephemeral smoke: CNS_BASE_URL; avoids HTTPS/TLS flakes on sslip.io)."
   value       = "http://${aws_eip.cns.public_ip}.sslip.io"
 }
 
 output "api_base_url_sslip" {
-  description = "HTTPS API base for split Vercel UI (no trailing slash path beyond /api). Caddy strips /api before proxying to FastAPI."
+  description = "HTTPS API base for split Vercel UI. Prefer explicit VERCEL_VITE_API_BASE_URL secret when using HTTPS; default CI may use api_base_url_sslip_http instead."
   value       = "https://${aws_eip.cns.public_ip}.sslip.io/api"
 }
 
 output "api_base_url_sslip_http" {
-  description = "HTTP API base for sslip (same path shape as api_base_url_sslip; optional local/debug)."
+  description = "HTTP API base for sslip (CI/Vercel build default when VERCEL_VITE_API_BASE_URL unset; same path shape as api_base_url_sslip)."
   value       = "http://${aws_eip.cns.public_ip}.sslip.io/api"
 }
 

@@ -1,13 +1,16 @@
-# Optional overlay for docker-compose.prod.yml — public HTTPS on https://<EIP>.sslip.io
-# (Let's Encrypt via Caddy) while keeping plain HTTP on :80 for localhost / direct IP access.
+# Optional overlay for docker-compose.prod.yml — public sslip.io hostname on **:80** (and **:443** published).
+#
+# **HTTP-only (recommended for CI / production smoke until sslip HTTPS is reliable):** set in `.env`:
+#   `CADDYFILE_SSLIP=./deploy/Caddyfile.prod`
+#   `CNS_CADDY_AUTO_HTTPS=off`
+#   `CNS_CADDY_SITE_ADDRESS=:80`   (documentation / operator parity with ephemeral deploy)
+# Caddy then serves **only** the `:80` block from **Caddyfile.prod** — **no** `{$CNS_SSLIP_HOST}` TLS site, so **no**
+# automatic HTTP→HTTPS redirect (avoids **308 → tlsv1 alert internal error** on broken ACME).
+#
+# **HTTPS (Let's Encrypt):** default **`CADDYFILE_SSLIP=./deploy/Caddyfile.sslip`** adds TLS site **`{$CNS_SSLIP_HOST}`** on **:443**.
 #
 # Usage on EC2 (after setting SSLIP_HOST in .env, e.g. SSLIP_HOST=203.0.113.7.sslip.io):
 #   docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml up -d --build
-#
-# Without this file, the default Caddyfile.prod (:80 only) is unchanged.
-#
-# HTTP-only (no ACME, no HTTP→HTTPS redirect): in `.env` set **CADDYFILE_SSLIP=./deploy/Caddyfile.prod**
-# and **CNS_CADDY_AUTO_HTTPS=off** (ephemeral CI). Default **CADDYFILE_SSLIP** is **./deploy/Caddyfile.sslip**.
 
 services:
   caddy:

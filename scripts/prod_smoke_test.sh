@@ -12,6 +12,7 @@
 #   ./scripts/prod_smoke_test.sh --heavy             # same as CNS_HEAVY_SMOKE=1
 #
 # Env (optional):
+#   CNS_BASE_URL               must be http://… for sslip EC2 smoke (no curl -L; avoids 308→HTTPS TLS failures)
 #   CNS_CURL_CONNECT_TIMEOUT       default 25 (DNS/TCP; sslip.io can be slow)
 #   CNS_CURL_MAX_TIME              default 120
 #   CNS_CURL_RETRIES               default 4 — inner GET retries (wait_caddy_edge.sh)
@@ -36,7 +37,7 @@ for arg in "$@"; do
     --heavy) HEAVY=1 ;;
     -h | --help)
       echo "usage: $0 [--heavy]"
-      echo "  CNS_BASE_URL                    default http://127.0.0.1"
+      echo "  CNS_BASE_URL                    default http://127.0.0.1 — sslip: use http://<EIP>.sslip.io (no -L; avoid 308→HTTPS)"
       echo "  AUTH_SMOKE=0                    health + edge wait only (no JWT / topology checks)"
       echo "  CNS_HEAVY_SMOKE=1               optional deploy/destroy against real Docker (CI sets this when enabled)"
       echo "  CNS_WAIT_ATTEMPTS               passed to wait_caddy_edge (default 30)"
@@ -67,6 +68,11 @@ need_cmd jq
 
 BASE="${CNS_BASE_URL:-http://127.0.0.1}"
 BASE="${BASE%/}"
+
+# Smoke does not use curl -L: 3xx to HTTPS would fail the edge wait. Use http://<EIP>.sslip.io for EC2 until HTTPS/ACME is reliable (see docs/CICD_DEPLOYMENT.md).
+if [[ "$BASE" == https://* ]]; then
+  echo "WARNING: CNS_BASE_URL is HTTPS — prod smoke expects HTTP on sslip (no -L). Prefer Terraform stack_base_url_sslip_http or set CNS_BASE_URL=http://…" >&2
+fi
 
 CURL_CT="${CNS_CURL_CONNECT_TIMEOUT:-25}"
 CURL_MT="${CNS_CURL_MAX_TIME:-120}"

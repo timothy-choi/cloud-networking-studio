@@ -1,13 +1,15 @@
-# Optional overlay for docker-compose.prod.yml — public sslip.io on **80** and **443**.
+# Optional overlay for docker-compose.prod.yml — public sslip.io hostname on **80** and **443**.
 #
 # **HTTP-only (ephemeral / CI smoke):** set in `.env`:
 #   `CADDYFILE_SSLIP=./deploy/Caddyfile.prod`
 #   `CNS_CADDY_AUTO_HTTPS=off`
 #   `CNS_CADDY_SITE_ADDRESS=:80`
 #
-# **HTTPS (Let's Encrypt, production default):** `CADDYFILE_SSLIP=./deploy/Caddyfile.sslip`,
-# `CNS_CADDY_AUTO_HTTPS=on`, `CNS_CADDY_SITE_ADDRESS=<EIP>.sslip.io`, `SSLIP_HOST` the same hostname.
-# ACME certificates and config persist in **caddy_data** / **caddy_config**.
+# **HTTPS + sslip.io (labs):** `CADDYFILE_SSLIP=./deploy/Caddyfile.sslip`, `CNS_CADDY_AUTO_HTTPS=on`,
+# `CNS_CADDY_SITE_ADDRESS=<EIP>.sslip.io`, **`SSLIP_HOST` / `CNS_SSLIP_HOST`** the same hostname.
+# ACME state persists in **caddy_data** / **caddy_config**.
+#
+# Production **`main`** uses **`docker-compose.caddy-https.yml`** + **`deploy/Caddyfile.public-https`** (custom API domain), not this file.
 #
 # Usage on EC2 (after setting SSLIP_HOST in .env, e.g. SSLIP_HOST=203.0.113.7.sslip.io):
 #   docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml up -d --build

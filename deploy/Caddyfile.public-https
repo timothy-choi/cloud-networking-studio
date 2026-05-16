@@ -1,0 +1,23 @@
+# Public HTTPS reverse proxy (Let's Encrypt) for a single hostname.
+# Use with docker-compose.prod.yml + docker-compose.caddy-https.yml (see docs/CICD_DEPLOYMENT.md).
+#
+# **{$CNS_CADDY_SITE_ADDRESS}** must match **CNS_CADDY_SITE_ADDRESS** in `.env` (e.g. api.example.com).
+# ACME state persists in Compose volumes **caddy_data** / **caddy_config**.
+#
+# Routing:
+#   - /api/* → backend:8000 (prefix stripped)
+#   - /     → frontend:80
+
+{
+	admin off
+}
+
+{$CNS_CADDY_SITE_ADDRESS} {
+	encode gzip
+	handle_path /api/* {
+		reverse_proxy backend:8000
+	}
+	handle {
+		reverse_proxy frontend:80
+	}
+}

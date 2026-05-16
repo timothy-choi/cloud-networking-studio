@@ -98,6 +98,13 @@ jobs:
           if [[ -n "${{ vars.CNS_PRODUCTION_API_HOST }}" ]]; then
             H="${{ vars.CNS_PRODUCTION_API_HOST }}"
           fi
+          # Bare hostname only (repo var may include https:// or a path; avoids broken http_origin like http://https://…).
+          H="${H#https://}"
+          H="${H#http://}"
+          H="${H%%/*}"
+          if [[ -z "${H}" ]]; then
+            H="api.cloudnetstudio.com"
+          fi
           echo "api_host=${H}" >> "$GITHUB_OUTPUT"
           echo "http_origin=http://${H}" >> "$GITHUB_OUTPUT"
           echo "https_origin=https://${H}" >> "$GITHUB_OUTPUT"
@@ -406,10 +413,16 @@ jobs:
       # Switch CNS_BASE_URL back to the prod_api https_origin output after LE clears and Caddy caddy_data/caddy_config are confirmed healthy.
       - name: Production smoke (EC2 API host — HTTP while LE rate-limited)
         env:
-          CNS_BASE_URL: ${{ steps.prod_api.outputs.http_origin }}
+          # Force http scheme here (do not use https_origin); GITHUB_OUTPUT http_origin can be wrong if api_host ever carried a scheme before sanitization.
+          CNS_BASE_URL: "http://${{ steps.prod_api.outputs.api_host }}"
           CNS_SMOKE_API_ONLY: "1"
+          AUTH_SMOKE: "1"
           CNS_WAIT_ATTEMPTS: "90"
-        run: bash scripts/prod_smoke_test.sh
+        run: |
+          echo "CNS_BASE_URL=$CNS_BASE_URL"
+          echo "CNS_SMOKE_API_ONLY=$CNS_SMOKE_API_ONLY"
+          echo "AUTH_SMOKE=$AUTH_SMOKE"
+          bash scripts/prod_smoke_test.sh
 
       - name: Verify HTTP API (/api/health, follow redirect to HTTPS)
         run: |

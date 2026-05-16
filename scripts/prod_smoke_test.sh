@@ -71,6 +71,7 @@ need_cmd jq
 
 BASE="${CNS_BASE_URL:-http://127.0.0.1}"
 BASE="${BASE%/}"
+# CNS_BASE_URL is taken only from the environment (callers set it); this script never rewrites it to HTTPS.
 
 API_ONLY=0
 if [[ "${CNS_SMOKE_API_ONLY:-0}" == "1" || "${CNS_SMOKE_API_ONLY:-}" == "true" ]]; then

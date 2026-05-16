@@ -72,11 +72,12 @@ See repository **README** and **docs/** for architecture and demo scripts.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Register models and create tables (Alembic replaces create_all later)."""
-    import app.models  # noqa: F401 — register tables on Base.metadata
-
     from app.db.bootstrap import run_startup_datafixes
+    from app.db.startup_schema import import_all_orm_modules, verify_core_schema
 
+    import_all_orm_modules()
     Base.metadata.create_all(bind=engine)
+    verify_core_schema(engine)
     run_startup_datafixes(engine)
     yield
 

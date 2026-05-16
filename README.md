@@ -163,6 +163,15 @@ export DATABASE_URL="postgresql://cns_user:cns_password@127.0.0.1:5433/cloud_net
 
 Then run **`pytest`** from **`backend/`** (defaults match **`backend/tests/conftest.py`**). See [docs/testing.md](docs/testing.md) and [docs/RDS.md](docs/RDS.md) for RDS vs local Postgres.
 
+After **auth / project / topology schema** changes, a stale Postgres volume may miss tables such as **`users`**. Reset the volume instead of reusing it silently:
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+(Same idea with **`docker compose -f docker-compose.prod.yml …`**.) Details: [docs/AUTH.md](docs/AUTH.md).
+
 ### Backend
 
 ```bash
@@ -184,7 +193,7 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5174**. During **`npm run dev`**, the UI uses **`/api/...`** on the same origin and **Vite proxies** to FastAPI on **8000**. Keep **`uvicorn`** running on **8000** while using the UI. With **`AUTH_REQUIRE_LOGIN=true`**, sign in at **`/login`** first; with the default relaxed dev settings, the dashboard loads using the API’s implicit dev user.
+Open **http://localhost:5174**. During **`npm run dev`**, the UI uses **`/api/...`** on the same origin and **Vite proxies** to FastAPI on **8000**. Keep **`uvicorn`** running on **8000** while using the UI. **Sign in or register** so the app stores a JWT; the dashboard does not load until **`GET /auth/me`** succeeds with that token. For **`curl`** against **`AUTH_REQUIRE_LOGIN=false`**, unauthenticated calls still hit the implicit dev user on most routes (see [docs/AUTH.md](docs/AUTH.md)).
 
 **Production build:**
 

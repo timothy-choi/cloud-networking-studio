@@ -2,8 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useNavigate } from 'react-router-dom';
 import type { UserPublic } from '../types/auth';
 import { fetchMe, loginUser, logoutApi, registerUser } from '../api/auth';
-import { ApiError, getStoredAccessToken, setStoredAccessToken } from '../api/client';
+import { getStoredAccessToken, setStoredAccessToken } from '../api/client';
 import { clearAuthSessionStorage } from './storage';
+import { resolveUserFromSession } from './sessionResolve';
 
 interface AuthState {
   user: UserPublic | null;
@@ -19,52 +20,30 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-function shouldSkipImplicitMeProbe(): boolean {
-  return import.meta.env.VITE_AUTH_SKIP_IMPLICIT_ME === 'true';
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const [user, setUser] = useState<UserPublic | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    if (shouldSkipImplicitMeProbe() && !getStoredAccessToken()) {
-      setUser(null);
-      return;
+    const { user: u, clearStorage } = await resolveUserFromSession(getStoredAccessToken, fetchMe);
+    if (clearStorage) {
+      clearAuthSessionStorage();
     }
-    try {
-      const m = await fetchMe();
-      setUser(m.user);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        clearAuthSessionStorage();
-      }
-      setUser(null);
-    }
+    setUser(u);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      if (shouldSkipImplicitMeProbe() && !getStoredAccessToken()) {
-        if (!cancelled) {
-          setUser(null);
-          setLoading(false);
-        }
-        return;
+      const { user: u, clearStorage } = await resolveUserFromSession(getStoredAccessToken, fetchMe);
+      if (clearStorage) {
+        clearAuthSessionStorage();
       }
-      try {
-        const m = await fetchMe();
-        if (!cancelled) setUser(m.user);
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 401) {
-          clearAuthSessionStorage();
-        }
-        if (!cancelled) setUser(null);
-      } finally {
-        if (!cancelled) setLoading(false);
+      if (!cancelled) {
+        setUser(u);
+        setLoading(false);
       }
     })();
     return () => {

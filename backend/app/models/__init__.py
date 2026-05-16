@@ -1,4 +1,9 @@
-"""ORM models — import order registers all tables on ``Base.metadata``."""
+"""ORM models — import order registers all tables on ``Base.metadata``.
+
+Application startup and tests should call ``import_all_orm_modules()`` from
+``app.db.startup_schema`` before ``Base.metadata.create_all()`` so every table
+(including ``users``) is registered even if only a subset of routers was imported.
+"""
 
 # Users and projects before topology FKs.
 from app.models.project import Project

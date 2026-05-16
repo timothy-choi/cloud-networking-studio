@@ -27,12 +27,13 @@ from fastapi.testclient import TestClient
 @pytest.fixture(scope="session")
 def engine_db():
     """Recreate schema once per test session for isolation."""
-    import app.models  # noqa: F401 — register ORM metadata
-
     from app.db.session import Base, engine
+    from app.db.startup_schema import import_all_orm_modules, verify_core_schema
 
+    import_all_orm_modules()
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    verify_core_schema(engine)
     yield
     Base.metadata.drop_all(bind=engine)
 

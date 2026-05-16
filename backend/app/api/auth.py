@@ -11,7 +11,7 @@ from app.db.session import get_db
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.auth import LoginRequest, MeResponse, RegisterRequest, TokenResponse, UserPublic
-from app.api.deps import get_current_user
+from app.api.deps import require_bearer_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -23,6 +23,27 @@ _PASSWORD_MAX_BYTES = 72  # bcrypt limit (after normalization we stay within thi
 
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def _user_by_email(db: Session, email: str) -> User | None:
+    """Load ``User`` by normalized email, or ``None`` if absent.
+
+    Uses ``Session.execute(select(User)).scalar_one_or_none()`` so the ORM always
+    returns a mapped ``User`` (or ``None``). ``Session.scalar(select(User))`` can
+    route through ``Connection.scalar()`` and return only the **first column**
+    (typically the primary-key UUID). Code then did ``user.password_hash`` on
+    that UUID, raising::
+
+        AttributeError: 'UUID' object has no attribute 'password_hash'
+
+    which surfaced to clients as **HTTP 500** for unknown emails. Treat any
+    non-``User`` scalar as "not found" so invalid logins stay **401** without
+    revealing whether the address exists.
+    """
+    row = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+    if row is None:
+        return None
+    return row if isinstance(row, User) else None
 
 
 def _assert_register_password_policy(password: str) -> None:
@@ -52,7 +73,7 @@ def _assert_register_password_policy(password: str) -> None:
 def register(body: RegisterRequest, db: Session = Depends(get_db)) -> TokenResponse:
     _assert_register_password_policy(body.password)
     em = _normalize_email(str(body.email))
-    if db.scalar(select(User).where(User.email == em)):
+    if _user_by_email(db, em) is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered",
@@ -83,8 +104,25 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> TokenRespo
 @router.post("/login", response_model=TokenResponse, summary="Login")
 def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     em = _normalize_email(str(body.email))
-    user = db.scalar(select(User).where(User.email == em))
-    if user is None or not verify_password(body.password, user.password_hash):
+    user = _user_by_email(db, em)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+    ph = user.password_hash
+    if not ph:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+    try:
+        password_ok = verify_password(body.password, ph)
+    except Exception:
+        # Defense in depth: ``verify_password`` should not raise, but never map
+        # verification bugs to HTTP 500 (same opaque 401 as wrong password).
+        password_ok = False
+    if not password_ok:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -96,8 +134,8 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     )
 
 
-@router.get("/me", response_model=MeResponse, summary="Current user")
-def me(user: User = Depends(get_current_user)) -> MeResponse:
+@router.get("/me", response_model=MeResponse, summary="Current user (requires Bearer JWT)")
+def me(user: User = Depends(require_bearer_user)) -> MeResponse:
     return MeResponse(user=UserPublic.model_validate(user))
 
 

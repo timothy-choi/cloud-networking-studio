@@ -34,10 +34,12 @@ def hash_password(plain: str) -> str:
     return pwd_context.hash(_normalize_for_bcrypt(plain))
 
 
-def verify_password(plain: str, password_hash: str) -> bool:
+def verify_password(plain: str, password_hash: str | None) -> bool:
+    if not password_hash:
+        return False
     try:
         return pwd_context.verify(_normalize_for_bcrypt(plain), password_hash)
-    except (ValueError, TypeError):
+    except Exception:
         return False
 
 

@@ -116,6 +116,28 @@ export function formatApiError(err: unknown): string {
   return String(err);
 }
 
+function _isLikelyNetworkError(err: Error): boolean {
+  const m = err.message;
+  return m === 'Failed to fetch' || m.includes('NetworkError') || m.includes('Load failed');
+}
+
+const _LOGIN_GENERIC =
+  'Something went wrong. Please try again in a moment.';
+
+/** Login form: uniform copy for bad credentials; generic message for server/network issues. */
+export function formatLoginError(err: unknown): string {
+  if (err instanceof ApiError && err.status === 401) {
+    return 'Invalid email or password';
+  }
+  if (err instanceof ApiError && err.status >= 500) {
+    return _LOGIN_GENERIC;
+  }
+  if (err instanceof Error && _isLikelyNetworkError(err)) {
+    return _LOGIN_GENERIC;
+  }
+  return formatApiError(err);
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   return apiFetch<HealthResponse>('/health');
 }

@@ -162,3 +162,114 @@ def test_auth_me_ok_with_bearer_after_register(client):
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200
     assert me.json()["user"]["email"] == email.lower()
+
+
+def _login_fail_body() -> dict:
+    return {"detail": "Invalid email or password"}
+
+
+def test_login_unknown_email_returns_401_not_500(client):
+    """Regression: unknown email must not surface ORM/lookup bugs as HTTP 500."""
+    email = f"ghost-{uuid.uuid4().hex}@example.com"
+    r = client.post(
+        "/auth/login",
+        json={"email": email, "password": "password123"},
+    )
+    assert r.status_code != 500
+    assert r.status_code == 401
+    assert r.json() == _login_fail_body()
+
+
+def test_login_invalid_json_body_not_500(client):
+    r = client.post(
+        "/auth/login",
+        content=b"not-json{",
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code != 500
+
+
+def test_login_missing_password_returns_422_not_500(client):
+    r = client.post("/auth/login", json={"email": "someone@example.com"})
+    assert r.status_code != 500
+    assert r.status_code == 422
+
+
+def test_login_corrupt_password_hash_returns_401(client):
+    from sqlalchemy import text
+
+    from app.db.session import SessionLocal
+
+    email = f"badhash{uuid.uuid4().hex[:8]}@example.com"
+    assert (
+        client.post(
+            "/auth/register",
+            json={"email": email, "password": "password123", "display_name": "X"},
+        ).status_code
+        == 201
+    )
+    with SessionLocal() as db:
+        db.execute(
+            text("UPDATE users SET password_hash = :h WHERE email = :e"),
+            {"h": "#$%not-a-valid-bcrypt-string", "e": email},
+        )
+        db.commit()
+    r = client.post("/auth/login", json={"email": email, "password": "password123"})
+    assert r.status_code == 401
+    assert r.json() == _login_fail_body()
+
+
+def test_login_wrong_password_returns_401(client):
+    email = f"lp{uuid.uuid4().hex[:8]}@example.com"
+    assert (
+        client.post(
+            "/auth/register",
+            json={"email": email, "password": "correct-pass-9", "display_name": "LP"},
+        ).status_code
+        == 201
+    )
+    r = client.post("/auth/login", json={"email": email, "password": "wrong-pass-9"})
+    assert r.status_code == 401
+    assert r.json() == _login_fail_body()
+
+
+def test_login_unknown_vs_wrong_password_same_response(client):
+    """Do not reveal whether the email exists (identical JSON body)."""
+    email = f"cmp{uuid.uuid4().hex[:8]}@example.com"
+    assert (
+        client.post(
+            "/auth/register",
+            json={"email": email, "password": "secret-pass-1", "display_name": "CMP"},
+        ).status_code
+        == 201
+    )
+    unknown = client.post(
+        "/auth/login",
+        json={"email": "other-unknown@example.com", "password": "secret-pass-1"},
+    )
+    wrong_pw = client.post(
+        "/auth/login",
+        json={"email": email, "password": "not-the-secret"},
+    )
+    assert unknown.status_code == 401
+    assert wrong_pw.status_code == 401
+    assert unknown.json() == wrong_pw.json()
+
+
+def test_login_success_returns_token_and_user(client):
+    email = f"ok{uuid.uuid4().hex[:8]}@example.com"
+    assert (
+        client.post(
+            "/auth/register",
+            json={"email": email, "password": "password123", "display_name": "OK"},
+        ).status_code
+        == 201
+    )
+    r2 = client.post(
+        "/auth/login",
+        json={"email": email, "password": "password123"},
+    )
+    assert r2.status_code == 200
+    data = r2.json()
+    assert data["access_token"]
+    assert data["user"]["email"] == email.lower()

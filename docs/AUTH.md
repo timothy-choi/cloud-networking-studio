@@ -40,6 +40,21 @@ Send **`Authorization: Bearer <access_token>`** on protected routes when **`AUTH
 
 ---
 
+## Database volumes after auth / schema changes
+
+The API runs ``SQLAlchemy`` ``create_all()`` on startup and checks that core tables exist (**``users``**, **``projects``**, **``topologies``** with **``project_id``**). If Postgres was created from an older image or ORM layout, you can still have a **healthy empty data directory** that never received the new DDL, or mismatched objects, which surfaces as errors like ``relation "users" does not exist``.
+
+**Do not rely on old DB volumes silently.** After auth or project/topology model changes, reset the local database volume and rebuild:
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+Use the same pattern with **``docker compose -f docker-compose.prod.yml …``** when you develop against the production-style stack.
+
+---
+
 ## Local development
 
 1. Start Postgres (`docker compose up -d postgres` or `docker compose -f docker-compose.prod.yml up -d postgres`) and the API as in the [README](../README.md#quickstart).

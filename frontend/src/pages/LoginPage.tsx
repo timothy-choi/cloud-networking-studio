@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { formatApiError } from '../api/client';
+import { formatLoginError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 
 export function LoginPage() {
@@ -26,7 +26,7 @@ export function LoginPage() {
       await login(email.trim(), password);
       navigate('/', { replace: true });
     } catch (e) {
-      setErr(formatApiError(e));
+      setErr(formatLoginError(e));
     } finally {
       setBusy(false);
     }

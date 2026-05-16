@@ -163,6 +163,15 @@ export DATABASE_URL="postgresql://cns_user:cns_password@127.0.0.1:5433/cloud_net
 
 Then run **`pytest`** from **`backend/`** (defaults match **`backend/tests/conftest.py`**). See [docs/testing.md](docs/testing.md) and [docs/RDS.md](docs/RDS.md) for RDS vs local Postgres.
 
+After **auth / project / topology schema** changes, a stale Postgres volume may miss tables such as **`users`**. Reset the volume instead of reusing it silently:
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+(Same idea with **`docker compose -f docker-compose.prod.yml …`**.) Details: [docs/AUTH.md](docs/AUTH.md).
+
 ### Backend
 
 ```bash

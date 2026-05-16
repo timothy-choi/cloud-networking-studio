@@ -10,6 +10,8 @@ import { injectStopNode, injectRestartNode, runHttpTest, runPingTest, deleteTopo
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { DeploymentLifecycleTimeline } from '../components/deployment/DeploymentLifecycleTimeline';
 import { DeploymentPhaseStrip } from '../components/deployment/DeploymentPhaseStrip';
+import { DeploymentProgressRail } from '../components/deployment/DeploymentProgressRail';
+import { DeploymentRecentEventsPanel } from '../components/deployment/DeploymentRecentEventsPanel';
 import { DeploymentEventStream } from '../components/events/DeploymentEventStream';
 import { FailureHistory } from '../components/failures/FailureHistory';
 import { RuntimeHealthBadges } from '../components/runtime/RuntimeHealthBadges';
@@ -228,7 +230,7 @@ export function TopologyDetailPage() {
     <div className="space-y-5 pb-10 max-w-full min-w-0 overflow-x-hidden">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <Link to="/" className="text-xs font-medium text-emerald-700 hover:underline dark:text-emerald-400">
+          <Link to="/dashboard" className="text-xs font-medium text-emerald-700 hover:underline dark:text-emerald-400">
             ← Dashboard
           </Link>
           <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -286,7 +288,7 @@ export function TopologyDetailPage() {
                 setOpsError(null);
                 try {
                   await deleteTopology(id);
-                  navigate('/');
+                  navigate('/dashboard');
                 } catch (e) {
                   setOpsError(formatOperatorError(e));
                 } finally {
@@ -344,6 +346,13 @@ export function TopologyDetailPage() {
             <strong className="font-semibold">Stopped containers detected.</strong> Reconcile to restore intent, then run{' '}
             <strong className="font-semibold">Heal deployment</strong> (highlighted below).
           </span>
+        </div>
+      )}
+
+      {topology && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <DeploymentProgressRail deploymentId={deploymentId} status={deploymentStatus} />
+          <DeploymentRecentEventsPanel events={events} pollErr={eventsPollErr} />
         </div>
       )}
 
@@ -563,6 +572,29 @@ export function TopologyDetailPage() {
           <p className="mt-2 flex items-center gap-2 text-xs text-cns-muted">
             <Spinner className="h-4 w-4" /> Working: {busy}…
           </p>
+        )}
+        {deploymentStatus === 'failed' && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-950 dark:border-red-900 dark:bg-red-950/35 dark:text-red-100">
+            <p className="font-semibold">Deployment failed</p>
+            <p className="mt-1 text-xs leading-relaxed opacity-90">
+              Review the operation banner above for API details, inspect recent events, then{' '}
+              <strong className="font-semibold">Retry deployment</strong> after fixing the topology or environment. If
+              retry is not appropriate, adjust the graph and use <strong className="font-semibold">Deploy to runtime</strong>{' '}
+              to create a fresh deployment attempt.
+            </p>
+            <button
+              type="button"
+              disabled={busy !== null || !deployReadiness.deployable}
+              onClick={() =>
+                wrap('deploy-retry', async () => {
+                  await deployTopology(id);
+                })
+              }
+              className="mt-3 rounded-lg bg-red-800 px-4 py-2 text-xs font-semibold text-white hover:bg-red-900 disabled:opacity-50 dark:bg-red-700 dark:hover:bg-red-600"
+            >
+              Retry deployment
+            </button>
+          </div>
         )}
       </section>
 

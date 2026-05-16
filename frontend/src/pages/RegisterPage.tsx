@@ -25,7 +25,7 @@ export function RegisterPage() {
     setBusy(true);
     try {
       await register(email.trim(), password, displayName.trim());
-      navigate('/', { replace: true });
+      navigate('/dashboard', { replace: true });
     } catch (e) {
       setErr(formatApiError(e));
     } finally {
@@ -84,6 +84,11 @@ export function RegisterPage() {
         Already have an account?{' '}
         <Link to="/login" className="font-medium text-zinc-900 underline dark:text-zinc-100">
           Sign in
+        </Link>
+      </p>
+      <p className="text-center text-xs text-cns-muted">
+        <Link to="/" className="font-medium text-zinc-700 underline dark:text-zinc-300">
+          ← Product home
         </Link>
       </p>
       <div className="border-t border-zinc-200 pt-4 dark:border-zinc-700">

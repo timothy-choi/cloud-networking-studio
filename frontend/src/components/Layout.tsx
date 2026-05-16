@@ -10,7 +10,7 @@ export function Layout() {
       <header className="border-b border-zinc-200 bg-white/90 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-3">
           <div className="flex items-baseline gap-3">
-            <Link to="/" className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            <Link to="/dashboard" className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
               Cloud Networking Studio
             </Link>
             <span className="hidden text-xs font-medium uppercase tracking-wider text-cns-label sm:inline">

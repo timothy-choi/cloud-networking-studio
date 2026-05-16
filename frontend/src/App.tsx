@@ -4,6 +4,7 @@ import { RequireSession } from './auth/RequireSession';
 import { Layout } from './components/Layout';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
+import { PublicHomeRoute } from './pages/PublicHomeRoute';
 import { RegisterPage } from './pages/RegisterPage';
 import { TopologyDetailPage } from './pages/TopologyDetailPage';
 
@@ -12,13 +13,14 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
+          <Route path="/" element={<PublicHomeRoute />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route element={<RequireSession />}>
             <Route element={<Layout />}>
-              <Route index element={<DashboardPage />} />
+              <Route path="dashboard" element={<DashboardPage />} />
               <Route path="topologies/:topologyId" element={<TopologyDetailPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>
           </Route>
         </Routes>

@@ -2,7 +2,7 @@ import { Navigate, Outlet } from 'react-router-dom';
 import { Spinner } from '../components/Spinner';
 import { useAuth } from '../auth/AuthContext';
 
-/** When the API requires login, blocks until a JWT session exists. Local dev uses implicit dev user from /auth/me. */
+/** Blocks app routes until a JWT session exists (validated via ``GET /auth/me`` with Bearer token). */
 export function RequireSession() {
   const { user, loading } = useAuth();
   if (loading) {

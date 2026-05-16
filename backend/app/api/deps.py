@@ -19,6 +19,20 @@ from app.models.user import User
 security = HTTPBearer(auto_error=False)
 
 
+def require_bearer_user(
+    db: Annotated[Session, Depends(get_db)],
+    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> User:
+    """Current user from JWT only. Used for ``GET /auth/me`` (never the implicit dev user)."""
+    if creds is None or not creds.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return _user_from_token(db, creds.credentials)
+
+
 def get_current_user(
     db: Annotated[Session, Depends(get_db)],
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],

@@ -52,7 +52,8 @@ class Settings(BaseSettings):
         validation_alias="AUTH_TOKEN_EXPIRE_MINUTES",
     )
     # When true, mutating and data APIs require a valid Bearer JWT (except /health, /auth/register, /auth/login).
-    # When false (default for local development), unauthenticated requests use a built-in dev user + default project.
+    # When false (default for local development), unauthenticated requests use a built-in dev user + default project
+    # for those routes only — GET /auth/me always requires a Bearer token (see app.api.deps.require_bearer_user).
     auth_require_login: bool = Field(
         default=False,
         validation_alias="AUTH_REQUIRE_LOGIN",

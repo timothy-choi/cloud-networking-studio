@@ -11,7 +11,7 @@ from app.db.session import get_db
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.auth import LoginRequest, MeResponse, RegisterRequest, TokenResponse, UserPublic
-from app.api.deps import get_current_user
+from app.api.deps import require_bearer_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -96,8 +96,8 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     )
 
 
-@router.get("/me", response_model=MeResponse, summary="Current user")
-def me(user: User = Depends(get_current_user)) -> MeResponse:
+@router.get("/me", response_model=MeResponse, summary="Current user (requires Bearer JWT)")
+def me(user: User = Depends(require_bearer_user)) -> MeResponse:
     return MeResponse(user=UserPublic.model_validate(user))
 
 

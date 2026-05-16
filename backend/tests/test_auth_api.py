@@ -143,3 +143,22 @@ def test_project_scoped_topology_list_create(client_strict):
 
 def test_health_public_without_auth(client_strict):
     assert client_strict.get("/health").status_code == 200
+
+
+def test_auth_me_requires_bearer_without_token(client):
+    """GET /auth/me never uses the implicit dev user; missing Authorization → 401."""
+    r = client.get("/auth/me")
+    assert r.status_code == 401
+
+
+def test_auth_me_ok_with_bearer_after_register(client):
+    email = f"m{uuid.uuid4().hex[:8]}@example.com"
+    reg = client.post(
+        "/auth/register",
+        json={"email": email, "password": "password123", "display_name": "M"},
+    )
+    assert reg.status_code == 201
+    token = reg.json()["access_token"]
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200
+    assert me.json()["user"]["email"] == email.lower()

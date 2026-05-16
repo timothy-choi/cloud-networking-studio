@@ -184,7 +184,7 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5174**. During **`npm run dev`**, the UI uses **`/api/...`** on the same origin and **Vite proxies** to FastAPI on **8000**. Keep **`uvicorn`** running on **8000** while using the UI. With **`AUTH_REQUIRE_LOGIN=true`**, sign in at **`/login`** first; with the default relaxed dev settings, the dashboard loads using the API’s implicit dev user.
+Open **http://localhost:5174**. During **`npm run dev`**, the UI uses **`/api/...`** on the same origin and **Vite proxies** to FastAPI on **8000**. Keep **`uvicorn`** running on **8000** while using the UI. **Sign in or register** so the app stores a JWT; the dashboard does not load until **`GET /auth/me`** succeeds with that token. For **`curl`** against **`AUTH_REQUIRE_LOGIN=false`**, unauthenticated calls still hit the implicit dev user on most routes (see [docs/AUTH.md](docs/AUTH.md)).
 
 **Production build:**
 

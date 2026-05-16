@@ -57,7 +57,7 @@ for i in $(seq 1 "$ATTEMPTS"); do
 
   if [[ "$REDIR_HINTED" -eq 0 ]] && [[ "$code_root" =~ ^3[0-9][0-9]$ || "$code_api" =~ ^3[0-9][0-9]$ ]]; then
     REDIR_HINTED=1
-    echo "wait_caddy_edge: got HTTP redirect (${code_root} / ${code_api}) — not following (-L off). For sslip without TLS use CADDYFILE_SSLIP=./deploy/Caddyfile.prod and CNS_CADDY_AUTO_HTTPS=off (see docker-compose.sslip.yml)." >&2
+    echo "wait_caddy_edge: got HTTP redirect (${code_root} / ${code_api}) — not following (-L off). If you need plain HTTP on sslip (no redirect), use CADDYFILE_SSLIP=./deploy/Caddyfile.prod and CNS_CADDY_AUTO_HTTPS=off (see docker-compose.sslip.yml)." >&2
   fi
 
   health_ok=0

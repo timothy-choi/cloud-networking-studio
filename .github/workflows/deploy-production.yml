@@ -1,4 +1,4 @@
-# Production: push to main → Terraform (S3, persistent EC2) → EC2 Compose (HTTP API on sslip for now) → smoke → Vercel.
+# Production: push to main → Terraform (S3, persistent EC2) → EC2 Compose (Caddy HTTPS on sslip + HTTP smoke) → Vercel.
 # Does not destroy infra. See docs/CICD_DEPLOYMENT.md (Step 31: main vs PR workflows).
 
 name: Deploy production
@@ -65,8 +65,11 @@ jobs:
           pip install -r requirements.txt
           pytest tests/ -q --tb=short
 
-      - name: Validate production compose file
-        run: docker compose -f docker-compose.prod.yml config --quiet
+      - name: Validate production compose files
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.prod.yml config --quiet
+          SSLIP_HOST=203.0.113.7.sslip.io docker compose -f docker-compose.prod.yml -f docker-compose.sslip.yml config --quiet
 
       - name: Require EC2 deploy secrets
         env:
@@ -167,15 +170,14 @@ jobs:
           echo "::error::SSH did not become ready"
           exit 1
 
-      - name: Deploy Docker stack on EC2 (Caddy HTTP-only on sslip for smoke reliability)
+      - name: Deploy Docker stack on EC2 (Caddy HTTPS on sslip; smoke stays HTTP)
         uses: appleboy/ssh-action@v1.1.0
         env:
           POSTGRES_PASSWORD: ${{ secrets.RDS_PASSWORD || secrets.POSTGRES_PASSWORD }}
           CNS_CORS_ORIGINS: ${{ secrets.CNS_CORS_ORIGINS }}
-          # TODO: restore HTTPS + Caddyfile.sslip when sslip.io ACME/TLS is reliable (see docs/CICD_DEPLOYMENT.md).
-          CNS_CADDY_SITE_ADDRESS: ":80"
-          CNS_CADDY_AUTO_HTTPS: "off"
-          CADDYFILE_SSLIP: "./deploy/Caddyfile.prod"
+          CNS_CADDY_SITE_ADDRESS: ${{ steps.tf.outputs.sslip_host }}
+          CNS_CADDY_AUTO_HTTPS: "on"
+          CADDYFILE_SSLIP: "./deploy/Caddyfile.sslip"
           CNS_ENVIRONMENT: "production"
           CNS_CONTROLLER_MODE: "manual"
           RDS_ENDPOINT: ${{ steps.tf.outputs.rds_address }}
@@ -261,9 +263,9 @@ jobs:
               exit 1
             fi
 
-            CNS_CADDY_SITE_ADDRESS="${CNS_CADDY_SITE_ADDRESS:-:80}"
-            CNS_CADDY_AUTO_HTTPS="${CNS_CADDY_AUTO_HTTPS:-off}"
-            CADDYFILE_SSLIP="${CADDYFILE_SSLIP:-./deploy/Caddyfile.prod}"
+            CNS_CADDY_SITE_ADDRESS="${CNS_CADDY_SITE_ADDRESS:-${SH_SSLIP}}"
+            CNS_CADDY_AUTO_HTTPS="${CNS_CADDY_AUTO_HTTPS:-on}"
+            CADDYFILE_SSLIP="${CADDYFILE_SSLIP:-./deploy/Caddyfile.sslip}"
 
             RDS_EP="$(printf '%s' "${RDS_ENDPOINT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
             RDS_P="$(printf '%s' "${RDS_PORT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
@@ -318,6 +320,7 @@ jobs:
                 "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" \
                 "DATABASE_URL=${DATABASE_URL}" \
                 "SSLIP_HOST=${SH_SSLIP}" \
+                "CNS_SSLIP_HOST=${SH_SSLIP}" \
                 "CADDYFILE_SSLIP=${CADDYFILE_SSLIP}" \
                 "AUTH_REQUIRE_LOGIN=true"
             } > .env
@@ -353,6 +356,9 @@ jobs:
               exit 1
             fi
 
+            echo "=== caddy logs (tail=120) ==="
+            "${COMPOSE[@]}" "${C_ARGS[@]}" logs caddy --tail=120 || true
+
             echo "=== docker compose ps ==="
             "${COMPOSE[@]}" "${C_ARGS[@]}" ps -a
 
@@ -367,6 +373,22 @@ jobs:
           set -euo pipefail
           curl -sfS --connect-timeout 20 --max-time 90 "${{ steps.tf.outputs.stack_base_url_sslip_http }}/api/health" | jq -e '.status' >/dev/null
 
+      - name: Verify HTTPS API (sslip /api/health)
+        run: |
+          set -euo pipefail
+          URL="${{ steps.tf.outputs.stack_base_url_sslip }}/api/health"
+          for i in $(seq 1 18); do
+            if curl -sfS --connect-timeout 25 --max-time 90 "$URL" | jq -e '.status' >/dev/null 2>&1; then
+              echo "HTTPS /api/health OK (attempt ${i})"
+              exit 0
+            fi
+            echo "Waiting for TLS/ACME (attempt ${i}/18)..."
+            sleep 10
+          done
+          echo "=== curl -vk (debug) ==="
+          curl -vk --connect-timeout 25 --max-time 120 "$URL" || true
+          exit 1
+
       - name: Deploy to Vercel
         shell: bash
         env:
@@ -374,7 +396,7 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VITE_API_BASE_URL: ${{ secrets.VERCEL_VITE_API_BASE_URL || steps.tf.outputs.api_base_url_sslip_http }}
+          VITE_API_BASE_URL: ${{ secrets.VERCEL_VITE_API_BASE_URL || steps.tf.outputs.api_base_url_sslip }}
         run: |
           set -euo pipefail
           export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"

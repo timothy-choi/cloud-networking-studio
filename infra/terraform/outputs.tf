@@ -29,7 +29,7 @@ output "sslip_host" {
 }
 
 output "stack_base_url_sslip" {
-  description = "HTTPS origin for the EC2 stack via sslip (optional; ACME on sslip can fail). Prefer stack_base_url_sslip_http for smoke until TLS is polished."
+  description = "HTTPS origin for the EC2 stack via sslip (production Caddy + Let's Encrypt; use stack_base_url_sslip_http for HTTP-only smoke)."
   value       = "https://${aws_eip.cns.public_ip}.sslip.io"
 }
 
@@ -39,12 +39,12 @@ output "stack_base_url_sslip_http" {
 }
 
 output "api_base_url_sslip" {
-  description = "HTTPS API base for split Vercel UI. Prefer explicit VERCEL_VITE_API_BASE_URL secret when using HTTPS; default CI may use api_base_url_sslip_http instead."
+  description = "HTTPS API base for split Vercel UI (default VITE_API_BASE_URL in deploy-production when VERCEL_VITE_API_BASE_URL unset)."
   value       = "https://${aws_eip.cns.public_ip}.sslip.io/api"
 }
 
 output "api_base_url_sslip_http" {
-  description = "HTTP API base for sslip (CI/Vercel build default when VERCEL_VITE_API_BASE_URL unset; same path shape as api_base_url_sslip)."
+  description = "HTTP API base for sslip (smoke scripts, debugging; same path shape as api_base_url_sslip)."
   value       = "http://${aws_eip.cns.public_ip}.sslip.io/api"
 }
 

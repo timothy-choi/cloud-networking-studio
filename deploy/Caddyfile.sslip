@@ -1,38 +1,26 @@
-# Production reverse proxy with optional public HTTPS on sslip.io + HTTP on :80.
-# Use together with docker-compose.prod.yml + docker-compose.sslip.yml (see docs/CICD_DEPLOYMENT.md).
+# Production reverse proxy: public HTTPS on sslip.io (Let's Encrypt) + gzip.
+# Use with docker-compose.prod.yml + docker-compose.sslip.yml (see docs/CICD_DEPLOYMENT.md).
 #
-# The **{$CNS_SSLIP_HOST}** site enables automatic HTTPS (and may redirect plain HTTP for that host). For
-# CI/ephemeral stacks that must stay on HTTP only, set **CADDYFILE_SSLIP=./deploy/Caddyfile.prod** in `.env**
-# (see docker-compose.sslip.yml) and **CNS_CADDY_AUTO_HTTPS=off** as a documented flag.
+# **{$CNS_SSLIP_HOST}** must match **SSLIP_HOST** in `.env` (e.g. 203.0.113.7.sslip.io). ACME state persists in
+# Compose volumes **caddy_data** / **caddy_config** (see docker-compose.sslip.yml).
 #
-# Routing (:80 and {$CNS_SSLIP_HOST}):
-#   - /api/* → backend:8000 (prefix stripped; FastAPI paths are /health, /topologies, …)
+# For CI/ephemeral HTTP-only stacks, set **CADDYFILE_SSLIP=./deploy/Caddyfile.prod**,
+# **CNS_CADDY_AUTO_HTTPS=off**, **CNS_CADDY_SITE_ADDRESS=:80** (see docker-compose.sslip.yml).
+#
+# Routing:
+#   - /api/* → backend:8000 (prefix stripped)
 #   - /     → frontend:80
-#
-# **CNS_SSLIP_HOST** must match **SSLIP_HOST** in `.env` (e.g. 203.0.113.7.sslip.io). Caddy obtains a public certificate automatically.
 
 {
 	admin off
 }
 
-:80 {
-	route {
-		handle_path /api/* {
-			reverse_proxy backend:8000
-		}
-		handle {
-			reverse_proxy frontend:80
-		}
-	}
-}
-
 {$CNS_SSLIP_HOST} {
-	route {
-		handle_path /api/* {
-			reverse_proxy backend:8000
-		}
-		handle {
-			reverse_proxy frontend:80
-		}
+	encode gzip
+	handle_path /api/* {
+		reverse_proxy backend:8000
+	}
+	handle {
+		reverse_proxy frontend:80
 	}
 }

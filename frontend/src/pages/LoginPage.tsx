@@ -24,7 +24,7 @@ export function LoginPage() {
     setBusy(true);
     try {
       await login(email.trim(), password);
-      navigate('/', { replace: true });
+      navigate('/dashboard', { replace: true });
     } catch (e) {
       setErr(formatLoginError(e));
     } finally {
@@ -72,6 +72,11 @@ export function LoginPage() {
         No account?{' '}
         <Link to="/register" className="font-medium text-zinc-900 underline dark:text-zinc-100">
           Register
+        </Link>
+      </p>
+      <p className="text-center text-xs text-cns-muted">
+        <Link to="/" className="font-medium text-zinc-700 underline dark:text-zinc-300">
+          ← Product home
         </Link>
       </p>
       <div className="border-t border-zinc-200 pt-4 dark:border-zinc-700">

@@ -2,6 +2,26 @@ import type { DeploymentStatus } from '../../types/deployment';
 import type { RuntimeHealthTier } from '../../types/runtime';
 import type { TopologyStatus } from '../../types/topology';
 
+function formatDeploymentStatus(status: DeploymentStatus | null): string {
+  if (!status) return 'No deployment';
+  switch (status) {
+    case 'pending':
+      return 'Created · pending';
+    case 'deploying':
+      return 'Provisioning';
+    case 'stopping':
+      return 'Stopping';
+    case 'succeeded':
+      return 'Running';
+    case 'failed':
+      return 'Failed';
+    case 'stopped':
+      return 'Destroyed';
+    default:
+      return status;
+  }
+}
+
 interface Props {
   topologyStatus: TopologyStatus;
   deploymentStatus: DeploymentStatus | null;
@@ -50,7 +70,7 @@ export function RuntimeHealthBadges({ topologyStatus, deploymentStatus, runtimeT
   const topoVariant =
     topologyStatus === 'active' ? 'green' : topologyStatus === 'archived' ? 'slate' : 'blue';
 
-  const depLabel = deploymentStatus ?? 'none';
+  const depLabel = formatDeploymentStatus(deploymentStatus);
   let depVariant: 'green' | 'yellow' | 'red' | 'slate' = 'slate';
   if (deploymentStatus === 'succeeded') depVariant = 'green';
   else if (deploymentStatus === 'failed') depVariant = 'red';

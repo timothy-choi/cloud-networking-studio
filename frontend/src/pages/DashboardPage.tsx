@@ -227,9 +227,23 @@ export function DashboardPage() {
           </button>
         </div>
         {projects.length === 0 ? (
-          <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
-            Create a project to own topologies and deployments. Registration also creates a starter workspace.
-          </p>
+          <div className="mt-4 rounded-xl border border-dashed border-amber-300/80 bg-amber-50/50 p-5 dark:border-amber-800/60 dark:bg-amber-950/20">
+            <h3 className="text-sm font-semibold text-amber-950 dark:text-amber-100">No projects yet</h3>
+            <p className="mt-2 text-sm leading-relaxed text-amber-950/90 dark:text-amber-100/90">
+              Projects scope your topologies and deployments. Create a project to get started, or{' '}
+              <Link to="/register" className="font-semibold text-amber-950 underline dark:text-amber-50">
+                register
+              </Link>{' '}
+              if you do not have an account — registration creates a starter workspace and signs you in.
+            </p>
+            <button
+              type="button"
+              onClick={() => setProjectModalOpen(true)}
+              className="mt-4 rounded-lg bg-amber-900 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 dark:bg-amber-700 dark:hover:bg-amber-600"
+            >
+              Create your first project
+            </button>
+          </div>
         ) : (
           <p className="mt-2 text-xs text-cns-muted">
             Topology list is scoped to the selected project. Switch projects to see other labs.
@@ -315,6 +329,13 @@ export function DashboardPage() {
         ) : (
           <p className="mt-2 text-xs text-cns-muted">Loading metrics…</p>
         )}
+        {metrics && metrics.total_deployments === 0 ? (
+          <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50/80 px-4 py-3 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950/50 dark:text-zinc-300">
+            <span className="font-semibold text-zinc-900 dark:text-zinc-100">No deployments yet</span> across your
+            workspaces. Open a topology from the list below and use <strong className="font-semibold">Deploy to runtime</strong>{' '}
+            when you are ready.
+          </div>
+        ) : null}
         {metrics && metrics.latest_events.length > 0 ? (
           <div className="mt-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-cns-label">Recent deployment events</h3>
@@ -392,9 +413,34 @@ export function DashboardPage() {
         {listErr ? (
           <p className="p-4 text-sm text-red-600 dark:text-red-400">{listErr}</p>
         ) : topologies.length === 0 ? (
-          <p className="p-6 text-sm text-cns-muted">
-            No topologies yet — create a blank lab or use a template, or use the REST API.
-          </p>
+          <div className="p-8 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-zinc-100 text-2xl dark:bg-zinc-800">
+              ◇
+            </div>
+            <h3 className="mt-4 text-base font-semibold text-zinc-900 dark:text-zinc-50">No topologies in this project</h3>
+            <p className="mx-auto mt-2 max-w-md text-sm text-cns-muted">
+              Create a blank lab from scratch or start from a template. Topologies are saved graphs you can deploy to the
+              Docker runtime.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setBlankOpen(true)}
+                disabled={!selectedProjectId}
+                className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+              >
+                Create blank topology
+              </button>
+              <button
+                type="button"
+                onClick={() => void onCreateFromTemplate()}
+                disabled={templateLoading || !selectedProjectId}
+                className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                {templateLoading ? 'Creating…' : 'Create from template'}
+              </button>
+            </div>
+          </div>
         ) : (
           <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
             {topologies.map((t) => (

@@ -7,6 +7,7 @@ import type { ProjectResponse } from '../api/projects';
 import { createDemoTopology, deleteTopology, listTopologies } from '../api/topologies';
 import { CreateBlankTopologyModal } from '../components/CreateBlankTopologyModal';
 import { CreateProjectModal } from '../components/CreateProjectModal';
+import { ProjectMembersPanel } from '../components/ProjectMembersPanel';
 import { Spinner } from '../components/Spinner';
 import { usePolling } from '../hooks/usePolling';
 import type { ControllerStatusResponse, HealthResponse, TopologyResponse } from '../types';
@@ -160,6 +161,9 @@ export function DashboardPage() {
     }
   }
 
+  const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
+  const projectRole = selectedProject?.my_role ?? null;
+  const viewerInProject = projectRole === 'viewer';
   const healthy = health?.status === 'ok';
 
   return (
@@ -226,6 +230,15 @@ export function DashboardPage() {
             New project
           </button>
         </div>
+        {projects.length > 0 && selectedProjectId ? (
+          <div className="mt-4">
+            <ProjectMembersPanel
+              projectId={selectedProjectId}
+              myRole={projectRole ?? undefined}
+              onChanged={() => void refresh()}
+            />
+          </div>
+        ) : null}
         {projects.length === 0 ? (
           <div className="mt-4 rounded-xl border border-dashed border-amber-300/80 bg-amber-50/50 p-5 dark:border-amber-800/60 dark:bg-amber-950/20">
             <h3 className="text-sm font-semibold text-amber-950 dark:text-amber-100">No projects yet</h3>
@@ -375,7 +388,14 @@ export function DashboardPage() {
           <button
             type="button"
             onClick={() => setBlankOpen(true)}
-            disabled={!selectedProjectId}
+            disabled={!selectedProjectId || viewerInProject}
+            title={
+              viewerInProject
+                ? 'View-only access: you cannot create topologies in this project.'
+                : !selectedProjectId
+                  ? 'Select a project first.'
+                  : undefined
+            }
             className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
           >
             Create blank topology
@@ -383,7 +403,12 @@ export function DashboardPage() {
           <button
             type="button"
             onClick={() => void onCreateFromTemplate()}
-            disabled={templateLoading || !selectedProjectId}
+            disabled={templateLoading || !selectedProjectId || viewerInProject}
+            title={
+              viewerInProject
+                ? 'View-only access: you cannot create topologies in this project.'
+                : undefined
+            }
             className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 cns-disabled-control dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
           >
             {templateLoading ? 'Creating…' : 'Create from template'}
@@ -426,7 +451,14 @@ export function DashboardPage() {
               <button
                 type="button"
                 onClick={() => setBlankOpen(true)}
-                disabled={!selectedProjectId}
+                disabled={!selectedProjectId || viewerInProject}
+                title={
+                  viewerInProject
+                    ? 'View-only access: you cannot create topologies in this project.'
+                    : !selectedProjectId
+                      ? 'Select a project first.'
+                      : undefined
+                }
                 className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
               >
                 Create blank topology
@@ -434,7 +466,8 @@ export function DashboardPage() {
               <button
                 type="button"
                 onClick={() => void onCreateFromTemplate()}
-                disabled={templateLoading || !selectedProjectId}
+                disabled={templateLoading || !selectedProjectId || viewerInProject}
+                title={viewerInProject ? 'View-only access: you cannot create topologies in this project.' : undefined}
                 className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
               >
                 {templateLoading ? 'Creating…' : 'Create from template'}
@@ -465,8 +498,13 @@ export function DashboardPage() {
                 </Link>
                 <button
                   type="button"
-                  title="Delete topology"
-                  className="shrink-0 border-l border-zinc-200 px-3 text-xs font-medium text-red-700 hover:bg-red-50 dark:border-zinc-800 dark:text-red-400 dark:hover:bg-red-950/40"
+                  title={
+                    viewerInProject
+                      ? 'View-only access: you cannot delete topologies in this project.'
+                      : 'Delete topology'
+                  }
+                  disabled={viewerInProject}
+                  className="shrink-0 border-l border-zinc-200 px-3 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:text-red-400 dark:hover:bg-red-950/40"
                   onClick={async (e) => {
                     e.preventDefault();
                     if (

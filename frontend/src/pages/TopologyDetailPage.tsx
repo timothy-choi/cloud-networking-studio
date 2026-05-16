@@ -108,6 +108,10 @@ export function TopologyDetailPage() {
   }, [refetch, refetchEvents, refetchTraffic, refetchFailures]);
 
   const deploymentStatus = runtime?.deployment_status ?? null;
+  const viewerMode = topology?.my_role === 'viewer';
+  const viewerHint =
+    'View-only access: ask a project owner or member to deploy, edit, or delete resources.';
+  const opLocked = busy !== null || viewerMode;
   const showDestroy = Boolean(deploymentId && deployAllowsDestroy(deploymentStatus));
   const degraded = hasStoppedContainers(runtime);
   const healthTier = deriveRuntimeHealth(runtime, topology?.status ?? 'draft');
@@ -274,7 +278,8 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || deleteBusy}
+            disabled={opLocked || deleteBusy}
+            title={viewerMode ? viewerHint : undefined}
             onClick={() => {
               if (
                 !window.confirm(
@@ -411,15 +416,17 @@ export function TopologyDetailPage() {
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={busy !== null || !deployReadiness.deployable}
+            disabled={opLocked || !deployReadiness.deployable}
             title={
-              busy !== null
-                ? 'Wait for the current action to finish.'
-                : !deployReadiness.deployable
-                  ? deployReadiness.blockingReasons.join(' ')
-                  : deployReadiness.warnings.length > 0
-                    ? 'Deploy allowed — review warnings above.'
-                    : undefined
+              viewerMode
+                ? viewerHint
+                : busy !== null
+                  ? 'Wait for the current action to finish.'
+                  : !deployReadiness.deployable
+                    ? deployReadiness.blockingReasons.join(' ')
+                    : deployReadiness.warnings.length > 0
+                      ? 'Deploy allowed — review warnings above.'
+                      : undefined
             }
             onClick={() =>
               wrap('deploy', async () => {
@@ -441,13 +448,15 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !hostTarget}
+            disabled={opLocked || !hostTarget}
             title={
-              busy !== null
-                ? 'Wait for the current action to finish.'
-                : !hostTarget
-                  ? 'Need at least two nodes with a link for traffic tests.'
-                  : undefined
+              viewerMode
+                ? viewerHint
+                : busy !== null
+                  ? 'Wait for the current action to finish.'
+                  : !hostTarget
+                    ? 'Need at least two nodes with a link for traffic tests.'
+                    : undefined
             }
             onClick={() =>
               wrap('ping', async () => {
@@ -464,13 +473,15 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !hostTarget}
+            disabled={opLocked || !hostTarget}
             title={
-              busy !== null
-                ? 'Wait for the current action to finish.'
-                : !hostTarget
-                  ? 'Need at least two nodes for HTTP source/target.'
-                  : undefined
+              viewerMode
+                ? viewerHint
+                : busy !== null
+                  ? 'Wait for the current action to finish.'
+                  : !hostTarget
+                    ? 'Need at least two nodes for HTTP source/target.'
+                    : undefined
             }
             onClick={() =>
               wrap('http', async () => {
@@ -488,13 +499,15 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !serviceNode}
+            disabled={opLocked || !serviceNode}
             title={
-              busy !== null
-                ? 'Wait for the current action to finish.'
-                : !serviceNode
-                  ? 'Need a workload node to stop.'
-                  : undefined
+              viewerMode
+                ? viewerHint
+                : busy !== null
+                  ? 'Wait for the current action to finish.'
+                  : !serviceNode
+                    ? 'Need a workload node to stop.'
+                    : undefined
             }
             onClick={() =>
               wrap('stop', async () => {
@@ -510,13 +523,15 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !deploymentId}
+            disabled={opLocked || !deploymentId}
             title={
-              busy !== null
-                ? 'Wait for the current action to finish.'
-                : !deploymentId
-                  ? 'Deploy the topology first so there is an active deployment.'
-                  : undefined
+              viewerMode
+                ? viewerHint
+                : busy !== null
+                  ? 'Wait for the current action to finish.'
+                  : !deploymentId
+                    ? 'Deploy the topology first so there is an active deployment.'
+                    : undefined
             }
             onClick={() =>
               wrap('reconcile', async () => {
@@ -529,15 +544,17 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !deploymentId}
+            disabled={opLocked || !deploymentId}
             title={
-              busy !== null
-                ? 'Wait for the current action to finish.'
-                : !deploymentId
-                  ? 'Deploy the topology first — heal applies to the latest deployment.'
-                  : degraded
-                    ? 'Runs orchestrator heal — recommended when workloads are stopped.'
-                    : undefined
+              viewerMode
+                ? viewerHint
+                : busy !== null
+                  ? 'Wait for the current action to finish.'
+                  : !deploymentId
+                    ? 'Deploy the topology first — heal applies to the latest deployment.'
+                    : degraded
+                      ? 'Runs orchestrator heal — recommended when workloads are stopped.'
+                      : undefined
             }
             onClick={() =>
               wrap('heal', async () => {
@@ -555,8 +572,8 @@ export function TopologyDetailPage() {
           {showDestroy && deploymentId && (
             <button
               type="button"
-              disabled={busy !== null}
-              title={busy !== null ? 'Wait for the current action to finish.' : undefined}
+              disabled={opLocked}
+              title={viewerMode ? viewerHint : busy !== null ? 'Wait for the current action to finish.' : undefined}
               onClick={() =>
                 wrap('destroy', async () => {
                   await destroyDeployment(deploymentId);
@@ -584,7 +601,8 @@ export function TopologyDetailPage() {
             </p>
             <button
               type="button"
-              disabled={busy !== null || !deployReadiness.deployable}
+              disabled={opLocked || !deployReadiness.deployable}
+              title={viewerMode ? viewerHint : undefined}
               onClick={() =>
                 wrap('deploy-retry', async () => {
                   await deployTopology(id);
@@ -680,7 +698,7 @@ export function TopologyDetailPage() {
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={busy !== null || !canDirectedTraffic}
+            disabled={opLocked || !canDirectedTraffic}
             title={!canDirectedTraffic ? 'Pick two different nodes as source and target.' : undefined}
             onClick={() =>
               wrap('ping-sel', async () => {
@@ -693,7 +711,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !canDirectedTraffic}
+            disabled={opLocked || !canDirectedTraffic}
             title={!canDirectedTraffic ? 'Pick two different nodes as source and target.' : undefined}
             onClick={() =>
               wrap('http-sel', async () => {
@@ -711,7 +729,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !routedRoles.host || !routedRoles.router}
+            disabled={opLocked || !routedRoles.host || !routedRoles.router}
             onClick={() =>
               wrap('ping-host-router', async () => {
                 await runPingTest(id, {
@@ -727,7 +745,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !routedRoles.host || !routedRoles.router}
+            disabled={opLocked || !routedRoles.host || !routedRoles.router}
             onClick={() =>
               wrap('ping-router-host', async () => {
                 await runPingTest(id, {
@@ -743,7 +761,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !routedRoles.router || !routedRoles.service}
+            disabled={opLocked || !routedRoles.router || !routedRoles.service}
             onClick={() =>
               wrap('ping-router-svc', async () => {
                 await runPingTest(id, {
@@ -759,7 +777,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !routedRoles.host || !routedRoles.service}
+            disabled={opLocked || !routedRoles.host || !routedRoles.service}
             onClick={() =>
               wrap('routed-ping', async () => {
                 await runPingTest(id, {
@@ -775,7 +793,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !routedRoles.host || !routedRoles.service}
+            disabled={opLocked || !routedRoles.host || !routedRoles.service}
             onClick={() =>
               wrap('routed-http', async () => {
                 await runHttpTest(id, {
@@ -792,7 +810,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !routedRoles.service || !routedRoles.host}
+            disabled={opLocked || !routedRoles.service || !routedRoles.host}
             onClick={() =>
               wrap('ping-svc-host', async () => {
                 await runPingTest(id, {
@@ -808,7 +826,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={busy !== null || !routedRoles.router || !deploymentId}
+            disabled={opLocked || !routedRoles.router || !deploymentId}
             title={
               !deploymentId
                 ? 'Deploy first so the router container exists.'
@@ -854,6 +872,7 @@ export function TopologyDetailPage() {
             runtime={runtime}
             controllerBusy={busy}
             globalBusy={busy !== null}
+            readOnlyTopology={viewerMode}
             onRefresh={refreshLive}
           />
         </div>

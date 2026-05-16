@@ -139,10 +139,10 @@ Removes the VPC, instance, EIP, and related resources. **Data loss:** anything o
 | `vpc_id` | VPC for the stack |
 | `public_url` | `http://<public_ip>` |
 | `sslip_host` | `<public_ip>.sslip.io` hostname |
-| `stack_base_url_sslip` | `https://<public_ip>.sslip.io` — optional HTTPS origin (ACME on sslip can be flaky) |
-| `stack_base_url_sslip_http` | `http://<public_ip>.sslip.io` — **`CNS_BASE_URL`** for **production + ephemeral** smoke (`deploy-production.yml` / ephemeral) |
-| `api_base_url_sslip` | `https://<public_ip>.sslip.io/api` — use with **`VERCEL_VITE_API_BASE_URL`** when serving HTTPS API from EC2 |
-| `api_base_url_sslip_http` | `http://<public_ip>.sslip.io/api` — default **`VITE_API_BASE_URL`** in CI when **`VERCEL_VITE_API_BASE_URL`** unset (HTTP API; **mixed content** if Vercel page is HTTPS — set the secret for real HTTPS API). |
+| `stack_base_url_sslip` | `https://<public_ip>.sslip.io` — production API/UI origin after ACME (see **`deploy/Caddyfile.sslip`** + Compose **`caddy_data`/`caddy_config`**) |
+| `stack_base_url_sslip_http` | `http://<public_ip>.sslip.io` — **`CNS_BASE_URL`** for **HTTP** smoke (`deploy-production.yml` / ephemeral) without following redirects |
+| `api_base_url_sslip` | `https://<public_ip>.sslip.io/api` — default **`VITE_API_BASE_URL`** in **`deploy-production.yml`** when **`VERCEL_VITE_API_BASE_URL`** is unset |
+| `api_base_url_sslip_http` | `http://<public_ip>.sslip.io/api` — HTTP API base for smoke and debugging |
 | `ssh_command` | Example `ssh` line (adjust key path) |
 | `instance_id` | EC2 instance ID for support / debugging |
 | `rds_address` | RDS hostname when `rds_enabled` (else empty); use in `DATABASE_URL` on EC2 |

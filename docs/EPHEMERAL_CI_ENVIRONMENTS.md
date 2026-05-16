@@ -11,7 +11,7 @@ The workflow **`.github/workflows/ephemeral-infra-smoke.yml`** provisions a **sh
 | **Trigger** | `push` to `main`, `workflow_dispatch` | `pull_request`, `workflow_dispatch` |
 | **Terraform state** | **S3**, fixed key (default `…/prod/terraform.tfstate`) | **S3**, **unique** key `cloud-networking-studio/ephemeral/<run_id>/terraform.tfstate` |
 | **`terraform destroy`** | **Never** — EC2/VPC/EIP stay for the next deploy | **`always()`** after smoke |
-| **EC2 `.env`** | **HTTP-only** Caddy (**`Caddyfile.prod`**, **`CNS_CADDY_AUTO_HTTPS=off`**, **`CNS_CADDY_SITE_ADDRESS=:80`**) + secrets (same pattern as ephemeral until HTTPS on sslip is polished) | Generated on each run (random Postgres password + **HTTP-only** Caddy vars) |
+| **EC2 `.env`** | **HTTPS** Caddy on sslip (**`Caddyfile.sslip`**, **`CNS_CADDY_AUTO_HTTPS=on`**, **`CNS_CADDY_SITE_ADDRESS=<EIP>.sslip.io`**, persistent **`caddy_data`/`caddy_config`**) + secrets | **HTTP-only** Caddy (**`Caddyfile.prod`**, **`CNS_CADDY_AUTO_HTTPS=off`**, **`CNS_CADDY_SITE_ADDRESS=:80`**) + secrets |
 | **Compose directory** | `~/cloud-networking-studio` | `~/cloud-networking-studio-ephemeral` (fresh clone) |
 | **SSH ingress (22)** | Secret **`TF_VAR_SSH_ALLOWED_CIDR`** (often **`MY_IP/32`**) | **`TF_VAR_ssh_allowed_cidr` = `0.0.0.0/0`** for GitHub-hosted runners |
 | **Vercel** | Yes — after EC2 smoke | **No** — no Vercel secrets required |

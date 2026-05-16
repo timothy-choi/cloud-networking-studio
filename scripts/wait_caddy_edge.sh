@@ -2,6 +2,8 @@
 # Wait until Caddy serves both the SPA (/) and the API (/api/health) on the public base URL.
 # Usage: wait_caddy_edge.sh <base_url> [attempts=30] [sleep_seconds=2] [api_body_outfile]
 #
+# Optional env: CNS_CURL_CONNECT_TIMEOUT, CNS_CURL_MAX_TIME, CNS_CURL_RETRIES (inner GET retries per attempt).
+#
 # Exits 0 when GET / returns 200 and GET /api/health returns 200 with JSON containing .status.
 # Exits 1 otherwise. Redirects (3xx) are never accepted — curl is invoked without -L.
 
@@ -23,6 +25,11 @@ ATTEMPTS="${2:-30}"
 SLEEP="${3:-2}"
 API_OUT="${4:-}"
 
+# Longer defaults help sslip.io / slow DNS; override with CNS_CURL_CONNECT_TIMEOUT / CNS_CURL_MAX_TIME.
+CURL_CT="${CNS_CURL_CONNECT_TIMEOUT:-25}"
+CURL_MT="${CNS_CURL_MAX_TIME:-60}"
+GET_RETRIES="${CNS_CURL_RETRIES:-4}"
+
 ROOT_TMP="$(mktemp)"
 API_TMP="$(mktemp)"
 trap 'rm -f "$ROOT_TMP" "$API_TMP"' EXIT
@@ -32,8 +39,21 @@ echo "wait_caddy_edge: ${BASE} (up to ${ATTEMPTS} attempts, ${SLEEP}s apart) …
 REDIR_HINTED=0
 for i in $(seq 1 "$ATTEMPTS"); do
   # Do not follow redirects — smoke requires 200 from Caddy, not 308 to HTTPS.
-  code_root="$(curl -sS -o "$ROOT_TMP" -w '%{http_code}' --connect-timeout 5 --max-time 20 "${BASE}/" 2>/dev/null || true)"
-  code_api="$(curl -sS -o "$API_TMP" -w '%{http_code}' --connect-timeout 5 --max-time 20 "${BASE}/api/health" 2>/dev/null || true)"
+  # Inner retries help flaky DNS (e.g. sslip.io) without shortening outer attempt budget.
+  code_root="000"
+  for _r in $(seq 1 "$GET_RETRIES"); do
+    code_root="$(curl -sS -o "$ROOT_TMP" -w '%{http_code}' --connect-timeout "$CURL_CT" --max-time "$CURL_MT" "${BASE}/" 2>/dev/null || true)"
+    [[ "$code_root" == "200" ]] && break
+    sleep 2
+  done
+  code_api="000"
+  for _r in $(seq 1 "$GET_RETRIES"); do
+    code_api="$(curl -sS -o "$API_TMP" -w '%{http_code}' --connect-timeout "$CURL_CT" --max-time "$CURL_MT" "${BASE}/api/health" 2>/dev/null || true)"
+    if [[ "$code_api" == "200" ]] && jq -e '.status' "$API_TMP" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
 
   if [[ "$REDIR_HINTED" -eq 0 ]] && [[ "$code_root" =~ ^3[0-9][0-9]$ || "$code_api" =~ ^3[0-9][0-9]$ ]]; then
     REDIR_HINTED=1

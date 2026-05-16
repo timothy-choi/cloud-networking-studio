@@ -31,7 +31,7 @@ After **`terraform apply`**, the job waits until **TCP port 22** is reachable, t
 1. **Terraform apply** (single `run:` block): **`backend.ci.hcl`**, **`terraform init`**, **`validate`**, **`plan`**, **`apply`**, **`terraform output`** (including **`stack_base_url_sslip_http`** for smoke).
 2. **Wait for SSH** (poll, ~5 min max).
 3. **SSH:** **`cloud-init`**, **Docker** if needed, clone/checkout, **`.env`** (heredoc), **`docker compose … up`** (logs only on **config** / **up** failure).
-4. **Smoke:** **`prod_smoke_test.sh`** with **`CNS_BASE_URL`** = **`stack_base_url_sslip_http`**.
+4. **Smoke:** **`prod_smoke_test.sh`** with **`CNS_BASE_URL`** = **`stack_base_url_sslip_http`**. The script waits on **`/`** and **`/api/health`** (with longer curl timeouts and inner retries for flaky **sslip.io** DNS), then **Step 34** flows: **register/login** → **project** → **Bearer** topology create/list; **`AUTH_SMOKE=0`** limits to health-only.
 5. **Optional heavy smoke** (`continue-on-error: true`).
 6. **`terraform destroy`** with **`if: always()`**, same state key as apply.
 

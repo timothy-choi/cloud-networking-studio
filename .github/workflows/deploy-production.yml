@@ -424,10 +424,10 @@ jobs:
           echo "AUTH_SMOKE=$AUTH_SMOKE"
           bash scripts/prod_smoke_test.sh
 
-      - name: Verify HTTP API (/api/health, follow redirect to HTTPS)
+      - name: Verify HTTP API (/api/health)
         run: |
           set -euo pipefail
-          curl -vL --connect-timeout 20 --max-time 90 "${{ steps.prod_api.outputs.http_origin }}/api/health" | jq -e '.status' >/dev/null
+          curl -sfS --connect-timeout 20 --max-time 90 "${{ steps.prod_api.outputs.http_origin }}/api/health" | jq -e '.status' >/dev/null
 
       # TODO: Re-enable strict HTTPS verification after Let's Encrypt rate limit clears and Caddy cert persistence is confirmed.
       - name: Verify HTTPS API (/api/health, best effort while LE rate-limited)

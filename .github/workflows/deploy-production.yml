@@ -402,9 +402,11 @@ jobs:
             echo "=== docker compose logs caddy (tail=80) ==="
             run_compose "${C_ARGS[@]}" logs caddy --tail=80 || true
 
-      - name: Production smoke (EC2 via HTTPS API host)
+      # TEMPORARY: smoke uses HTTP while api.cloudnetstudio.com HTTPS is Let's Encrypt rate-limited (curl 000 on TLS).
+      # Switch CNS_BASE_URL back to the prod_api https_origin output after LE clears and Caddy caddy_data/caddy_config are confirmed healthy.
+      - name: Production smoke (EC2 API host — HTTP while LE rate-limited)
         env:
-          CNS_BASE_URL: ${{ steps.prod_api.outputs.https_origin }}
+          CNS_BASE_URL: ${{ steps.prod_api.outputs.http_origin }}
           CNS_SMOKE_API_ONLY: "1"
           CNS_WAIT_ATTEMPTS: "90"
         run: bash scripts/prod_smoke_test.sh

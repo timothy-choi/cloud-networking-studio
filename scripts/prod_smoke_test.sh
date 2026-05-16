@@ -69,14 +69,25 @@ need_cmd() {
 need_cmd curl
 need_cmd jq
 
+# TODO: Remove LE HTTP smoke fallback after Let's Encrypt cert is available and persistent Caddy volumes are verified.
+# Temporary: production workflow/env can still surface https://api.cloudnetstudio.com while ACME is rate-limited (curl 000).
+_cns_smoke_base="${CNS_BASE_URL:-}"
+_cns_smoke_base="${_cns_smoke_base%/}"
+if [[ -z "${_cns_smoke_base}" || "${_cns_smoke_base}" == "https://api.cloudnetstudio.com" ]]; then
+  export CNS_BASE_URL="http://api.cloudnetstudio.com"
+  export CNS_SMOKE_API_ONLY="1"
+fi
+
 BASE="${CNS_BASE_URL:-http://127.0.0.1}"
 BASE="${BASE%/}"
-# CNS_BASE_URL is taken only from the environment (callers set it); this script never rewrites it to HTTPS.
 
 API_ONLY=0
 if [[ "${CNS_SMOKE_API_ONLY:-0}" == "1" || "${CNS_SMOKE_API_ONLY:-}" == "true" ]]; then
   API_ONLY=1
 fi
+
+echo "FINAL_CNS_BASE_URL=${BASE}"
+echo "FINAL_CNS_SMOKE_API_ONLY=${CNS_SMOKE_API_ONLY:-}"
 
 # Smoke does not use curl -L: 3xx to HTTPS would fail the edge wait. Full-stack sslip should use http://…
 # API-only mode (CNS_SMOKE_API_ONLY=1) targets a dedicated HTTPS API host — HTTPS without warning is expected.

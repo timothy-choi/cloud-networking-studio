@@ -30,6 +30,7 @@ def import_all_orm_modules() -> None:
     import app.models.deployment  # noqa: F401
     import app.models.failure_injection  # noqa: F401
     import app.models.project  # noqa: F401
+    import app.models.project_membership  # noqa: F401
     import app.models.topology  # noqa: F401
     import app.models.traffic_test  # noqa: F401
     import app.models.user  # noqa: F401
@@ -44,7 +45,7 @@ def verify_core_schema(engine: Engine) -> None:
     """
     insp = inspect(engine)
     tables = set(insp.get_table_names())
-    required = ("users", "projects", "topologies")
+    required = ("users", "projects", "project_memberships", "topologies")
     missing_tables = [t for t in required if t not in tables]
     if missing_tables:
         raise RuntimeError(

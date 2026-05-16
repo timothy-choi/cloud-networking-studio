@@ -25,4 +25,4 @@ def get_metrics_summary(
     user: User = Depends(get_current_user),
 ) -> MetricsSummaryResponse:
     """Return topology/deployment/traffic/failure counters and recent deployment events."""
-    return build_metrics_summary(db, owner_user_id=user.id)
+    return build_metrics_summary(db, user_id=user.id)

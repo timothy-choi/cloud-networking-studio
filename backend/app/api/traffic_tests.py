@@ -16,7 +16,7 @@ from app.schemas.traffic_test import (
     TrafficTestResponse,
 )
 from app.services import traffic_test_service as tt_svc
-from app.services.access_control import get_topology_for_user, get_traffic_test_for_user
+from app.services.access_control import get_topology_for_user, get_traffic_test_for_user, require_topology_editor
 
 router = APIRouter(tags=["traffic-tests"])
 
@@ -33,7 +33,7 @@ def create_ping_traffic_test(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> TrafficTestResponse:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
     try:
         tt = tt_svc.run_ping_test(
             db,
@@ -68,7 +68,7 @@ def create_http_traffic_test(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> TrafficTestResponse:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
     try:
         tt = tt_svc.run_http_test(
             db,

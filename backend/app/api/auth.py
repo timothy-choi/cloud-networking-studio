@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models.project import Project
+from app.models.project_membership import ProjectMembership
 from app.models.user import User
 from app.schemas.auth import LoginRequest, MeResponse, RegisterRequest, TokenResponse, UserPublic
 from app.api.deps import require_bearer_user
@@ -85,13 +86,14 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> TokenRespo
     )
     db.add(user)
     db.flush()
-    db.add(
-        Project(
-            owner_user_id=user.id,
-            name=_DEFAULT_WORKSPACE,
-            description="Your first workspace.",
-        )
+    proj = Project(
+        owner_user_id=user.id,
+        name=_DEFAULT_WORKSPACE,
+        description="Your first workspace.",
     )
+    db.add(proj)
+    db.flush()
+    db.add(ProjectMembership(project_id=proj.id, user_id=user.id, role="owner"))
     db.commit()
     db.refresh(user)
     token = create_access_token(user_id=user.id, email=user.email)

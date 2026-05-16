@@ -97,6 +97,10 @@ class TopologyResponse(BaseModel):
         default=None,
         description="Set on list responses; number of persisted links.",
     )
+    my_role: str | None = Field(
+        default=None,
+        description="Current user's role in the topology's project (owner, member, viewer).",
+    )
 
 
 class TopologyNodeCreate(BaseModel):

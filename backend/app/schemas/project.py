@@ -27,3 +27,7 @@ class ProjectResponse(BaseModel):
     description: str | None
     created_at: datetime
     updated_at: datetime
+    my_role: str | None = Field(
+        default=None,
+        description="Current user's role in this project when returned from authenticated routes.",
+    )

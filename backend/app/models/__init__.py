@@ -7,6 +7,7 @@ Application startup and tests should call ``import_all_orm_modules()`` from
 
 # Users and projects before topology FKs.
 from app.models.project import Project
+from app.models.project_membership import ProjectMembership
 from app.models.user import User
 
 # Topology graph entities before deployment FKs.
@@ -40,6 +41,7 @@ __all__ = [
     "FailureInjectionStatus",
     "NodeType",
     "Project",
+    "ProjectMembership",
     "Topology",
     "TopologyLink",
     "TopologyNode",

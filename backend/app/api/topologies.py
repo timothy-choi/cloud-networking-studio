@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.project import Project
+from app.models.project_membership import ProjectMembership
 from app.models.topology import (
     Topology,
     TopologyLink,
@@ -30,8 +31,11 @@ from app.schemas.topology import (
 )
 from app.services.access_control import (
     default_project_for_user,
-    get_owned_project,
+    get_project_for_member,
+    get_project_role_for_topology,
     get_topology_for_user,
+    require_project_editor,
+    require_topology_editor,
 )
 
 router = APIRouter(prefix="/topologies", tags=["topologies"])
@@ -69,8 +73,8 @@ def create_topology(
     body: TopologyCreate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> Topology:
-    """Create and persist a topology definition inside a project you own."""
+) -> TopologyResponse:
+    """Create and persist a topology definition inside a project you can edit."""
     pid = body.project_id
     if pid is None:
         proj = default_project_for_user(db, user)
@@ -80,8 +84,7 @@ def create_topology(
                 detail="Create a project first, or pass project_id.",
             )
         pid = proj.id
-    else:
-        get_owned_project(db, user, pid)
+    require_project_editor(db, user, pid)
 
     topo = Topology(
         project_id=pid,
@@ -95,7 +98,8 @@ def create_topology(
     db.add(topo)
     db.commit()
     db.refresh(topo)
-    return topo
+    role = get_project_role_for_topology(db, user, topo.id)
+    return TopologyResponse.model_validate(topo).model_copy(update={"my_role": role})
 
 
 @router.get(
@@ -108,26 +112,32 @@ def list_topologies(
     user: User = Depends(get_current_user),
     project_id: UUID | None = Query(
         default=None,
-        description="When set, only topologies in this project (must be owned by you).",
+        description="When set, only topologies in this project (must be a member).",
     ),
 ) -> list[TopologyResponse]:
-    """List topologies for your projects, newest first, with node/link counts."""
+    """List topologies for projects you belong to, newest first, with node/link counts."""
     if project_id is not None:
-        get_owned_project(db, user, project_id)
+        get_project_for_member(db, user, project_id)
     stmt = (
-        select(Topology)
+        select(Topology, ProjectMembership.role)
         .join(Project, Topology.project_id == Project.id)
-        .where(Project.owner_user_id == user.id)
+        .join(
+            ProjectMembership,
+            (ProjectMembership.project_id == Project.id)
+            & (ProjectMembership.user_id == user.id),
+        )
     )
     if project_id is not None:
         stmt = stmt.where(Topology.project_id == project_id)
     stmt = stmt.order_by(Topology.created_at.desc())
-    rows = list(db.scalars(stmt).all())
+    rows = list(db.execute(stmt).all())
     out: list[TopologyResponse] = []
-    for topo in rows:
+    for topo, role in rows:
         nc, lc = _counts_for_topology(db, topo.id)
         out.append(
-            TopologyResponse.model_validate(topo).model_copy(update={"node_count": nc, "link_count": lc}),
+            TopologyResponse.model_validate(topo).model_copy(
+                update={"node_count": nc, "link_count": lc, "my_role": role},
+            ),
         )
     return out
 
@@ -144,7 +154,10 @@ def get_topology(
 ) -> TopologyResponse:
     topo = get_topology_for_user(db, user, topology_id)
     nc, lc = _counts_for_topology(db, topology_id)
-    return TopologyResponse.model_validate(topo).model_copy(update={"node_count": nc, "link_count": lc})
+    role = get_project_role_for_topology(db, user, topology_id)
+    return TopologyResponse.model_validate(topo).model_copy(
+        update={"node_count": nc, "link_count": lc, "my_role": role},
+    )
 
 
 @router.delete(
@@ -157,7 +170,7 @@ def delete_topology(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Response:
-    topo = get_topology_for_user(db, user, topology_id)
+    topo = require_topology_editor(db, user, topology_id)
     db.delete(topo)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -175,7 +188,7 @@ def create_topology_node(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> TopologyNode:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
     node = TopologyNode(
         topology_id=topology_id,
         name=body.name,
@@ -217,7 +230,7 @@ def create_topology_link(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> TopologyLink:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
 
     src = db.get(TopologyNode, body.source_node_id)
     tgt = db.get(TopologyNode, body.target_node_id)
@@ -275,8 +288,8 @@ def patch_topology(
     body: TopologyUpdate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> Topology:
-    topo = get_topology_for_user(db, user, topology_id)
+) -> TopologyResponse:
+    topo = require_topology_editor(db, user, topology_id)
     data = body.model_dump(exclude_unset=True)
     if "config" in data:
         topo.config = _merge_json_dict(topo.config, data.pop("config"))
@@ -284,7 +297,11 @@ def patch_topology(
         setattr(topo, key, val)
     db.commit()
     db.refresh(topo)
-    return topo
+    nc, lc = _counts_for_topology(db, topology_id)
+    role = get_project_role_for_topology(db, user, topology_id)
+    return TopologyResponse.model_validate(topo).model_copy(
+        update={"node_count": nc, "link_count": lc, "my_role": role},
+    )
 
 
 @router.patch(
@@ -299,7 +316,7 @@ def patch_topology_node(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> TopologyNode:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
     node = db.get(TopologyNode, node_id)
     if node is None or node.topology_id != topology_id:
         raise HTTPException(
@@ -327,7 +344,7 @@ def delete_topology_node(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Response:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
     node = db.get(TopologyNode, node_id)
     if node is None or node.topology_id != topology_id:
         raise HTTPException(
@@ -351,7 +368,7 @@ def patch_topology_link(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> TopologyLink:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
     link = db.get(TopologyLink, link_id)
     if link is None or link.topology_id != topology_id:
         raise HTTPException(
@@ -379,7 +396,7 @@ def delete_topology_link(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Response:
-    get_topology_for_user(db, user, topology_id)
+    require_topology_editor(db, user, topology_id)
     link = db.get(TopologyLink, link_id)
     if link is None or link.topology_id != topology_id:
         raise HTTPException(

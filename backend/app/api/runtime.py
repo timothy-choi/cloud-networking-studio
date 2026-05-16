@@ -16,6 +16,7 @@ from app.services.access_control import (
     get_deployment_for_user,
     get_node_for_user,
     get_topology_for_user,
+    require_deployment_editor,
 )
 from app.schemas.runtime import (
     ReconciliationResponse,
@@ -157,7 +158,7 @@ def reconcile_deployment_route(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ReconciliationResponse:
-    get_deployment_for_user(db, user, deployment_id)
+    require_deployment_editor(db, user, deployment_id)
     try:
         dep, result = runtime_svc.reconcile_deployment(db, deployment_id)
     except ValueError:

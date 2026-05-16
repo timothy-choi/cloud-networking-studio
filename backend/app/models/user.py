@@ -13,6 +13,7 @@ from app.db.session import Base
 
 if TYPE_CHECKING:
     from app.models.project import Project
+    from app.models.project_membership import ProjectMembership
 
 
 def _utc_now() -> datetime:
@@ -36,6 +37,11 @@ class User(Base):
 
     projects: Mapped[list["Project"]] = relationship(
         back_populates="owner",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    project_memberships: Mapped[list["ProjectMembership"]] = relationship(
+        back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )

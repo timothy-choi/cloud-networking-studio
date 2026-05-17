@@ -133,6 +133,8 @@ def run_ping_test(
         }
         if deployment_id:
             body["deployment_id"] = str(deployment_id)
+        if topo.project_id is not None:
+            body["project_id"] = str(topo.project_id)
         try:
             data = GoRunnerClient.from_settings().post_traffic_test(body)
         except Exception as exc:
@@ -328,6 +330,8 @@ def run_http_test(
         }
         if deployment_id:
             body["deployment_id"] = str(deployment_id)
+        if topo.project_id is not None:
+            body["project_id"] = str(topo.project_id)
         try:
             data = GoRunnerClient.from_settings().post_traffic_test(body)
         except Exception as exc:

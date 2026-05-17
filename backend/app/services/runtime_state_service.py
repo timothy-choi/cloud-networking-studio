@@ -231,7 +231,11 @@ def build_node_logs(
     latest = latest_deployment_for_topology(session, node.topology_id)
     dep_id = latest.id if latest else None
     text = provider.fetch_logs_for_node(
-        node.topology_id, node_id, tail, deployment_id=dep_id
+        node.topology_id,
+        node_id,
+        tail,
+        deployment_id=dep_id,
+        project_id=topo.project_id,
     )
     if text is None:
         return None

@@ -361,8 +361,14 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
         )
         return events
 
-    def destroy(self, topology_id: UUID, deployment_id: UUID) -> list[ProviderEvent]:
-        _ = deployment_id
+    def destroy(
+        self,
+        topology_id: UUID,
+        deployment_id: UUID,
+        *,
+        project_id: UUID | None = None,
+    ) -> list[ProviderEvent]:
+        _ = (deployment_id, project_id)
         return [
             (
                 DeploymentEventLevel.INFO,
@@ -381,8 +387,9 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
         tail: int,
         *,
         deployment_id: UUID | None = None,
+        project_id: UUID | None = None,
     ) -> str | None:
-        _ = (topology_id, node_id, tail, deployment_id)
+        _ = (topology_id, node_id, tail, deployment_id, project_id)
         return None
 
     def fetch_stats_for_node(
@@ -931,10 +938,16 @@ class DockerRuntimeProvider(RuntimeProvider):
 
         return events
 
-    def destroy(self, topology_id: UUID, deployment_id: UUID) -> list[ProviderEvent]:
-        _ = deployment_id
-        events: list[ProviderEvent] = []
+    def destroy(
+        self,
+        topology_id: UUID,
+        deployment_id: UUID,
+        *,
+        project_id: UUID | None = None,
+    ) -> list[ProviderEvent]:
+        _ = (deployment_id, project_id)
         tid = str(topology_id)
+        events: list[ProviderEvent] = []
 
         containers = self._client.containers.list(
             all=True,
@@ -1006,8 +1019,9 @@ class DockerRuntimeProvider(RuntimeProvider):
         tail: int,
         *,
         deployment_id: UUID | None = None,
+        project_id: UUID | None = None,
     ) -> str | None:
-        _ = deployment_id
+        _ = (deployment_id, project_id)
         ctr = _find_managed_container(self._client, topology_id, node_id)
         if ctr is None:
             return None

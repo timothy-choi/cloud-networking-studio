@@ -96,7 +96,7 @@ def test_go_executor_deploy_calls_runner_client(go_executor_no_fake_docker, monk
 def test_go_executor_destroy_calls_runner_client(go_executor_no_fake_docker, monkeypatch):
     calls: list[str] = []
 
-    def capture_delete(self, deployment_id, topology_id):
+    def capture_delete(self, deployment_id, topology_id, *, project_id=None):
         calls.append("delete_deployment")
         return [(DeploymentEventLevel.INFO, "stubbed runner destroy")]
 

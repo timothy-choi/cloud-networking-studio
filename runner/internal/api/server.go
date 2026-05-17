@@ -3,27 +3,52 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	docker "github.com/fsouza/go-dockerclient"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/runtime"
 	rdocker "github.com/timothy-choi/cloud-networking-studio/runner/internal/runtime/docker"
+	rk8s "github.com/timothy-choi/cloud-networking-studio/runner/internal/runtime/kubernetes"
 )
 
 // Server exposes the Go runner HTTP API.
 type Server struct {
-	cli *docker.Client
+	provider string
+	cli      *docker.Client
+	k8s      kubernetes.Interface
+	k8sCfg   *rest.Config
+	k8sCtx   string
 }
 
 func NewServer() (*Server, error) {
-	cli, err := rdocker.NewClient()
-	if err != nil {
-		return nil, err
+	prov := runtime.RuntimeProviderEnv()
+	s := &Server{provider: prov}
+	switch prov {
+	case "kubernetes":
+		cs, cfg, ctxName, err := rk8s.NewClientset()
+		if err != nil {
+			return nil, fmt.Errorf("runner kubernetes client: %w", err)
+		}
+		s.k8s, s.k8sCfg, s.k8sCtx = cs, cfg, ctxName
+	default:
+		cli, err := rdocker.NewClient()
+		if err != nil {
+			return nil, err
+		}
+		s.cli = cli
 	}
-	return &Server{cli: cli}, nil
+	return s, nil
+}
+
+func (s *Server) useKubernetes() bool {
+	return s.provider == "kubernetes"
 }
 
 // Handler returns the root HTTP handler.
@@ -59,25 +84,47 @@ func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := s.ctx(r)
 	defer cancel()
-	if s.cli == nil {
-		st := model.RuntimeStatus{
-			RuntimeProvider: "docker",
-			DockerReachable: false,
-			Status:          "degraded",
-			Message:         "docker client not initialized",
+
+	prov := s.provider
+	if prov == "" {
+		prov = "docker"
+	}
+	st := model.RuntimeStatus{
+		RuntimeProvider: prov,
+	}
+
+	if s.cli != nil {
+		_, err := s.cli.Info()
+		st.DockerReachable = err == nil
+		if err != nil {
+			st.Message = err.Error()
 		}
-		_ = ctx
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(st)
-		return
 	}
-	_, err := s.cli.Info()
-	st := model.RuntimeStatus{RuntimeProvider: "docker", DockerReachable: err == nil, Status: "ok"}
-	if err != nil {
-		st.Status = "degraded"
-		st.Message = err.Error()
+
+	if s.k8s != nil {
+		err := rk8s.ProbeCluster(ctx, s.k8s)
+		st.KubernetesReachable = err == nil
+		st.CurrentContext = s.k8sCtx
+		if err != nil && st.Message == "" {
+			st.Message = err.Error()
+		}
 	}
-	_ = ctx
+
+	switch prov {
+	case "kubernetes":
+		if st.KubernetesReachable {
+			st.Status = "ok"
+		} else {
+			st.Status = "degraded"
+		}
+	default:
+		if st.DockerReachable {
+			st.Status = "ok"
+		} else {
+			st.Status = "degraded"
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(st)
 }
@@ -94,7 +141,24 @@ func (s *Server) handlePostDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := s.ctx(r)
 	defer cancel()
-	resp := rdocker.DeploySimple(ctx, s.cli, &req)
+
+	var resp model.DeploymentResponse
+	if s.useKubernetes() {
+		if s.k8s == nil {
+			msg := "kubernetes client not initialized"
+			resp = model.DeploymentResponse{Status: "failed", RuntimeProvider: "kubernetes", Error: &msg}
+		} else {
+			resp = rk8s.Deploy(ctx, s.k8s, &req)
+		}
+	} else {
+		if s.cli == nil {
+			msg := "docker client not initialized"
+			resp = model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Error: &msg}
+		} else {
+			resp = rdocker.DeploySimple(ctx, s.cli, &req)
+		}
+	}
+
 	status := http.StatusOK
 	if resp.Error != nil {
 		status = http.StatusBadRequest
@@ -115,16 +179,37 @@ func (s *Server) handleDeleteDeploymentID(w http.ResponseWriter, r *http.Request
 		http.Error(w, "topology_id query parameter is required", http.StatusBadRequest)
 		return
 	}
+	projectID := r.URL.Query().Get("project_id")
 	ctx, cancel := s.ctx(r)
 	defer cancel()
-	events := rdocker.DestroyTopology(ctx, s.cli, topologyID)
-	resp := model.DeploymentResponse{Status: "succeeded", RuntimeProvider: "docker"}
-	for _, e := range events {
-		resp.Events = append(resp.Events, e)
+
+	var resp model.DeploymentResponse
+	if s.useKubernetes() {
+		if s.k8s == nil {
+			msg := "kubernetes client not initialized"
+			resp = model.DeploymentResponse{Status: "failed", RuntimeProvider: "kubernetes", Error: &msg}
+		} else {
+			events := rk8s.DestroyDeployment(ctx, s.k8s, topologyID, deploymentID, projectID)
+			resp = model.DeploymentResponse{Status: "succeeded", RuntimeProvider: "kubernetes"}
+			for _, e := range events {
+				resp.Events = append(resp.Events, e)
+			}
+		}
+	} else {
+		if s.cli == nil {
+			msg := "docker client not initialized"
+			resp = model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Error: &msg}
+		} else {
+			events := rdocker.DestroyTopology(ctx, s.cli, topologyID)
+			resp = model.DeploymentResponse{Status: "succeeded", RuntimeProvider: "docker"}
+			for _, e := range events {
+				resp.Events = append(resp.Events, e)
+			}
+		}
 	}
+	_ = deploymentID
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
-	_ = deploymentID
 }
 
 func (s *Server) handleGetDeploymentID(w http.ResponseWriter, r *http.Request) {
@@ -138,8 +223,25 @@ func (s *Server) handleGetDeploymentID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "topology_id query parameter is required", http.StatusBadRequest)
 		return
 	}
+	projectID := r.URL.Query().Get("project_id")
 	ctx, cancel := s.ctx(r)
 	defer cancel()
+
+	if s.useKubernetes() {
+		if s.k8s == nil {
+			http.Error(w, "kubernetes client not initialized", http.StatusInternalServerError)
+			return
+		}
+		out := rk8s.GetDeploymentStatus(ctx, s.k8s, topologyID, deploymentID, projectID)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
+		return
+	}
+
+	if s.cli == nil {
+		http.Error(w, "docker client not initialized", http.StatusInternalServerError)
+		return
+	}
 	ctrs, err := s.cli.ListContainers(docker.ListContainersOptions{
 		Context: ctx,
 		All:     true,
@@ -172,6 +274,7 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 	deploymentID := r.PathValue("id")
 	nodeID := r.URL.Query().Get("node_id")
 	topologyID := r.URL.Query().Get("topology_id")
+	projectID := r.URL.Query().Get("project_id")
 	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
 	if nodeID == "" || topologyID == "" {
 		http.Error(w, "node_id and topology_id query parameters are required", http.StatusBadRequest)
@@ -179,6 +282,28 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := s.ctx(r)
 	defer cancel()
+
+	if s.useKubernetes() {
+		if s.k8s == nil {
+			msg := "kubernetes client not initialized"
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(model.LogsResponse{DeploymentID: deploymentID, NodeID: nodeID, Error: &msg})
+			return
+		}
+		logs, err := rk8s.LogsForNode(ctx, s.k8s, topologyID, deploymentID, projectID, nodeID, int64(tail))
+		if err != nil {
+			msg := err.Error()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(model.LogsResponse{DeploymentID: deploymentID, NodeID: nodeID, Error: &msg})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(model.LogsResponse{DeploymentID: deploymentID, NodeID: nodeID, Logs: logs})
+		return
+	}
+
 	logs, err := rdocker.LogsForNode(ctx, s.cli, topologyID, nodeID, tail)
 	if err != nil {
 		msg := err.Error()
@@ -203,7 +328,18 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := s.ctx(r)
 	defer cancel()
-	resp := rdocker.RunTrafficTest(ctx, s.cli, &req)
+
+	var resp model.TrafficResponse
+	if s.useKubernetes() {
+		if s.k8s == nil || s.k8sCfg == nil {
+			msg := "kubernetes client not initialized"
+			resp = model.TrafficResponse{ExitCode: 1, Success: false, Error: &msg}
+		} else {
+			resp = rk8s.RunTrafficTest(ctx, s.k8sCfg, s.k8s, &req)
+		}
+	} else {
+		resp = rdocker.RunTrafficTest(ctx, s.cli, &req)
+	}
 	code := http.StatusOK
 	if !resp.Success && resp.Error != nil {
 		code = http.StatusBadRequest

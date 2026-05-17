@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
@@ -42,7 +43,7 @@ def _ensure_owner_membership(db: Session, *, project_id, user_id) -> None:
 
 def ensure_dev_user_and_project(db: Session) -> tuple[User, Project]:
     """Guarantee the implicit dev operator and a default project exist (AUTH_REQUIRE_LOGIN=false)."""
-    user = db.scalar(select(User).where(User.email == DEV_USER_EMAIL))
+    user = db.scalars(select(User).where(User.email == DEV_USER_EMAIL)).first()
     if user is None:
         user = User(
             email=DEV_USER_EMAIL,
@@ -50,13 +51,21 @@ def ensure_dev_user_and_project(db: Session) -> tuple[User, Project]:
             display_name=DEV_USER_DISPLAY,
         )
         db.add(user)
-        db.flush()
+        try:
+            db.flush()
+        except IntegrityError:
+            # Concurrent startup (e.g. parallel pytest workers sharing one Postgres) can
+            # pass the initial SELECT before another process inserts the same dev email.
+            db.rollback()
+            user = db.scalars(select(User).where(User.email == DEV_USER_EMAIL)).first()
+            if user is None:
+                raise
 
-    proj = db.scalar(
+    proj = db.scalars(
         select(Project)
         .where(Project.owner_user_id == user.id, Project.name == DEFAULT_PROJECT_NAME)
         .limit(1)
-    )
+    ).first()
     if proj is None:
         proj = Project(
             owner_user_id=user.id,

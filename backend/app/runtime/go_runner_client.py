@@ -123,12 +123,19 @@ class GoRunnerClient:
         return _deployment_response_to_events(r)
 
     def delete_deployment(
-        self, deployment_id: UUID, topology_id: UUID
+        self,
+        deployment_id: UUID,
+        topology_id: UUID,
+        *,
+        project_id: UUID | None = None,
     ) -> list[tuple[DeploymentEventLevel, str]]:
+        params: dict[str, str] = {"topology_id": str(topology_id)}
+        if project_id is not None:
+            params["project_id"] = str(project_id)
         with self._client() as client:
             r = client.delete(
                 f"/deployments/{deployment_id}",
-                params={"topology_id": str(topology_id)},
+                params=params,
             )
         data = _safe_json(r)
         events = _events_from_runner_payload(data.get("events"))
@@ -143,15 +150,20 @@ class GoRunnerClient:
         topology_id: UUID,
         node_id: UUID,
         tail: int,
+        *,
+        project_id: UUID | None = None,
     ) -> str | None:
+        params: dict[str, str] = {
+            "topology_id": str(topology_id),
+            "node_id": str(node_id),
+            "tail": str(tail),
+        }
+        if project_id is not None:
+            params["project_id"] = str(project_id)
         with self._client() as client:
             r = client.get(
                 f"/deployments/{deployment_id}/logs",
-                params={
-                    "topology_id": str(topology_id),
-                    "node_id": str(node_id),
-                    "tail": str(tail),
-                },
+                params=params,
             )
         data = _safe_json(r)
         if r.status_code == 404:

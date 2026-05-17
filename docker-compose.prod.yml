@@ -45,8 +45,13 @@ services:
       context: ./runner
       dockerfile: Dockerfile
     restart: unless-stopped
+    environment:
+      # docker (default) or kubernetes — see docs/KUBERNETES_RUNTIME.md for local clusters.
+      RUNTIME_PROVIDER: ${RUNTIME_PROVIDER:-docker}
+      KUBECONFIG: /root/.kube/config
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./.kubeconfig.cns:/root/.kube/config:ro
     expose:
       - "8090"
     networks: [cns]

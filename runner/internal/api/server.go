@@ -59,6 +59,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /runtime/status", s.handleRuntimeStatus)
 	mux.HandleFunc("POST /deployments", s.handlePostDeployment)
 	mux.HandleFunc("DELETE /deployments/{id}", s.handleDeleteDeploymentID)
+	mux.HandleFunc("POST /deployments/{id}/runtime/services/{service_id}/exec", s.handleRuntimeServiceExec)
+	mux.HandleFunc("POST /deployments/{id}/runtime/services/{service_id}/restart", s.handleRuntimeServiceRestart)
 	mux.HandleFunc("GET /deployments/{id}/runtime/services/{service_id}/logs", s.handleRuntimeServiceLogs)
 	mux.HandleFunc("POST /deployments/{id}/runtime/services/{service_id}/health-check", s.handleRuntimeServiceHealth)
 	mux.HandleFunc("POST /deployments/{id}/runtime/traffic-tests", s.handleRuntimeTrafficTests)

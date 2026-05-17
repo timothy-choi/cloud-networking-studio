@@ -178,3 +178,90 @@ func TestRuntimeServiceLogsKubernetesFake(t *testing.T) {
 		t.Fatalf("want 404 got %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestRuntimeServiceExecRejectedJSON(t *testing.T) {
+	s := &Server{provider: "docker", cli: nil}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /deployments/{id}/runtime/services/{service_id}/exec", s.handleRuntimeServiceExec)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/deployments/did/runtime/services/nid/exec?topology_id=t1",
+		strings.NewReader(`{"command":"rm -f /","timeout_seconds":10}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Status != "rejected" || body.Message == "" || body.Command == "" {
+		t.Fatalf("unexpected %+v", body)
+	}
+}
+
+func TestRuntimeServiceExecDockerNilClientUnsupported(t *testing.T) {
+	s := &Server{provider: "docker", cli: nil}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /deployments/{id}/runtime/services/{service_id}/exec", s.handleRuntimeServiceExec)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/deployments/did/runtime/services/nid/exec?topology_id=t1",
+		strings.NewReader(`{"command":"whoami","timeout_seconds":10}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Status != "unsupported" {
+		t.Fatalf("unexpected %+v", body)
+	}
+}
+
+func TestRuntimeServiceRestartDockerNilClient503(t *testing.T) {
+	s := &Server{provider: "docker", cli: nil}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /deployments/{id}/runtime/services/{service_id}/restart", s.handleRuntimeServiceRestart)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/deployments/did/runtime/services/nid/restart?topology_id=t1",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRuntimeServiceRestartKubernetesNilClient503(t *testing.T) {
+	s := &Server{provider: "kubernetes", k8s: nil, k8sCfg: &rest.Config{Host: "http://127.0.0.1:1"}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /deployments/{id}/runtime/services/{service_id}/restart", s.handleRuntimeServiceRestart)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/deployments/did/runtime/services/nid/restart?topology_id=t1",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 got %d %s", rec.Code, rec.Body.String())
+	}
+}

@@ -186,3 +186,31 @@ type RuntimeTrafficOpResponse struct {
 	Output    string `json:"output"`
 	LatencyMs *int64 `json:"latency_ms,omitempty"`
 }
+
+// RuntimeExecRequest is the body for POST .../runtime/services/{id}/exec.
+type RuntimeExecRequest struct {
+	Command         string `json:"command"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
+// RuntimeExecResponse is returned by the runner exec endpoint (no DB id).
+type RuntimeExecResponse struct {
+	DeploymentID    string `json:"deployment_id"`
+	ServiceID       string `json:"service_id"`
+	Command         string `json:"command"`
+	Status          string `json:"status"` // succeeded | failed | timeout | unsupported | rejected
+	ExitCode        *int   `json:"exit_code,omitempty"`
+	Stdout          string `json:"stdout"`
+	Stderr          string `json:"stderr"`
+	StartedAt       string `json:"started_at"`
+	FinishedAt      string `json:"finished_at"`
+	RuntimeProvider string `json:"runtime_provider"`
+	Message         string `json:"message,omitempty"`
+}
+
+// RuntimeRestartResponse is returned by POST .../restart.
+type RuntimeRestartResponse struct {
+	Status          string `json:"status"` // accepted | succeeded | failed | unsupported
+	Message         string `json:"message"`
+	RuntimeProvider string `json:"runtime_provider"`
+}

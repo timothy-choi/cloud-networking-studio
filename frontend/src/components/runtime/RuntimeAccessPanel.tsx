@@ -7,6 +7,12 @@ import {
   postRuntimeServiceHealth,
   postRuntimeTrafficTest,
 } from '../../api/runtimeOperations';
+import {
+  fetchRuntimeExecResults,
+  postRuntimeServiceExec,
+  postRuntimeServiceRestart,
+  type RuntimeExecResultPayload,
+} from '../../api/runtimeExec';
 import { exposeDeploymentService, unexposeDeploymentService } from '../../api/serviceExposure';
 import { Spinner } from '../Spinner';
 import type {
@@ -24,6 +30,7 @@ const TABS = [
   'op_logs',
   'op_health',
   'op_traffic',
+  'op_exec',
 ] as const;
 type TabId = (typeof TABS)[number];
 
@@ -36,6 +43,7 @@ const TAB_LABEL: Record<TabId, string> = {
   op_logs: 'Logs',
   op_health: 'Health checks',
   op_traffic: 'Traffic tests',
+  op_exec: 'Safe exec',
 };
 
 function formatPorts(ports: unknown): string {
@@ -585,6 +593,285 @@ function OperationsTrafficPanel({
   );
 }
 
+const EXEC_PRESET_IDS = [
+  'whoami',
+  'hostname',
+  'env',
+  'ps',
+  'ip_addr',
+  'ip_route',
+  'resolv',
+  'nslookup',
+  'curl',
+  'wget',
+  'ping',
+] as const;
+type ExecPresetId = (typeof EXEC_PRESET_IDS)[number];
+
+const EXEC_PRESET_LABEL: Record<ExecPresetId, string> = {
+  whoami: 'whoami',
+  hostname: 'hostname',
+  env: 'env',
+  ps: 'ps',
+  ip_addr: 'ip addr',
+  ip_route: 'ip route',
+  resolv: 'cat /etc/resolv.conf',
+  nslookup: 'nslookup (needs target)',
+  curl: 'curl (http/https URL)',
+  wget: 'wget (http/https URL)',
+  ping: 'ping (needs hostname)',
+};
+
+function buildSafeExecCommand(preset: ExecPresetId, target: string): { ok: true; command: string } | { ok: false; error: string } {
+  const t = target.trim();
+  switch (preset) {
+    case 'whoami':
+      return { ok: true, command: 'whoami' };
+    case 'hostname':
+      return { ok: true, command: 'hostname' };
+    case 'env':
+      return { ok: true, command: 'env' };
+    case 'ps':
+      return { ok: true, command: 'ps' };
+    case 'ip_addr':
+      return { ok: true, command: 'ip addr' };
+    case 'ip_route':
+      return { ok: true, command: 'ip route' };
+    case 'resolv':
+      return { ok: true, command: 'cat /etc/resolv.conf' };
+    case 'nslookup':
+      if (!t) return { ok: false, error: 'Enter a hostname for nslookup.' };
+      return { ok: true, command: `nslookup ${t}` };
+    case 'curl':
+      if (!t) return { ok: false, error: 'Enter a single http(s) URL for curl.' };
+      return { ok: true, command: `curl ${t}` };
+    case 'wget':
+      if (!t) return { ok: false, error: 'Enter a single http(s) URL for wget.' };
+      return { ok: true, command: `wget ${t}` };
+    case 'ping':
+      if (!t) return { ok: false, error: 'Enter a hostname for ping.' };
+      return { ok: true, command: `ping ${t}` };
+    default:
+      return { ok: false, error: 'Unknown preset.' };
+  }
+}
+
+function OperationsExecPanel({
+  deploymentId,
+  services,
+}: {
+  deploymentId: string;
+  services: RuntimeAccessResourceRow[];
+}) {
+  const selectable = useMemo(() => services.filter((s) => s.id), [services]);
+  const [resourceId, setResourceId] = useState(selectable[0]?.id ?? '');
+  const [preset, setPreset] = useState<ExecPresetId>('whoami');
+  const [target, setTarget] = useState('');
+  const [timeoutSec, setTimeoutSec] = useState(10);
+  const [busy, setBusy] = useState(false);
+  const [restartBusy, setRestartBusy] = useState(false);
+  const [result, setResult] = useState<RuntimeExecResultPayload | null>(null);
+  const [history, setHistory] = useState<RuntimeExecResultPayload[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+
+  const needsTarget = preset === 'nslookup' || preset === 'curl' || preset === 'wget' || preset === 'ping';
+
+  useEffect(() => {
+    if (!resourceId && selectable[0]?.id) setResourceId(selectable[0].id);
+  }, [resourceId, selectable]);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const r = await fetchRuntimeExecResults(deploymentId, 50);
+      setHistory(r.items ?? []);
+    } catch {
+      /* ignore background refresh errors */
+    }
+  }, [deploymentId]);
+
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
+
+  async function runExec() {
+    if (!resourceId) {
+      setErr('Select a persisted service row.');
+      return;
+    }
+    const built = buildSafeExecCommand(preset, target);
+    if (!built.ok) {
+      setErr(built.error);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setResult(null);
+    try {
+      const r = await postRuntimeServiceExec(deploymentId, resourceId, {
+        command: built.command,
+        timeout_seconds: timeoutSec,
+      });
+      setResult(r);
+      await loadHistory();
+    } catch (e) {
+      setErr(formatApiError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restart() {
+    if (!resourceId) {
+      setErr('Select a persisted service row.');
+      return;
+    }
+    if (
+      !window.confirm(
+        'Restart this workload? In-flight connections will drop until the container or pod is back.',
+      )
+    ) {
+      return;
+    }
+    setRestartBusy(true);
+    setErr(null);
+    try {
+      const r = await postRuntimeServiceRestart(deploymentId, resourceId);
+      window.alert(`${r.status}: ${r.message || '(no message)'}`);
+    } catch (e) {
+      setErr(formatApiError(e));
+    } finally {
+      setRestartBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-cns-muted">
+        Runs allowlisted diagnostic commands inside the workload via the Go runner (
+        <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">RUNTIME_EXECUTOR=go</code>
+        ). Arbitrary shell is not supported; commands are validated on the server. Requires member or owner.
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-xs text-cns-label">
+          Service resource
+          <select
+            className="mt-1 block w-64 max-w-full rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            value={resourceId}
+            onChange={(e) => setResourceId(e.target.value)}
+          >
+            <option value="">—</option>
+            {selectable.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} ({s.runtime_name})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs text-cns-label">
+          Command
+          <select
+            className="mt-1 block w-56 max-w-full rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            value={preset}
+            onChange={(e) => setPreset(e.target.value as ExecPresetId)}
+          >
+            {EXEC_PRESET_IDS.map((id) => (
+              <option key={id} value={id}>
+                {EXEC_PRESET_LABEL[id]}
+              </option>
+            ))}
+          </select>
+        </label>
+        {needsTarget ? (
+          <label className="text-xs text-cns-label min-w-[200px] flex-1">
+            Target (hostname or URL)
+            <input
+              className="mt-1 block w-full rounded border border-zinc-300 bg-white px-2 py-1 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-900"
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              placeholder={preset === 'ping' || preset === 'nslookup' ? 'e.g. kube-dns.kube-system.svc.cluster.local' : 'https://example.com/'}
+            />
+          </label>
+        ) : null}
+        <label className="text-xs text-cns-label">
+          Timeout (s)
+          <input
+            type="number"
+            min={1}
+            max={120}
+            className="mt-1 block w-20 rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            value={timeoutSec}
+            onChange={(e) => setTimeoutSec(Number(e.target.value) || 10)}
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void runExec()}
+          className="rounded-md border border-emerald-600 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/50"
+        >
+          {busy ? 'Running…' : 'Run command'}
+        </button>
+        <button
+          type="button"
+          disabled={restartBusy || !resourceId}
+          onClick={() => void restart()}
+          className="rounded-md border border-amber-600 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/50"
+        >
+          {restartBusy ? 'Restarting…' : 'Restart workload'}
+        </button>
+      </div>
+      {err ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+          {err}
+        </div>
+      ) : null}
+      {result ? (
+        <div className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-950/40">
+          <div className="text-xs font-semibold uppercase tracking-wide text-cns-label">Last result</div>
+          <div className="font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
+            <div>
+              <span className="text-cns-label">status:</span> {result.status}{' '}
+              <span className="text-cns-label">exit:</span> {result.exit_code ?? '—'}{' '}
+              <span className="text-cns-label">provider:</span> {result.runtime_provider || '—'}
+            </div>
+            {result.message ? (
+              <div className="mt-1 text-amber-900 dark:text-amber-200">message: {result.message}</div>
+            ) : null}
+            <div className="mt-2 text-cns-label">stdout</div>
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-zinc-950/90 p-2 text-zinc-100">
+              {result.stdout || '(empty)'}
+            </pre>
+            <div className="mt-2 text-cns-label">stderr</div>
+            <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded bg-zinc-950/90 p-2 text-zinc-100">
+              {result.stderr || '(empty)'}
+            </pre>
+          </div>
+        </div>
+      ) : null}
+      <div>
+        <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-cns-label">History (newest first)</div>
+        {history.length === 0 ? (
+          <p className="text-sm text-cns-muted">No exec history yet.</p>
+        ) : (
+          <ul className="max-h-48 space-y-1 overflow-y-auto text-xs">
+            {history.map((h) => (
+              <li key={h.id}>
+                <button
+                  type="button"
+                  className="w-full rounded border border-zinc-200 bg-white px-2 py-1.5 text-left font-mono hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                  onClick={() => setResult(h)}
+                >
+                  <span className="text-cns-muted">{h.status}</span> · {h.command}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | null }) {
   const [tab, setTab] = useState<TabId>('overview');
   const [data, setData] = useState<DeploymentRuntimeDetailResponse | null>(null);
@@ -770,6 +1057,9 @@ export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | nu
         ) : null}
         {data && tab === 'op_traffic' ? (
           <OperationsTrafficPanel deploymentId={deploymentId!} services={data.services} />
+        ) : null}
+        {data && tab === 'op_exec' ? (
+          <OperationsExecPanel deploymentId={deploymentId!} services={data.services} />
         ) : null}
       </div>
     </section>

@@ -30,6 +30,12 @@ from app.schemas.runtime import (
     RuntimeOperationsTrafficRequest,
     RuntimeOperationsTrafficResponse,
 )
+from app.schemas.runtime_exec import (
+    RuntimeExecRequestBody,
+    RuntimeExecResultListResponse,
+    RuntimeExecResultResponse,
+    RuntimeRestartResponse,
+)
 from app.schemas.service_exposure import (
     ServiceExposureCreate,
     ServiceExposureListResponse,
@@ -37,6 +43,7 @@ from app.schemas.service_exposure import (
 )
 from app.services.deployment_service_exposure_service import DuplicateExposureError
 from app.services import deployment_service_exposure_service as exposure_svc
+from app.services import runtime_exec_service as runtime_exec_svc
 from app.services import runtime_operations_service as runtime_ops
 from app.services import runtime_state_service as runtime_svc
 from app.services.deployment_planner import build_deployment_plan
@@ -503,6 +510,100 @@ def post_deployment_runtime_traffic_tests(
         ) from exc
     db.commit()
     return body
+
+
+@router.post(
+    "/deployments/{deployment_id}/runtime/services/{service_id}/exec",
+    response_model=RuntimeExecResultResponse,
+    summary="Run a safe allowlisted diagnostic command inside a workload (Go runner)",
+)
+def post_deployment_runtime_service_exec(
+    deployment_id: UUID,
+    service_id: UUID,
+    payload: RuntimeExecRequestBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeExecResultResponse:
+    require_deployment_editor(db, user, deployment_id)
+    try:
+        out = runtime_exec_svc.run_safe_exec(
+            db,
+            user.id,
+            deployment_id,
+            service_id,
+            payload.command,
+            payload.timeout_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc) or "Not found",
+        ) from exc
+    db.commit()
+    return out
+
+
+@router.get(
+    "/deployments/{deployment_id}/runtime/exec-results",
+    response_model=RuntimeExecResultListResponse,
+    summary="Recent safe exec results for a deployment",
+)
+def list_deployment_runtime_exec_results(
+    deployment_id: UUID,
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeExecResultListResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    body = runtime_exec_svc.list_exec_results(db, deployment_id, limit=limit)
+    db.commit()
+    return body
+
+
+@router.get(
+    "/deployments/{deployment_id}/runtime/exec-results/{exec_result_id}",
+    response_model=RuntimeExecResultResponse,
+    summary="One persisted safe exec result",
+)
+def get_deployment_runtime_exec_result(
+    deployment_id: UUID,
+    exec_result_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeExecResultResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        out = runtime_exec_svc.get_exec_result(db, deployment_id, exec_result_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Exec result not found",
+        ) from None
+    db.commit()
+    return out
+
+
+@router.post(
+    "/deployments/{deployment_id}/runtime/services/{service_id}/restart",
+    response_model=RuntimeRestartResponse,
+    summary="Restart workload container or pod (Go runner)",
+)
+def post_deployment_runtime_service_restart(
+    deployment_id: UUID,
+    service_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeRestartResponse:
+    require_deployment_editor(db, user, deployment_id)
+    try:
+        out = runtime_exec_svc.run_restart(db, deployment_id, service_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc) or "Not found",
+        ) from exc
+    db.commit()
+    return out
 
 
 @router.get(

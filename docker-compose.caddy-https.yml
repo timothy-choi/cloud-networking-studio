@@ -28,11 +28,13 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     healthcheck:
+      # Do not curl /api/health through the site block: HTTP may redirect to HTTPS and TLS can fail while
+      # Let's Encrypt is rate-limited. Only verify Caddy is listening (blocking API checks stay in CI / prod smoke).
       test:
         - CMD-SHELL
         - >-
-          wget -qO- --header=Host:$${CNS_CADDY_SITE_ADDRESS} http://127.0.0.1/api/health | grep -q status
-          && test -n "$$(wget -qO- --header=Host:$${CNS_CADDY_SITE_ADDRESS} http://127.0.0.1/ | head -c 1)"
+          nc -z -w 2 127.0.0.1 80 &&
+          nc -z -w 2 127.0.0.1 443
       interval: 5s
       timeout: 5s
       retries: 18

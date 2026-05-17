@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 import re
 from collections import defaultdict
@@ -24,6 +25,8 @@ from app.providers.runtime_types import (
     RuntimeNetworkRecord,
 )
 from app.services.deployment_planner import DeploymentPlan
+
+_log = logging.getLogger(__name__)
 
 
 def topology_network_name(topology_id: UUID) -> str:
@@ -372,9 +375,14 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
         return ProviderRuntimeSnapshot()
 
     def fetch_logs_for_node(
-        self, topology_id: UUID, node_id: UUID, tail: int
+        self,
+        topology_id: UUID,
+        node_id: UUID,
+        tail: int,
+        *,
+        deployment_id: UUID | None = None,
     ) -> str | None:
-        _ = (topology_id, node_id, tail)
+        _ = (topology_id, node_id, tail, deployment_id)
         return None
 
     def fetch_stats_for_node(
@@ -992,8 +1000,14 @@ class DockerRuntimeProvider(RuntimeProvider):
         return ProviderRuntimeSnapshot(networks=nets, containers=ctrs)
 
     def fetch_logs_for_node(
-        self, topology_id: UUID, node_id: UUID, tail: int
+        self,
+        topology_id: UUID,
+        node_id: UUID,
+        tail: int,
+        *,
+        deployment_id: UUID | None = None,
     ) -> str | None:
+        _ = deployment_id
         ctr = _find_managed_container(self._client, topology_id, node_id)
         if ctr is None:
             return None
@@ -1992,5 +2006,17 @@ def runtime_provider_for_topology(runtime_target: str) -> RuntimeProvider:
     if use_fake:
         return FakeDockerRuntimeProvider()
     if (runtime_target or "").lower().strip() == "docker":
-        return DockerRuntimeProvider()
+        from app.providers.go_hybrid_runtime_provider import GoHybridDockerRuntimeProvider
+        from app.runtime.go_runner_client import GoRunnerClient, use_go_runner_for_docker
+
+        base = DockerRuntimeProvider()
+        if use_go_runner_for_docker():
+            from app.core.config import settings
+
+            _log.info(
+                "runtime_provider=docker runtime_executor=go using GoHybridDockerRuntimeProvider url=%s",
+                settings.go_runner_url,
+            )
+            return GoHybridDockerRuntimeProvider(base, GoRunnerClient.from_settings())
+        return base
     return FakeDockerRuntimeProvider()

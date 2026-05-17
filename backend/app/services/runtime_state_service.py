@@ -228,7 +228,11 @@ def build_node_logs(
     if topo is None:
         raise ValueError("topology not found")
     provider = runtime_provider_for_topology(topo.runtime_target)
-    text = provider.fetch_logs_for_node(node.topology_id, node_id, tail)
+    latest = latest_deployment_for_topology(session, node.topology_id)
+    dep_id = latest.id if latest else None
+    text = provider.fetch_logs_for_node(
+        node.topology_id, node_id, tail, deployment_id=dep_id
+    )
     if text is None:
         return None
     return RuntimeLogsResponse(

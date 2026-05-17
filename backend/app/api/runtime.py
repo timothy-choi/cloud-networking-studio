@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -18,6 +20,7 @@ from app.services.access_control import (
     get_topology_for_user,
     require_deployment_editor,
 )
+from app.runtime.go_runner_client import effective_runtime_executor
 from app.schemas.runtime import (
     ReconciliationResponse,
     RuntimeDeploymentResponse,
@@ -28,6 +31,39 @@ from app.schemas.runtime import (
 )
 
 router = APIRouter(tags=["runtime"])
+
+
+def _python_executor_runtime_status() -> dict[str, Any]:
+    """Local control-plane view when Docker work runs in-process (docker-py)."""
+    return {
+        "status": "ok",
+        "runtime_provider": "python",
+    }
+
+
+@router.get(
+    "/runtime/status",
+    summary="Control plane runtime executor status",
+    response_description="Executor mode: python returns fixed JSON; go proxies the runner.",
+)
+def get_runtime_executor_status() -> dict[str, Any]:
+    """
+    Public probe (no DB, no auth) — same routing pattern as ``GET /health`` via ``/api/runtime/status``.
+
+    * ``RUNTIME_EXECUTOR=python`` — ``{"status":"ok","runtime_provider":"python"}``.
+    * ``RUNTIME_EXECUTOR=go`` — JSON from ``GO_RUNNER_URL/runtime/status`` (503 if unreachable).
+    """
+    if effective_runtime_executor() == "go":
+        from app.runtime.go_runner_client import GoRunnerClient
+
+        try:
+            return GoRunnerClient.from_settings().get_runtime_status()
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Go runner unavailable",
+            ) from None
+    return _python_executor_runtime_status()
 
 
 def _topology_http(session, topology_id: UUID):

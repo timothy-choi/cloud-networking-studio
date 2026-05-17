@@ -21,6 +21,7 @@ from app.schemas.deployment import DeploymentEventResponse, DeploymentResponse
 from app.services.deployment_planner import build_deployment_plan
 from app.services.deployment_queries import active_deployment_blocking_new_deploy
 from app.services.deployment_validation import validate_topology_for_deploy
+from app.runtime.go_runner_client import GoRunnerDeployError
 
 router = APIRouter(tags=["deployments"])
 
@@ -138,10 +139,48 @@ def deploy_topology(
     )
     db.flush()
 
-    plan = build_deployment_plan(topo)
+    plan = build_deployment_plan(
+        topo,
+        deployment_id=deployment.id,
+        requested_by_user_id=user.id,
+    )
 
     try:
         rows = provider.deploy(plan)
+    except GoRunnerDeployError as exc:
+        deployment.status = DeploymentStatus.FAILED
+        deployment.finished_at = datetime.now(UTC)
+        _append_event(
+            db,
+            deployment.id,
+            "Partial failure cleanup started (best-effort Docker rollback).",
+            DeploymentEventLevel.WARNING,
+        )
+        _append_event(
+            db,
+            deployment.id,
+            "Partial failure cleanup completed (best-effort).",
+            DeploymentEventLevel.INFO,
+        )
+        for level, msg in exc.events:
+            db.add(
+                DeploymentEvent(
+                    deployment_id=deployment.id,
+                    level=level,
+                    message=msg,
+                )
+            )
+        _append_event(
+            db,
+            deployment.id,
+            f"Deployment failed: {exc.message}",
+            DeploymentEventLevel.ERROR,
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=exc.message,
+        ) from exc
     except Exception as exc:
         deployment.status = DeploymentStatus.FAILED
         deployment.finished_at = datetime.now(UTC)

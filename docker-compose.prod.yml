@@ -40,6 +40,27 @@ services:
       retries: 5
       start_period: 15s
 
+  runner:
+    build:
+      context: ./runner
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "8090"
+    networks: [cns]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:8090/health | grep -q '\"status\":\"ok\"'",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   backend:
     build:
       context: ./backend
@@ -56,10 +77,14 @@ services:
       # Step 34 auth: smoke tests expect AUTH_REQUIRE_LOGIN=true (set in CI / .env for production-like runs).
       AUTH_REQUIRE_LOGIN: ${AUTH_REQUIRE_LOGIN:-false}
       AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-local-dev-only-change-AUTH_SECRET_KEY-in-production-min-32-chars}
+      RUNTIME_EXECUTOR: ${RUNTIME_EXECUTOR:-python}
+      GO_RUNNER_URL: ${GO_RUNNER_URL:-http://runner:8090}
     networks: [cns]
     depends_on:
       postgres:
         condition: service_healthy
+      runner:
+        condition: service_started
     healthcheck:
       test:
         [

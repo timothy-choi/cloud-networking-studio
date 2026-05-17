@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user
@@ -18,8 +18,20 @@ from app.models.user import User
 from app.services.access_control import get_deployment_for_user, require_deployment_editor, require_topology_editor
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
 from app.schemas.deployment import DeploymentEventResponse, DeploymentResponse
+from app.schemas.runtime import (
+    RuntimeDeploymentResponse,
+    RuntimeDeploymentSectionResponse,
+    RuntimeDeploymentServicesSectionResponse,
+    RuntimeInstructionsOnlyResponse,
+    RuntimeLogsBundleResponse,
+)
+from app.services import runtime_state_service as runtime_svc
 from app.services.deployment_planner import build_deployment_plan
 from app.services.deployment_queries import active_deployment_blocking_new_deploy
+from app.models.deployment_runtime_resource import DeploymentRuntimeResource
+from app.services.deployment_runtime_resource_service import (
+    replace_runtime_resources_from_payload,
+)
 from app.services.deployment_validation import validate_topology_for_deploy
 from app.runtime.go_runner_client import GoRunnerDeployError
 
@@ -146,7 +158,7 @@ def deploy_topology(
     )
 
     try:
-        rows = provider.deploy(plan)
+        outcome = provider.deploy(plan)
     except GoRunnerDeployError as exc:
         deployment.status = DeploymentStatus.FAILED
         deployment.finished_at = datetime.now(UTC)
@@ -208,6 +220,8 @@ def deploy_topology(
             detail=str(exc),
         ) from exc
 
+    rows = outcome.events
+
     for level, msg in rows:
         db.add(
             DeploymentEvent(
@@ -219,6 +233,8 @@ def deploy_topology(
 
     deployment.status = DeploymentStatus.SUCCEEDED
     deployment.finished_at = datetime.now(UTC)
+    if outcome.runtime_access:
+        replace_runtime_resources_from_payload(db, deployment.id, outcome.runtime_access)
     prior_stopped = db.scalar(
         select(func.count())
         .select_from(Deployment)
@@ -276,6 +292,12 @@ def destroy_deployment(
 
     rows = provider.destroy(topo.id, dep.id, project_id=topo.project_id)
 
+    db.execute(
+        delete(DeploymentRuntimeResource).where(
+            DeploymentRuntimeResource.deployment_id == dep.id
+        )
+    )
+
     for level, msg in rows:
         db.add(
             DeploymentEvent(
@@ -306,23 +328,122 @@ def destroy_deployment(
     return _load_deployment_full(db, deployment_id)
 
 
+def _deployment_runtime_snapshot(db: Session, deployment_id: UUID) -> RuntimeDeploymentResponse:
+    try:
+        return runtime_svc.build_deployment_runtime(
+            db,
+            deployment_id,
+            emit_inspection_event=True,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Deployment not found",
+        ) from None
+
+
 @router.get(
-    "/deployments/{deployment_id}",
-    response_model=DeploymentResponse,
-    summary="Get deployment",
+    "/deployments/{deployment_id}/runtime/logs",
+    response_model=RuntimeLogsBundleResponse,
+    summary="Deployment runtime log pointers",
 )
-def get_deployment(
+def get_deployment_runtime_logs(
     deployment_id: UUID,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> Deployment:
-    dep = get_deployment_for_user(db, user, deployment_id)
-    stmt = (
-        select(Deployment)
-        .where(Deployment.id == deployment_id)
-        .options(selectinload(Deployment.events))
-    )
-    return db.execute(stmt).scalar_one()
+) -> RuntimeLogsBundleResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        body = runtime_svc.build_deployment_runtime_logs_bundle(db, deployment_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Deployment not found",
+        ) from None
+    db.commit()
+    return body
+
+
+@router.get(
+    "/deployments/{deployment_id}/runtime/nodes",
+    response_model=RuntimeDeploymentSectionResponse,
+    summary="Persisted runtime node resources for a deployment",
+)
+def get_deployment_runtime_nodes(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeDeploymentSectionResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        body = runtime_svc.build_deployment_runtime_nodes_section(db, deployment_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Deployment not found",
+        ) from None
+    db.commit()
+    return body
+
+
+@router.get(
+    "/deployments/{deployment_id}/runtime/services",
+    response_model=RuntimeDeploymentServicesSectionResponse,
+    summary="Persisted runtime service resources for a deployment",
+)
+def get_deployment_runtime_services(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeDeploymentServicesSectionResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        body = runtime_svc.build_deployment_runtime_services_section(db, deployment_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Deployment not found",
+        ) from None
+    db.commit()
+    return body
+
+
+@router.get(
+    "/deployments/{deployment_id}/runtime/instructions",
+    response_model=RuntimeInstructionsOnlyResponse,
+    summary="Integration instructions for using this deployment",
+)
+def get_deployment_runtime_instructions(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeInstructionsOnlyResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        body = runtime_svc.build_deployment_runtime_instructions_section(db, deployment_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Deployment not found",
+        ) from None
+    db.commit()
+    return body
+
+
+@router.get(
+    "/deployments/{deployment_id}/runtime",
+    response_model=RuntimeDeploymentResponse,
+    summary="Deployment runtime snapshot",
+)
+def get_deployment_runtime(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeDeploymentResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    body = _deployment_runtime_snapshot(db, deployment_id)
+    db.commit()
+    return body
 
 
 @router.get(
@@ -361,3 +482,22 @@ def list_deployment_events(
     else:
         stmt = stmt.order_by(DeploymentEvent.created_at.asc())
     return list(db.scalars(stmt).all())
+
+
+@router.get(
+    "/deployments/{deployment_id}",
+    response_model=DeploymentResponse,
+    summary="Get deployment",
+)
+def get_deployment(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Deployment:
+    dep = get_deployment_for_user(db, user, deployment_id)
+    stmt = (
+        select(Deployment)
+        .where(Deployment.id == deployment_id)
+        .options(selectinload(Deployment.events))
+    )
+    return db.execute(stmt).scalar_one()

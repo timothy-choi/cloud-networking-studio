@@ -16,6 +16,7 @@ from app.api.topologies import router as topologies_router
 from app.api.traffic_tests import router as traffic_tests_router
 from app.core.config import settings
 from app.db.session import Base, engine
+from app.middleware.strip_api_prefix import StripApiPrefixMiddleware
 
 OPENAPI_TAGS_METADATA: list[dict[str, str]] = [
     {
@@ -116,6 +117,7 @@ if (rx := (settings.cors_origin_regex or "").strip()):
     _cors_kw["allow_origin_regex"] = rx
 
 app.add_middleware(CORSMiddleware, **_cors_kw)
+app.add_middleware(StripApiPrefixMiddleware)
 
 
 @app.get(

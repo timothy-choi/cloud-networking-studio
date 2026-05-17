@@ -24,6 +24,7 @@ from app.models.deployment import (
     DeploymentEventLevel,
     DeploymentStatus,
 )
+from app.models.deployment_runtime_resource import DeploymentRuntimeResource
 from app.models.traffic_test import TrafficTest, TrafficTestResult, TrafficTestStatus, TrafficTestType
 from app.models.failure_injection import (
     FailureInjection,
@@ -33,6 +34,7 @@ from app.models.failure_injection import (
 
 __all__ = [
     "Deployment",
+    "DeploymentRuntimeResource",
     "DeploymentEvent",
     "DeploymentEventLevel",
     "DeploymentStatus",

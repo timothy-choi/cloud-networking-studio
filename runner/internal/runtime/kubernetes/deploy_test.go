@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,6 +36,24 @@ func TestDeploy_MinimalCreatesNamespace(t *testing.T) {
 		t.Fatalf("status %q events=%+v", resp.Status, resp.Events)
 	}
 	ns := NamespaceFor(pid, top, dep)
+	if resp.RuntimeAccess == nil {
+		t.Fatal("RuntimeAccess should be set on success")
+	}
+	if resp.RuntimeAccess.RuntimeProvider != "kubernetes" {
+		t.Fatalf("access runtime_provider %q", resp.RuntimeAccess.RuntimeProvider)
+	}
+	if resp.RuntimeAccess.NamespaceOrNetwork != ns {
+		t.Fatalf("namespace_or_network %q want %q", resp.RuntimeAccess.NamespaceOrNetwork, ns)
+	}
+	foundClusterDNS := false
+	for _, r := range resp.RuntimeAccess.Resources {
+		if r.Type == "service" && strings.Contains(r.InternalURL, ".svc.cluster.local:") {
+			foundClusterDNS = true
+		}
+	}
+	if !foundClusterDNS {
+		t.Fatalf("expected service internal cluster DNS URL in resources: %+v", resp.RuntimeAccess.Resources)
+	}
 	_, err := client.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)

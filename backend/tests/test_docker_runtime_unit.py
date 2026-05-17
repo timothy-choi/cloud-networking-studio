@@ -127,7 +127,7 @@ def test_docker_deploy_uses_api_create_container_and_static_endpoint():
 
     provider = DockerRuntimeProvider(client=mock_client)
 
-    events = provider.deploy(plan)
+    events = provider.deploy(plan).events
 
     mock_client_networks.create.assert_called_once()
     _args, kwargs = mock_client_networks.create.call_args
@@ -194,7 +194,7 @@ def test_docker_deploy_no_premature_assigned_ip_event():
         )
     ]
 
-    events = DockerRuntimeProvider(client=mock_client).deploy(plan)
+    events = DockerRuntimeProvider(client=mock_client).deploy(plan).events
     msgs = [m for _, m in events]
     assert not any("Assigned IP" in m for m in msgs)
     create_i = next(i for i, m in enumerate(msgs) if "Creating container on" in m)
@@ -395,5 +395,5 @@ def test_fake_provider_returns_tuple_events():
 
     fp = FakeDockerRuntimeProvider()
     plan = _sample_plan()
-    rows = fp.deploy(plan)
+    rows = fp.deploy(plan).events
     assert rows and all(isinstance(r, tuple) and len(r) == 2 for r in rows)

@@ -90,8 +90,45 @@ def test_post_deployment_success_maps_events():
         )
 
     c = GoRunnerClient("http://runner:8090", transport=httpx.MockTransport(handler))
-    rows = c.post_deployment(plan)
+    rows, ra = c.post_deployment(plan)
     assert rows == [(DeploymentEventLevel.INFO, "from runner")]
+    assert ra is None
+
+
+def test_post_deployment_success_maps_runtime_access():
+    plan = _minimal_plan()
+    ra_payload = {
+        "deployment_id": str(plan.deployment_id),
+        "topology_id": str(plan.topology_id),
+        "status": "running",
+        "runtime_provider": "kubernetes",
+        "namespace_or_network": "cns-p-test",
+        "resources": [
+            {
+                "type": "service",
+                "name": "api",
+                "runtime_name": "cns-node-api-svc",
+                "internal_url": "http://cns-node-api-svc.cns-p-test.svc.cluster.local:80",
+                "ports": [{"port": 80, "target_port": 8080, "protocol": "TCP"}],
+            }
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "status": "succeeded",
+                "runtime_provider": "kubernetes",
+                "events": [{"level": "info", "message": "ok"}],
+                "runtime_access": ra_payload,
+            },
+        )
+
+    c = GoRunnerClient("http://runner:8090", transport=httpx.MockTransport(handler))
+    rows, ra = c.post_deployment(plan)
+    assert rows == [(DeploymentEventLevel.INFO, "ok")]
+    assert ra == ra_payload
 
 
 def test_post_deployment_failure_raises_with_events():

@@ -116,11 +116,13 @@ class GoRunnerClient:
             body["subnet_cidr"] = plan.subnet_cidr
         return body
 
-    def post_deployment(self, plan: DeploymentPlan) -> list[tuple[DeploymentEventLevel, str]]:
+    def post_deployment(
+        self, plan: DeploymentPlan
+    ) -> tuple[list[tuple[DeploymentEventLevel, str]], dict[str, Any] | None]:
         payload = self.deployment_request_body(plan)
         with self._client() as client:
             r = client.post("/deployments", json=payload)
-        return _deployment_response_to_events(r)
+        return _deployment_response_to_outcome(r)
 
     def delete_deployment(
         self,
@@ -216,7 +218,9 @@ def _events_from_runner_payload(raw: Any) -> list[tuple[DeploymentEventLevel, st
     return out
 
 
-def _deployment_response_to_events(r: httpx.Response) -> list[tuple[DeploymentEventLevel, str]]:
+def _deployment_response_to_outcome(
+    r: httpx.Response,
+) -> tuple[list[tuple[DeploymentEventLevel, str]], dict[str, Any] | None]:
     data = _safe_json(r)
     events = _events_from_runner_payload(data.get("events"))
     status = str(data.get("status") or "").lower()
@@ -224,7 +228,10 @@ def _deployment_response_to_events(r: httpx.Response) -> list[tuple[DeploymentEv
     err_s = str(err).strip() if err else ""
 
     if r.is_success and status == "succeeded" and not err_s:
-        return events
+        ra = data.get("runtime_access")
+        if isinstance(ra, dict):
+            return events, ra
+        return events, None
 
     if not err_s:
         err_s = f"runner returned status={status or 'unknown'} (http {r.status_code})"

@@ -52,6 +52,9 @@ def test_topology_runtime_returns_payload_after_deploy(client):
     dre = dr.json()
     assert dre["deployment_id"] == did
     assert dre["topology_id"] == tid
+    assert dre.get("instructions") is not None
+    assert "local_dev" in dre["instructions"]
+    assert dre["instructions"]["app_env"]["title"] == "Use from app"
 
 
 def test_deployment_reconcile_reports_drift_with_fake_provider(client):
@@ -148,11 +151,180 @@ def test_runtime_deployment_unknown_404(client):
     assert client.get(f"/deployments/{missing}/runtime").status_code == 404
 
 
+def test_deployment_runtime_instructions_shape_after_deploy(client):
+    r = client.post(
+        "/topologies",
+        json={
+            "name": "Runtime access lab",
+            "description": "",
+            "runtime_target": "docker",
+            "networking_mode": "docker_bridge",
+        },
+    )
+    tid = r.json()["id"]
+    client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "n1",
+            "node_type": NodeType.GENERIC.value,
+            "image": None,
+            "ip_address": None,
+            "config": None,
+        },
+    )
+    did = client.post(f"/topologies/{tid}/deploy").json()["id"]
+
+    full = client.get(f"/deployments/{did}/runtime").json()
+    inst = full["instructions"]
+    for key in ("local_dev", "app_env", "ci_cd", "kubernetes", "api"):
+        assert key in inst
+    assert inst["local_dev"]["title"] == "Connect from local machine"
+    assert inst["app_env"]["title"] == "Use from app"
+    assert inst["ci_cd"]["title"] == "Use in CI/CD"
+    assert inst["kubernetes"]["title"] == "Use from Kubernetes workload"
+    assert inst["api"]["title"] == "Control through API"
+
+    nodes_sec = client.get(f"/deployments/{did}/runtime/nodes").json()
+    assert nodes_sec["deployment_id"] == did
+    assert nodes_sec["nodes"] == []
+
+    svc_sec = client.get(f"/deployments/{did}/runtime/services").json()
+    assert svc_sec["deployment_id"] == did
+    assert svc_sec["services"] == []
+
+    inst_only = client.get(f"/deployments/{did}/runtime/instructions").json()
+    assert inst_only["deployment_id"] == did
+    assert set(inst_only["instructions"].keys()) >= {
+        "local_dev",
+        "app_env",
+        "ci_cd",
+        "kubernetes",
+        "api",
+    }
+
+    logs = client.get(f"/deployments/{did}/runtime/logs").json()
+    assert logs["deployment_id"] == did
+    assert logs["logs_available"] is False
+    assert logs["items"] == []
+
+
+def test_deployment_runtime_returns_persisted_resources(client):
+    from uuid import UUID
+
+    from app.db.session import SessionLocal
+    from app.services.deployment_runtime_resource_service import (
+        replace_runtime_resources_from_payload,
+    )
+
+    r = client.post(
+        "/topologies",
+        json={
+            "name": "Persisted runtime",
+            "description": "",
+            "runtime_target": "docker",
+            "networking_mode": "docker_bridge",
+        },
+    )
+    tid = r.json()["id"]
+    n = client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "api-service",
+            "node_type": NodeType.GENERIC.value,
+            "image": None,
+            "ip_address": None,
+            "config": None,
+        },
+    ).json()
+    nid = n["id"]
+    did = client.post(f"/topologies/{tid}/deploy").json()["id"]
+
+    with SessionLocal() as db:
+        replace_runtime_resources_from_payload(
+            db,
+            UUID(did),
+            {
+                "runtime_provider": "kubernetes",
+                "namespace_or_network": "cns-p-demo-d-abc",
+                "resources": [
+                    {
+                        "type": "node",
+                        "node_id": nid,
+                        "name": "api-service",
+                        "runtime_name": "cns-node-api-service-xyz",
+                        "status": "running",
+                        "namespace_or_network": "cns-p-demo-d-abc",
+                    },
+                    {
+                        "type": "service",
+                        "service_id": nid,
+                        "name": "api-service",
+                        "runtime_name": "cns-node-api-service-svc",
+                        "status": "running",
+                        "namespace_or_network": "cns-p-demo-d-abc",
+                        "ports": [{"port": 80, "target_port": 8080, "protocol": "TCP"}],
+                        "internal_url": "http://cns-node-api-service-svc.cns-p-demo-d-abc.svc.cluster.local:80",
+                    },
+                ],
+            },
+        )
+        db.commit()
+
+    dr = client.get(f"/deployments/{did}/runtime").json()
+    assert dr["namespace_or_network"] == "cns-p-demo-d-abc"
+    assert len(dr["nodes"]) == 1
+    assert dr["nodes"][0]["runtime_name"] == "cns-node-api-service-xyz"
+    assert len(dr["services"]) == 1
+    assert "svc.cluster.local" in dr["services"][0]["internal_url"]
+    assert len(dr["endpoints"]) >= 1
+
+    dr_api = client.get(f"/api/deployments/{did}/runtime").json()
+    assert dr_api["deployment_id"] == did
+    assert dr_api["namespace_or_network"] == dr["namespace_or_network"]
+    assert dr_api["nodes"] == dr["nodes"]
+    assert dr_api["services"] == dr["services"]
+
+    assert client.get(f"/api/deployments/{did}/runtime/nodes").status_code == 200
+    assert client.get(f"/api/deployments/{did}/runtime/services").status_code == 200
+    assert client.get(f"/api/deployments/{did}/runtime/instructions").status_code == 200
+    assert client.get(f"/api/deployments/{did}/runtime/logs").status_code == 200
+
+    logs2 = client.get(f"/deployments/{did}/runtime/logs").json()
+    assert logs2["logs_available"] is True
+    assert len(logs2["items"]) == 1
+    assert logs2["items"][0]["node_id"] == nid
+
+
 def test_public_runtime_status_python_executor(client):
     r = client.get("/runtime/status")
     assert r.status_code == 200
     data = r.json()
     assert data == {"status": "ok", "runtime_provider": "python"}
+
+
+def test_health_accepts_optional_api_prefix(client):
+    r = client.get("/api/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
+def test_deployment_runtime_get_routes_registered_under_deployments_tag():
+    from fastapi.routing import APIRoute
+
+    from app.main import app
+
+    want = {
+        "/deployments/{deployment_id}/runtime",
+        "/deployments/{deployment_id}/runtime/nodes",
+        "/deployments/{deployment_id}/runtime/services",
+        "/deployments/{deployment_id}/runtime/instructions",
+    }
+    found: set[str] = set()
+    for route in app.routes:
+        if isinstance(route, APIRoute) and "GET" in route.methods and route.path in want:
+            found.add(route.path)
+            assert "deployments" in route.tags
+    assert found == want
 
 
 def test_get_runtime_status_route_registered_on_app():
@@ -206,3 +378,48 @@ def test_public_runtime_status_go_runner_unavailable_returns_503(client, monkeyp
     r = client.get("/runtime/status")
     assert r.status_code == 503
     assert r.json()["detail"] == "Go runner unavailable"
+
+
+def _bearer_headers(client_strict, prefix: str) -> dict[str, str]:
+    email = f"{prefix}{uuid.uuid4().hex[:8]}@example.com"
+    reg = client_strict.post(
+        "/auth/register",
+        json={"email": email, "password": "password123", "display_name": "T"},
+    )
+    assert reg.status_code == 201, reg.text
+    tok = reg.json()["access_token"]
+    return {"Authorization": f"Bearer {tok}"}
+
+
+def test_non_member_cannot_read_deployment_runtime(client_strict):
+    ha = _bearer_headers(client_strict, "rtx")
+    hb = _bearer_headers(client_strict, "rty")
+    tid = client_strict.post(
+        "/topologies",
+        headers=ha,
+        json={
+            "name": "Isolated runtime",
+            "description": "",
+            "runtime_target": "docker",
+            "networking_mode": "docker_bridge",
+        },
+    ).json()["id"]
+    client_strict.post(
+        f"/topologies/{tid}/nodes",
+        headers=ha,
+        json={
+            "name": "n1",
+            "node_type": NodeType.GENERIC.value,
+            "image": None,
+            "ip_address": None,
+            "config": None,
+        },
+    )
+    did = client_strict.post(f"/topologies/{tid}/deploy", headers=ha).json()["id"]
+    assert client_strict.get(f"/deployments/{did}/runtime", headers=hb).status_code == 404
+    assert client_strict.get(f"/deployments/{did}/runtime/nodes", headers=hb).status_code == 404
+    assert client_strict.get(f"/deployments/{did}/runtime/services", headers=hb).status_code == 404
+    assert client_strict.get(f"/deployments/{did}/runtime/instructions", headers=hb).status_code == 404
+    assert client_strict.get(f"/deployments/{did}/runtime/logs", headers=hb).status_code == 404
+    assert client_strict.get(f"/api/deployments/{did}/runtime", headers=hb).status_code == 404
+    assert client_strict.get(f"/api/deployments/{did}/runtime/nodes", headers=hb).status_code == 404

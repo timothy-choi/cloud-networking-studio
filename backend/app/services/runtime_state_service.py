@@ -11,6 +11,14 @@ from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLe
 from app.models.topology import Topology, TopologyNode
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
 from app.services.deployment_queries import latest_deployment_for_topology
+from app.services.deployment_runtime_resource_service import (
+    list_runtime_resources,
+    resource_row_to_public_dict,
+)
+from app.services.runtime_access_instructions import (
+    build_runtime_instructions,
+    deployment_access_status_label,
+)
 from app.providers.runtime_types import (
     ProviderReconciliationResult,
     ProviderRuntimeSnapshot,
@@ -19,6 +27,10 @@ from app.providers.runtime_types import (
 from app.schemas.runtime import (
     RuntimeContainerResponse,
     RuntimeDeploymentResponse,
+    RuntimeDeploymentSectionResponse,
+    RuntimeDeploymentServicesSectionResponse,
+    RuntimeInstructionsOnlyResponse,
+    RuntimeLogsBundleResponse,
     RuntimeLogsResponse,
     RuntimeNetworkInterfaceResponse,
     RuntimeNetworkResponse,
@@ -202,6 +214,27 @@ def build_deployment_runtime(
         ).all()
     )
     mapping, states = _node_mappings(nodes, snap)
+    persisted = list_runtime_resources(session, deployment_id)
+    pub_rows = [resource_row_to_public_dict(r) for r in persisted]
+    nodes_pub = [r for r in pub_rows if r.get("type") == "node"]
+    services_pub = [r for r in pub_rows if r.get("type") == "service"]
+    endpoints_pub: list[dict] = []
+    for r in pub_rows:
+        if r.get("internal_url"):
+            endpoints_pub.append(
+                {
+                    "kind": r.get("type"),
+                    "name": r.get("name"),
+                    "internal_url": r.get("internal_url"),
+                    "external_url": r.get("external_url"),
+                }
+            )
+    ns_net = next((r.get("namespace_or_network") for r in pub_rows if r.get("namespace_or_network")), None)
+    instructions = build_runtime_instructions(
+        deployment=dep,
+        topology=topo,
+        resources=pub_rows,
+    )
     if emit_inspection_event:
         record_runtime_inspection_event(
             session, dep.topology_id, snap, "GET /deployments/{id}/runtime"
@@ -215,6 +248,81 @@ def build_deployment_runtime(
         containers=_snapshot_to_containers(snap),
         node_runtime_mapping=mapping,
         container_states=states,
+        status=deployment_access_status_label(dep),
+        namespace_or_network=ns_net,
+        nodes=nodes_pub,
+        services=services_pub,
+        endpoints=endpoints_pub,
+        instructions=instructions,
+    )
+
+
+def build_deployment_runtime_nodes_section(
+    session: Session, deployment_id: UUID
+) -> RuntimeDeploymentSectionResponse:
+    dep = session.get(Deployment, deployment_id)
+    if dep is None:
+        raise ValueError("deployment not found")
+    pub = [resource_row_to_public_dict(r) for r in list_runtime_resources(session, deployment_id)]
+    return RuntimeDeploymentSectionResponse(
+        deployment_id=dep.id,
+        nodes=[r for r in pub if r.get("type") == "node"],
+    )
+
+
+def build_deployment_runtime_services_section(
+    session: Session, deployment_id: UUID
+) -> RuntimeDeploymentServicesSectionResponse:
+    dep = session.get(Deployment, deployment_id)
+    if dep is None:
+        raise ValueError("deployment not found")
+    pub = [resource_row_to_public_dict(r) for r in list_runtime_resources(session, deployment_id)]
+    return RuntimeDeploymentServicesSectionResponse(
+        deployment_id=dep.id,
+        services=[r for r in pub if r.get("type") == "service"],
+    )
+
+
+def build_deployment_runtime_instructions_section(
+    session: Session, deployment_id: UUID
+) -> RuntimeInstructionsOnlyResponse:
+    dep = session.get(Deployment, deployment_id)
+    if dep is None:
+        raise ValueError("deployment not found")
+    topo = session.get(Topology, dep.topology_id)
+    if topo is None:
+        raise ValueError("topology not found")
+    pub = [resource_row_to_public_dict(r) for r in list_runtime_resources(session, deployment_id)]
+    return RuntimeInstructionsOnlyResponse(
+        deployment_id=dep.id,
+        instructions=build_runtime_instructions(
+            deployment=dep, topology=topo, resources=pub
+        ),
+    )
+
+
+def build_deployment_runtime_logs_bundle(
+    session: Session, deployment_id: UUID
+) -> RuntimeLogsBundleResponse:
+    dep = session.get(Deployment, deployment_id)
+    if dep is None:
+        raise ValueError("deployment not found")
+    pub = [resource_row_to_public_dict(r) for r in list_runtime_resources(session, deployment_id)]
+    items: list[dict] = []
+    for r in pub:
+        if r.get("type") != "node" or not r.get("node_id"):
+            continue
+        items.append(
+            {
+                "node_id": r["node_id"],
+                "name": r.get("name"),
+                "hint": f"GET /api/nodes/{r['node_id']}/logs?tail=200",
+            }
+        )
+    return RuntimeLogsBundleResponse(
+        deployment_id=dep.id,
+        logs_available=bool(items),
+        items=items,
     )
 
 

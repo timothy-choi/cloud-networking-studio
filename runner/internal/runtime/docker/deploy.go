@@ -168,6 +168,18 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 	}
 	events = append(events, ev("info", fmt.Sprintf("Docker network created: %s%s", netName, extra)))
 
+	var accessResources []model.RuntimeAccessResource
+	accessResources = append(accessResources, model.RuntimeAccessResource{
+		Type:               "network",
+		Name:               netName,
+		RuntimeName:        netName,
+		Status:             "active",
+		NamespaceOrNetwork: netName,
+		Metadata: map[string]string{
+			"topology_id": strings.TrimSpace(req.TopologyID),
+		},
+	})
+
 	for _, pn := range req.Nodes {
 		cname := ContainerName(pn.ID, pn.Name)
 		imageRef := resolveImage(pn.Image)
@@ -224,10 +236,46 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 			return model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Events: events, Error: &msg}
 		}
 		events = append(events, ev("info", fmt.Sprintf("Container started: %s", cname)))
+		nid := strings.TrimSpace(pn.ID)
+		internal := fmt.Sprintf("http://%s:80", cname)
+		accessResources = append(accessResources, model.RuntimeAccessResource{
+			Type:                 "node",
+			NodeID:               nid,
+			Name:                 strings.TrimSpace(pn.Name),
+			RuntimeName:          cname,
+			Status:               "running",
+			NamespaceOrNetwork:   netName,
+			InternalURL:          internal,
+			Metadata:             map[string]string{"container_id": ctr.ID},
+		})
+		accessResources = append(accessResources, model.RuntimeAccessResource{
+			Type:                 "service",
+			ServiceID:            nid,
+			Name:                 strings.TrimSpace(pn.Name),
+			RuntimeName:          cname,
+			Status:               "running",
+			NamespaceOrNetwork:   netName,
+			Ports:                []model.RuntimePort{{Port: 80, TargetPort: 80, Protocol: "TCP"}},
+			InternalURL:          internal,
+			Metadata:             map[string]string{"container_id": ctr.ID},
+		})
 	}
 
 	events = append(events, ev("info", "Deployment completed successfully"))
-	return model.DeploymentResponse{Status: "succeeded", RuntimeProvider: "docker", Events: events}
+	ra := &model.RuntimeAccess{
+		DeploymentID:       strings.TrimSpace(req.DeploymentID),
+		TopologyID:         strings.TrimSpace(req.TopologyID),
+		Status:             "running",
+		RuntimeProvider:      "docker",
+		NamespaceOrNetwork: netName,
+		Resources:          accessResources,
+	}
+	return model.DeploymentResponse{
+		Status:          "succeeded",
+		RuntimeProvider: "docker",
+		Events:          events,
+		RuntimeAccess:   ra,
+	}
 }
 
 // DestroyTopology removes labeled containers and CNS networks for a topology (best-effort).

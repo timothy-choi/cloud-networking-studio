@@ -12,7 +12,7 @@
 # Pair with **CNS_CADDY_AUTO_HTTPS=off** in `.env` as documentation that TLS is intentionally disabled.
 #
 # Routing:
-#   - /api/* → backend:8000 with /api prefix stripped so FastAPI sees /health, /topologies, … (same as direct uvicorn paths).
+#   - /api/* → backend:8000 with /api prefix stripped so FastAPI sees /health, /runtime/status, /topologies, …
 #   - /     → frontend:80 (static SPA + nginx).
 #
 # Browsers and VITE_API_BASE_URL=/api call /api/… on this host; direct backend access (e.g. :8000) is unchanged.

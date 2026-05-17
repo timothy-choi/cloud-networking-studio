@@ -36,7 +36,7 @@ OPENAPI_TAGS_METADATA: list[dict[str, str]] = [
     },
     {
         "name": "runtime",
-        "description": "Inspect live provider state (containers, networks), fetch logs/stats, and run **reconciliation** passes.",
+        "description": "Inspect live provider state (containers, networks), fetch logs/stats, run **reconciliation** passes, and read **GET /runtime/status** (executor probe).",
     },
     {
         "name": "controller",

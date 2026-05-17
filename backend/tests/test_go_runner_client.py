@@ -123,5 +123,6 @@ def test_use_go_runner_false_under_fake_docker(monkeypatch):
 
 def test_use_go_runner_true_when_executor_go(monkeypatch):
     monkeypatch.delenv("CNS_USE_FAKE_DOCKER", raising=False)
+    monkeypatch.setenv("RUNTIME_EXECUTOR", "go")
     monkeypatch.setattr(config.settings, "runtime_executor", "go")
     assert use_go_runner_for_docker() is True

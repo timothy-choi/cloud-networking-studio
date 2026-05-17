@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from app.models.deployment import DeploymentEventLevel
@@ -17,6 +18,8 @@ from app.providers.runtime_types import (
 from app.runtime.go_runner_client import GoRunnerClient
 from app.services.deployment_planner import DeploymentPlan
 
+_log = logging.getLogger(__name__)
+
 
 class GoHybridDockerRuntimeProvider(RuntimeProvider):
     """
@@ -31,9 +34,11 @@ class GoHybridDockerRuntimeProvider(RuntimeProvider):
         self._runner = runner
 
     def deploy(self, plan: DeploymentPlan) -> list[ProviderEvent]:
+        _log.info("runtime_executor=go delegating deploy to Go runner")
         return self._runner.post_deployment(plan)
 
     def destroy(self, topology_id: UUID, deployment_id: UUID) -> list[ProviderEvent]:
+        _log.info("runtime_executor=go delegating destroy to Go runner")
         return self._runner.delete_deployment(deployment_id, topology_id)
 
     def inspect_topology_runtime(self, topology_id: UUID) -> ProviderRuntimeSnapshot:

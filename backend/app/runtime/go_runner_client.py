@@ -50,6 +50,20 @@ class GoRunnerClient:
             r.raise_for_status()
             return r.json()
 
+    def get_runtime_status(self) -> dict[str, Any]:
+        """GET ``/runtime/status`` on the runner (short timeout)."""
+        timeout = min(10.0, self._timeout)
+        kw: dict = {"base_url": self._base, "timeout": httpx.Timeout(timeout)}
+        if self._transport is not None:
+            kw["transport"] = self._transport
+        with httpx.Client(**kw) as client:
+            r = client.get("/runtime/status")
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data, dict):
+            raise ValueError("runner /runtime/status returned non-object JSON")
+        return data
+
     def _client(self) -> httpx.Client:
         kw: dict = {
             "base_url": self._base,
@@ -205,8 +219,19 @@ def _deployment_response_to_events(r: httpx.Response) -> list[tuple[DeploymentEv
     raise GoRunnerDeployError(err_s, events)
 
 
+def effective_runtime_executor() -> str:
+    """
+    Executor mode: prefer ``RUNTIME_EXECUTOR`` from the process environment (Docker / Compose),
+    then fall back to ``settings`` so delegation matches what the container actually sees.
+    """
+    raw = os.environ.get("RUNTIME_EXECUTOR")
+    if raw is not None and str(raw).strip() != "":
+        return str(raw).strip().lower()
+    return (settings.runtime_executor or "python").strip().lower()
+
+
 def use_go_runner_for_docker() -> bool:
     """True when the control plane should delegate Docker deploy/destroy to the Go runner."""
     if os.environ.get("CNS_USE_FAKE_DOCKER", "").lower() in ("1", "true", "yes"):
         return False
-    return (settings.runtime_executor or "python").strip().lower() == "go"
+    return effective_runtime_executor() == "go"

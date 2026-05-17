@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 import re
 from collections import defaultdict
@@ -24,6 +25,8 @@ from app.providers.runtime_types import (
     RuntimeNetworkRecord,
 )
 from app.services.deployment_planner import DeploymentPlan
+
+_log = logging.getLogger(__name__)
 
 
 def topology_network_name(topology_id: UUID) -> str:
@@ -2008,6 +2011,12 @@ def runtime_provider_for_topology(runtime_target: str) -> RuntimeProvider:
 
         base = DockerRuntimeProvider()
         if use_go_runner_for_docker():
+            from app.core.config import settings
+
+            _log.info(
+                "runtime_provider=docker runtime_executor=go using GoHybridDockerRuntimeProvider url=%s",
+                settings.go_runner_url,
+            )
             return GoHybridDockerRuntimeProvider(base, GoRunnerClient.from_settings())
         return base
     return FakeDockerRuntimeProvider()

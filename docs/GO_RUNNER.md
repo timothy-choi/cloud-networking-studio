@@ -32,12 +32,18 @@ When `RUNTIME_EXECUTOR=go` and `runtime_target` is `docker`, the API uses **`GoH
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `RUNTIME_EXECUTOR` | `python` | `python` — all Docker work in FastAPI (legacy). `go` — delegate mutating Docker work to the runner. |
+| `RUNTIME_EXECUTOR` | `python` | `python` — all Docker work in FastAPI (legacy). `go` — delegate mutating Docker work to the runner. **The API reads `RUNTIME_EXECUTOR` from the process environment first** (what Docker Compose injects), then falls back to settings so Compose env always wins over a stale `.env` baked into cwd. |
 | `GO_RUNNER_URL` | `http://runner:8090` | Base URL of `cns-runner` (Compose service name `runner` on the `cns` network). |
 | `GO_RUNNER_TIMEOUT_SECONDS` | `600` | HTTP client timeout for runner calls. |
 | `CNS_USE_FAKE_DOCKER` | unset | When `1`/`true`/`yes`, the stack uses the fake provider and **never** calls the Go runner, even if `RUNTIME_EXECUTOR=go`. |
 
 The runner listens on **`8090`** by default, or `RUNNER_LISTEN_ADDR` inside the runner container.
+
+### Control plane status API
+
+- **`GET /runtime/status`** (also **`GET /api/runtime/status`** behind Caddy) — public probe, no auth.
+  - **`RUNTIME_EXECUTOR=python`** — returns exactly `{"status":"ok","runtime_provider":"python"}`.
+  - **`RUNTIME_EXECUTOR=go`** — proxies JSON from **`GET {GO_RUNNER_URL}/runtime/status`**. If the runner is unreachable, the API responds with **503** and detail **`Go runner unavailable`**.
 
 ## Docker Compose
 

@@ -225,6 +225,17 @@ if bash "$SCRIPT_DIR/wait_caddy_edge.sh" "${WAIT_EDGE_ARGS[@]}"; then
   health_raw="$(cat "$BODY")"
   preview="$(printf '%s' "$health_raw" | tr -d '\n' | head -c 120)"
   echo "       ${preview}…"
+  http_rs="$(smoke_curl_http "${BASE}/api/runtime/status")"
+  if [[ "$http_rs" == "200" ]] && jq -e '.status and .runtime_provider' "$BODY" >/dev/null 2>&1; then
+    if [[ "$API_ONLY" -eq 1 ]]; then
+      ok "GET /api/runtime/status (API) HTTP 200 with JSON status/runtime_provider"
+    else
+      ok "GET /api/runtime/status (API via Caddy) HTTP 200 with JSON status/runtime_provider"
+    fi
+  else
+    bad "GET /api/runtime/status expected HTTP 200 with JSON .status and .runtime_provider (got http=${http_rs})"
+    print_response_body "GET /api/runtime/status"
+  fi
 else
   if [[ "$API_ONLY" -eq 1 ]]; then
     bad "API not ready within ${WAIT_ATTEMPTS} attempts × 2s (GET /api/health)"

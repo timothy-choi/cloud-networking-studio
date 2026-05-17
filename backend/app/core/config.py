@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     # --- Optional Go runtime runner (RUNTIME_EXECUTOR=go) ---
     runtime_executor: str = Field(
         default="python",
-        validation_alias="RUNTIME_EXECUTOR",
+        validation_alias=AliasChoices("RUNTIME_EXECUTOR", "runtime_executor"),
         description="python: docker-py in API process; go: delegate deploy/destroy/logs/traffic to cns-runner",
     )
     go_runner_url: str = Field(

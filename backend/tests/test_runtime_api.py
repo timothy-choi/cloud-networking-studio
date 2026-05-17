@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 
+import httpx
+
 from app.models.topology import NodeType
 
 
@@ -144,3 +146,63 @@ def test_runtime_topology_unknown_404(client):
 def test_runtime_deployment_unknown_404(client):
     missing = uuid.uuid4()
     assert client.get(f"/deployments/{missing}/runtime").status_code == 404
+
+
+def test_public_runtime_status_python_executor(client):
+    r = client.get("/runtime/status")
+    assert r.status_code == 200
+    data = r.json()
+    assert data == {"status": "ok", "runtime_provider": "python"}
+
+
+def test_get_runtime_status_route_registered_on_app():
+    from app.main import app
+
+    found = False
+    for route in app.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None) or set()
+        if path == "/runtime/status" and "GET" in methods:
+            found = True
+            break
+    assert found, "GET /runtime/status must be registered on the FastAPI app"
+
+
+def test_public_runtime_status_go_proxies_runner(client, monkeypatch):
+    from app.core import config
+    from app.runtime import go_runner_client as grc
+
+    monkeypatch.setattr(config.settings, "runtime_executor", "go")
+
+    def fake_get_runtime_status(self):
+        return {
+            "status": "ok",
+            "runtime_provider": "docker",
+            "docker_reachable": True,
+            "message": "",
+        }
+
+    monkeypatch.setattr(grc.GoRunnerClient, "get_runtime_status", fake_get_runtime_status)
+    r = client.get("/runtime/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["runtime_provider"] == "docker"
+    assert body["docker_reachable"] is True
+
+
+def test_public_runtime_status_go_runner_unavailable_returns_503(client, monkeypatch):
+    from app.core import config
+    from app.runtime import go_runner_client as grc
+
+    monkeypatch.setattr(config.settings, "runtime_executor", "go")
+
+    def boom(self):
+        raise httpx.ConnectError(
+            "refused",
+            request=httpx.Request("GET", "http://runner:8090/runtime/status"),
+        )
+
+    monkeypatch.setattr(grc.GoRunnerClient, "get_runtime_status", boom)
+    r = client.get("/runtime/status")
+    assert r.status_code == 503
+    assert r.json()["detail"] == "Go runner unavailable"

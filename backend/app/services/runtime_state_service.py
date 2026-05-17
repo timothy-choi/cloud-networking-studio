@@ -34,7 +34,6 @@ from app.schemas.runtime import (
     RuntimeDeploymentSectionResponse,
     RuntimeDeploymentServicesSectionResponse,
     RuntimeInstructionsOnlyResponse,
-    RuntimeLogsBundleResponse,
     RuntimeLogsResponse,
     RuntimeNetworkInterfaceResponse,
     RuntimeNetworkResponse,
@@ -308,31 +307,6 @@ def build_deployment_runtime_instructions_section(
         instructions=build_runtime_instructions(
             deployment=dep, topology=topo, resources=pub, exposures=exposures_pub
         ),
-    )
-
-
-def build_deployment_runtime_logs_bundle(
-    session: Session, deployment_id: UUID
-) -> RuntimeLogsBundleResponse:
-    dep = session.get(Deployment, deployment_id)
-    if dep is None:
-        raise ValueError("deployment not found")
-    pub = [resource_row_to_public_dict(r) for r in list_runtime_resources(session, deployment_id)]
-    items: list[dict] = []
-    for r in pub:
-        if r.get("type") != "node" or not r.get("node_id"):
-            continue
-        items.append(
-            {
-                "node_id": r["node_id"],
-                "name": r.get("name"),
-                "hint": f"GET /api/nodes/{r['node_id']}/logs?tail=200",
-            }
-        )
-    return RuntimeLogsBundleResponse(
-        deployment_id=dep.id,
-        logs_available=bool(items),
-        items=items,
     )
 
 

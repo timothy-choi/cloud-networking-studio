@@ -204,8 +204,9 @@ def test_deployment_runtime_instructions_shape_after_deploy(client):
 
     logs = client.get(f"/deployments/{did}/runtime/logs").json()
     assert logs["deployment_id"] == did
-    assert logs["logs_available"] is False
-    assert logs["items"] == []
+    assert logs["runtime_provider"] == "docker"
+    assert isinstance(logs["items"], list)
+    assert len(logs["items"]) >= 1
 
 
 def test_deployment_runtime_returns_persisted_resources(client):
@@ -290,7 +291,6 @@ def test_deployment_runtime_returns_persisted_resources(client):
     assert client.get(f"/api/deployments/{did}/runtime/logs").status_code == 200
 
     logs2 = client.get(f"/deployments/{did}/runtime/logs").json()
-    assert logs2["logs_available"] is True
     assert len(logs2["items"]) == 1
     assert logs2["items"][0]["node_id"] == nid
 
@@ -313,18 +313,29 @@ def test_deployment_runtime_get_routes_registered_under_deployments_tag():
 
     from app.main import app
 
-    want = {
+    get_want = {
         "/deployments/{deployment_id}/runtime",
+        "/deployments/{deployment_id}/runtime/logs",
         "/deployments/{deployment_id}/runtime/nodes",
         "/deployments/{deployment_id}/runtime/services",
+        "/deployments/{deployment_id}/runtime/services/{service_id}/logs",
         "/deployments/{deployment_id}/runtime/instructions",
     }
-    found: set[str] = set()
+    post_want = {
+        "/deployments/{deployment_id}/runtime/services/{service_id}/health-check",
+        "/deployments/{deployment_id}/runtime/traffic-tests",
+    }
+    found_get: set[str] = set()
+    found_post: set[str] = set()
     for route in app.routes:
-        if isinstance(route, APIRoute) and "GET" in route.methods and route.path in want:
-            found.add(route.path)
-            assert "deployments" in route.tags
-    assert found == want
+        if not isinstance(route, APIRoute) or "deployments" not in route.tags:
+            continue
+        if route.path in get_want and "GET" in route.methods:
+            found_get.add(route.path)
+        if route.path in post_want and "POST" in route.methods:
+            found_post.add(route.path)
+    assert found_get == get_want
+    assert found_post == post_want
 
 
 def test_get_runtime_status_route_registered_on_app():
@@ -421,5 +432,6 @@ def test_non_member_cannot_read_deployment_runtime(client_strict):
     assert client_strict.get(f"/deployments/{did}/runtime/services", headers=hb).status_code == 404
     assert client_strict.get(f"/deployments/{did}/runtime/instructions", headers=hb).status_code == 404
     assert client_strict.get(f"/deployments/{did}/runtime/logs", headers=hb).status_code == 404
+    assert client_strict.get(f"/deployments/{did}/runtime/services/{uuid.uuid4()}/logs", headers=hb).status_code == 404
     assert client_strict.get(f"/api/deployments/{did}/runtime", headers=hb).status_code == 404
     assert client_strict.get(f"/api/deployments/{did}/runtime/nodes", headers=hb).status_code == 404

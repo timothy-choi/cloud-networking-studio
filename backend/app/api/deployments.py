@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
+import httpx
 from starlette.responses import Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
@@ -24,7 +25,10 @@ from app.schemas.runtime import (
     RuntimeDeploymentSectionResponse,
     RuntimeDeploymentServicesSectionResponse,
     RuntimeInstructionsOnlyResponse,
-    RuntimeLogsBundleResponse,
+    RuntimeOperationsHealthResponse,
+    RuntimeOperationsLogsResponse,
+    RuntimeOperationsTrafficRequest,
+    RuntimeOperationsTrafficResponse,
 )
 from app.schemas.service_exposure import (
     ServiceExposureCreate,
@@ -33,6 +37,7 @@ from app.schemas.service_exposure import (
 )
 from app.services.deployment_service_exposure_service import DuplicateExposureError
 from app.services import deployment_service_exposure_service as exposure_svc
+from app.services import runtime_operations_service as runtime_ops
 from app.services import runtime_state_service as runtime_svc
 from app.services.deployment_planner import build_deployment_plan
 from app.services.deployment_queries import active_deployment_blocking_new_deploy
@@ -350,24 +355,152 @@ def _deployment_runtime_snapshot(db: Session, deployment_id: UUID) -> RuntimeDep
         ) from None
 
 
+def _runner_http_exception(exc: httpx.HTTPStatusError) -> HTTPException:
+    raw = (exc.response.text or "").strip()
+    detail = raw
+    try:
+        j = exc.response.json()
+        if isinstance(j, dict):
+            detail = str(
+                j.get("message")
+                or j.get("logs")
+                or j.get("output")
+                or j.get("detail")
+                or raw
+            )
+    except ValueError:
+        pass
+    detail = detail[:4000]
+    c = exc.response.status_code
+    if c == status.HTTP_404_NOT_FOUND:
+        return HTTPException(status.HTTP_404_NOT_FOUND, detail=detail)
+    if c == status.HTTP_503_SERVICE_UNAVAILABLE:
+        return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+    if c >= 500:
+        return HTTPException(status.HTTP_502_BAD_GATEWAY, detail=detail)
+    return HTTPException(status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
 @router.get(
     "/deployments/{deployment_id}/runtime/logs",
-    response_model=RuntimeLogsBundleResponse,
-    summary="Deployment runtime log pointers",
+    response_model=RuntimeOperationsLogsResponse,
+    summary="Aggregated runtime logs for deployment workloads",
 )
 def get_deployment_runtime_logs(
     deployment_id: UUID,
+    tail: int = Query(100, ge=1, le=5000),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> RuntimeLogsBundleResponse:
+) -> RuntimeOperationsLogsResponse:
     get_deployment_for_user(db, user, deployment_id)
     try:
-        body = runtime_svc.build_deployment_runtime_logs_bundle(db, deployment_id)
+        body = runtime_ops.fetch_runtime_deployment_logs(db, deployment_id, tail=tail)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Deployment not found",
         ) from None
+    except httpx.HTTPStatusError as exc:
+        raise _runner_http_exception(exc) from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Runner unreachable: {exc}",
+        ) from exc
+    db.commit()
+    return body
+
+
+@router.get(
+    "/deployments/{deployment_id}/runtime/services/{service_id}/logs",
+    response_model=RuntimeOperationsLogsResponse,
+    summary="Runtime logs for one persisted service/node resource row",
+)
+def get_deployment_runtime_service_logs(
+    deployment_id: UUID,
+    service_id: UUID,
+    tail: int = Query(100, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeOperationsLogsResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        body = runtime_ops.fetch_runtime_service_logs(db, deployment_id, service_id, tail=tail)
+    except ValueError as exc:
+        msg = str(exc)
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if "not found" in msg.lower() or "no workload" in msg.lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(code, detail=msg or "Not found") from exc
+    except httpx.HTTPStatusError as exc:
+        raise _runner_http_exception(exc) from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Runner unreachable: {exc}",
+        ) from exc
+    db.commit()
+    return body
+
+
+@router.post(
+    "/deployments/{deployment_id}/runtime/services/{service_id}/health-check",
+    response_model=RuntimeOperationsHealthResponse,
+    summary="Run an in-network HTTP health probe against a workload",
+)
+def post_deployment_runtime_service_health(
+    deployment_id: UUID,
+    service_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeOperationsHealthResponse:
+    require_deployment_editor(db, user, deployment_id)
+    try:
+        body = runtime_ops.run_runtime_health_check(db, deployment_id, service_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc) or "Not found",
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise _runner_http_exception(exc) from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Runner unreachable: {exc}",
+        ) from exc
+    db.commit()
+    return body
+
+
+@router.post(
+    "/deployments/{deployment_id}/runtime/traffic-tests",
+    response_model=RuntimeOperationsTrafficResponse,
+    summary="Run ping or HTTP traffic from a source workload (Go runner in-network)",
+)
+def post_deployment_runtime_traffic_tests(
+    deployment_id: UUID,
+    payload: RuntimeOperationsTrafficRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeOperationsTrafficResponse:
+    require_deployment_editor(db, user, deployment_id)
+    try:
+        body = runtime_ops.run_runtime_traffic_test(db, deployment_id, payload)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc) or "Not found",
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise _runner_http_exception(exc) from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Runner unreachable: {exc}",
+        ) from exc
     db.commit()
     return body
 

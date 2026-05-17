@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -146,11 +146,43 @@ class RuntimeStatsResponse(BaseModel):
 
 
 class RuntimeLogsBundleResponse(BaseModel):
-    """Aggregated log pointers for a deployment (per-node logs remain on ``/nodes/...``)."""
+    """Deprecated: use ``RuntimeOperationsLogsResponse`` (Step 41 runtime operations)."""
 
     deployment_id: UUID
     logs_available: bool
     items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RuntimeOperationsLogsResponse(BaseModel):
+    """Aggregated or per-service runtime logs (runner or Python provider)."""
+
+    deployment_id: UUID
+    service_id: str | None = None
+    logs: str = ""
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    runtime_provider: str = "docker"
+
+
+class RuntimeOperationsHealthResponse(BaseModel):
+    status: str = Field(description="passed | failed | unsupported")
+    target: str = ""
+    latency_ms: int | None = None
+    message: str = ""
+
+
+class RuntimeOperationsTrafficRequest(BaseModel):
+    source_runtime_resource_id: UUID
+    target: str = Field(description="Runtime resource UUID, topology node UUID, or http(s) URL")
+    protocol: Literal["http", "ping"]
+
+
+class RuntimeOperationsTrafficResponse(BaseModel):
+    status: str
+    source: str
+    target: str
+    protocol: str
+    output: str = ""
+    latency_ms: int | None = None
 
 
 class RuntimeDeploymentSectionResponse(BaseModel):

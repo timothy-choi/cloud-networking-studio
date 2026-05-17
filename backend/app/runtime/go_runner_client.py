@@ -186,6 +186,84 @@ class GoRunnerClient:
             raise RuntimeError(f"go runner traffic-test failed: {r.status_code} {r.text}")
         return data
 
+    def get_runtime_deployment_logs(
+        self,
+        deployment_id: UUID,
+        topology_id: UUID,
+        *,
+        tail: int,
+        project_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, str] = {
+            "topology_id": str(topology_id),
+            "tail": str(int(tail)),
+        }
+        if project_id is not None:
+            params["project_id"] = str(project_id)
+        with self._client() as client:
+            r = client.get(f"/deployments/{deployment_id}/runtime/logs", params=params)
+        r.raise_for_status()
+        raw = r.json()
+        if not isinstance(raw, dict):
+            raise ValueError("runner returned non-object JSON for runtime logs")
+        return raw
+
+    def get_runtime_service_logs(
+        self,
+        deployment_id: UUID,
+        topology_id: UUID,
+        workload_node_id: str,
+        *,
+        tail: int,
+        project_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, str] = {"topology_id": str(topology_id), "tail": str(int(tail))}
+        if project_id is not None:
+            params["project_id"] = str(project_id)
+        with self._client() as client:
+            r = client.get(
+                f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/logs",
+                params=params,
+            )
+        r.raise_for_status()
+        raw = r.json()
+        if not isinstance(raw, dict):
+            raise ValueError("runner returned non-object JSON for service logs")
+        return raw
+
+    def post_runtime_service_health(
+        self,
+        deployment_id: UUID,
+        topology_id: UUID,
+        workload_node_id: str,
+        *,
+        project_id: UUID | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, str] = {"topology_id": str(topology_id)}
+        if project_id is not None:
+            params["project_id"] = str(project_id)
+        with self._client() as client:
+            r = client.post(
+                f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/health-check",
+                params=params,
+                json=body or {},
+            )
+        r.raise_for_status()
+        raw = r.json()
+        if not isinstance(raw, dict):
+            raise ValueError("runner returned non-object JSON for health check")
+        return raw
+
+    def post_runtime_traffic_test(self, deployment_id: UUID, body: dict[str, Any]) -> dict[str, Any]:
+        with self._client() as client:
+            r = client.post(f"/deployments/{deployment_id}/runtime/traffic-tests", json=body)
+        r.raise_for_status()
+        raw = r.json()
+        if not isinstance(raw, dict):
+            raise ValueError("runner returned non-object JSON for traffic test")
+        return raw
+
 
 def _safe_json(r: httpx.Response) -> dict[str, Any]:
     try:

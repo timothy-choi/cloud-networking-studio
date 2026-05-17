@@ -238,26 +238,48 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 		events = append(events, ev("info", fmt.Sprintf("Container started: %s", cname)))
 		nid := strings.TrimSpace(pn.ID)
 		internal := fmt.Sprintf("http://%s:80", cname)
+		metaBase := map[string]string{"container_id": ctr.ID}
+		if ins, err := cli.InspectContainerWithOptions(docker.InspectContainerOptions{Context: ctx, ID: ctr.ID}); err == nil && ins.NetworkSettings != nil && ins.NetworkSettings.Ports != nil {
+			var parts []string
+			for port, bindings := range ins.NetworkSettings.Ports {
+				for _, b := range bindings {
+					if b.HostPort != "" {
+						hip := b.HostIP
+						if hip == "" || hip == "0.0.0.0" {
+							hip = "127.0.0.1"
+						}
+						parts = append(parts, fmt.Sprintf("%s:%s->%s", hip, b.HostPort, port))
+					}
+				}
+			}
+			if len(parts) > 0 {
+				metaBase["host_port_bindings"] = strings.Join(parts, ",")
+			} else {
+				metaBase["external_access"] = "manual_port_forward_required"
+			}
+		} else {
+			metaBase["external_access"] = "manual_port_forward_required"
+		}
 		accessResources = append(accessResources, model.RuntimeAccessResource{
-			Type:                 "node",
-			NodeID:               nid,
-			Name:                 strings.TrimSpace(pn.Name),
-			RuntimeName:          cname,
-			Status:               "running",
-			NamespaceOrNetwork:   netName,
-			InternalURL:          internal,
-			Metadata:             map[string]string{"container_id": ctr.ID},
+			Type:               "node",
+			NodeID:             nid,
+			Name:               strings.TrimSpace(pn.Name),
+			RuntimeName:        cname,
+			Status:             "running",
+			NamespaceOrNetwork: netName,
+			InternalURL:        internal,
+			Metadata:           metaBase,
 		})
 		accessResources = append(accessResources, model.RuntimeAccessResource{
-			Type:                 "service",
-			ServiceID:            nid,
-			Name:                 strings.TrimSpace(pn.Name),
-			RuntimeName:          cname,
-			Status:               "running",
-			NamespaceOrNetwork:   netName,
-			Ports:                []model.RuntimePort{{Port: 80, TargetPort: 80, Protocol: "TCP"}},
-			InternalURL:          internal,
-			Metadata:             map[string]string{"container_id": ctr.ID},
+			Type:               "service",
+			ServiceID:          nid,
+			Name:               strings.TrimSpace(pn.Name),
+			RuntimeName:        cname,
+			Status:             "running",
+			NamespaceOrNetwork: netName,
+			Ports:              []model.RuntimePort{{Port: 80, TargetPort: 80, Protocol: "TCP"}},
+			InternalURL:        internal,
+			Metadata:           metaBase,
 		})
 	}
 
@@ -266,7 +288,7 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 		DeploymentID:       strings.TrimSpace(req.DeploymentID),
 		TopologyID:         strings.TrimSpace(req.TopologyID),
 		Status:             "running",
-		RuntimeProvider:      "docker",
+		RuntimeProvider:    "docker",
 		NamespaceOrNetwork: netName,
 		Resources:          accessResources,
 	}

@@ -15,6 +15,10 @@ from app.services.deployment_runtime_resource_service import (
     list_runtime_resources,
     resource_row_to_public_dict,
 )
+from app.services.deployment_service_exposure_service import (
+    exposure_to_api_dict,
+    list_exposure_rows,
+)
 from app.services.runtime_access_instructions import (
     build_runtime_instructions,
     deployment_access_status_label,
@@ -230,10 +234,13 @@ def build_deployment_runtime(
                 }
             )
     ns_net = next((r.get("namespace_or_network") for r in pub_rows if r.get("namespace_or_network")), None)
+    exposure_rows = list_exposure_rows(session, deployment_id)
+    exposures_pub = [exposure_to_api_dict(e) for e in exposure_rows]
     instructions = build_runtime_instructions(
         deployment=dep,
         topology=topo,
         resources=pub_rows,
+        exposures=exposures_pub,
     )
     if emit_inspection_event:
         record_runtime_inspection_event(
@@ -254,6 +261,7 @@ def build_deployment_runtime(
         services=services_pub,
         endpoints=endpoints_pub,
         instructions=instructions,
+        exposures=exposures_pub,
     )
 
 
@@ -293,10 +301,12 @@ def build_deployment_runtime_instructions_section(
     if topo is None:
         raise ValueError("topology not found")
     pub = [resource_row_to_public_dict(r) for r in list_runtime_resources(session, deployment_id)]
+    exposure_rows = list_exposure_rows(session, deployment_id)
+    exposures_pub = [exposure_to_api_dict(e) for e in exposure_rows]
     return RuntimeInstructionsOnlyResponse(
         deployment_id=dep.id,
         instructions=build_runtime_instructions(
-            deployment=dep, topology=topo, resources=pub
+            deployment=dep, topology=topo, resources=pub, exposures=exposures_pub
         ),
     )
 

@@ -54,6 +54,15 @@ func TestDeploy_MinimalCreatesNamespace(t *testing.T) {
 	if !foundClusterDNS {
 		t.Fatalf("expected service internal cluster DNS URL in resources: %+v", resp.RuntimeAccess.Resources)
 	}
+	foundPF := false
+	for _, r := range resp.RuntimeAccess.Resources {
+		if r.Type == "service" && r.Metadata["public_access"] == "manual_port_forward_required" {
+			foundPF = true
+		}
+	}
+	if !foundPF {
+		t.Fatalf("expected manual public access hint on service resource: %+v", resp.RuntimeAccess.Resources)
+	}
 	_, err := client.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)

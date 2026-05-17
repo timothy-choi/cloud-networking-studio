@@ -118,6 +118,10 @@ class RuntimeDeploymentResponse(BaseModel):
     services: list[dict[str, Any]] = Field(default_factory=list)
     endpoints: list[dict[str, Any]] = Field(default_factory=list)
     instructions: dict[str, Any] | None = None
+    exposures: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="User-managed service exposure records (Step 40).",
+    )
 
 
 class RuntimeLogsResponse(BaseModel):

@@ -5,8 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
+from starlette.responses import Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -25,6 +26,13 @@ from app.schemas.runtime import (
     RuntimeInstructionsOnlyResponse,
     RuntimeLogsBundleResponse,
 )
+from app.schemas.service_exposure import (
+    ServiceExposureCreate,
+    ServiceExposureListResponse,
+    ServiceExposureResponse,
+)
+from app.services.deployment_service_exposure_service import DuplicateExposureError
+from app.services import deployment_service_exposure_service as exposure_svc
 from app.services import runtime_state_service as runtime_svc
 from app.services.deployment_planner import build_deployment_plan
 from app.services.deployment_queries import active_deployment_blocking_new_deploy
@@ -406,6 +414,90 @@ def get_deployment_runtime_services(
         ) from None
     db.commit()
     return body
+
+
+@router.get(
+    "/deployments/{deployment_id}/runtime/exposures",
+    response_model=ServiceExposureListResponse,
+    summary="List service exposure records for a deployment",
+)
+def list_service_exposures(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ServiceExposureListResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    rows = exposure_svc.list_exposure_rows(db, deployment_id)
+    db.commit()
+    return ServiceExposureListResponse(
+        deployment_id=deployment_id,
+        exposures=[ServiceExposureResponse.model_validate(r) for r in rows],
+    )
+
+
+@router.post(
+    "/deployments/{deployment_id}/runtime/services/{service_id}/expose",
+    response_model=ServiceExposureResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Expose a persisted runtime service row",
+    response_model_by_alias=True,
+)
+def expose_runtime_service(
+    deployment_id: UUID,
+    service_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    payload: ServiceExposureCreate | None = Body(None),
+) -> ServiceExposureResponse:
+    dep = require_deployment_editor(db, user, deployment_id)
+    try:
+        row = exposure_svc.create_exposure(
+            db,
+            dep,
+            service_id,
+            ttl_hours=payload.ttl_hours if payload else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc) or "Not found",
+        ) from exc
+    except DuplicateExposureError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An active exposure already exists for this service resource.",
+        ) from exc
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.delete(
+    "/deployments/{deployment_id}/runtime/services/{service_id}/expose",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove an active service exposure",
+)
+def unexpose_runtime_service(
+    deployment_id: UUID,
+    service_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    dep = require_deployment_editor(db, user, deployment_id)
+    try:
+        ok = exposure_svc.remove_exposure(db, dep, service_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc) or "Not found",
+        ) from exc
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active exposure for this service resource.",
+        )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

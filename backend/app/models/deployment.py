@@ -15,6 +15,7 @@ from app.db.session import Base
 if TYPE_CHECKING:
     from app.models.topology import Topology
     from app.models.deployment_runtime_resource import DeploymentRuntimeResource
+    from app.models.deployment_service_exposure import DeploymentServiceExposure
 
 
 class DeploymentStatus(str, enum.Enum):
@@ -83,6 +84,11 @@ class Deployment(Base):
         passive_deletes=True,
     )
     runtime_resources: Mapped[list["DeploymentRuntimeResource"]] = relationship(
+        back_populates="deployment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    service_exposures: Mapped[list["DeploymentServiceExposure"]] = relationship(
         back_populates="deployment",
         cascade="all, delete-orphan",
         passive_deletes=True,

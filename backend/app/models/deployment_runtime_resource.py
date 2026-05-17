@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
+
+if TYPE_CHECKING:
+    from app.models.deployment import Deployment
+    from app.models.deployment_service_exposure import DeploymentServiceExposure
 
 
 def _utc_now() -> datetime:
@@ -51,3 +55,8 @@ class DeploymentRuntimeResource(Base):
     )
 
     deployment: Mapped["Deployment"] = relationship(back_populates="runtime_resources")
+    exposures: Mapped[list["DeploymentServiceExposure"]] = relationship(
+        back_populates="runtime_resource",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )

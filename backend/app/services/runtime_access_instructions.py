@@ -13,9 +13,11 @@ def build_runtime_instructions(
     deployment: Deployment,
     topology: Topology,
     resources: list[dict[str, Any]],
+    exposures: list[dict[str, Any]] | None = None,
     api_base: str = "/api",
 ) -> dict[str, Any]:
     """Return structured guidance keyed by integration mode."""
+    exposures = exposures or []
     dep_id = str(deployment.id)
     topo_id = str(topology.id)
     ns_or_net = next(
@@ -40,13 +42,43 @@ def build_runtime_instructions(
             f"# Example network/container names are listed under runtime resources for deployment {dep_id}.",
         ]
 
+    active_ex = [e for e in exposures if e.get("status") == "active"]
+    curl_lines: list[str] = []
+    exposed_items: list[dict[str, Any]] = []
+    for e in active_ex:
+        url = e.get("external_url")
+        meta = e.get("metadata") or {}
+        rid = e.get("runtime_resource_id")
+        if url:
+            curl_lines.append(f"curl -sS {url}")
+            exposed_items.append(
+                {
+                    "runtime_resource_id": rid,
+                    "external_url": url,
+                    "exposure_type": e.get("exposure_type"),
+                    "curl": f"curl -sS {url}",
+                }
+            )
+        else:
+            cmds = meta.get("commands") if isinstance(meta.get("commands"), list) else []
+            exposed_items.append(
+                {
+                    "runtime_resource_id": rid,
+                    "exposure_type": e.get("exposure_type"),
+                    "manual": bool(meta.get("manual_port_forward_required")),
+                    "commands": cmds,
+                }
+            )
+    if curl_lines:
+        pf_lines = list(pf_lines) + ["# Exposed services (HTTP):"] + curl_lines
+
     env_hint: dict[str, str] = {}
     if internal:
         env_hint["CNS_SERVICE_URL"] = internal
     else:
         env_hint = {"CNS_TOPOLOGY_ID": topo_id, "CNS_DEPLOYMENT_ID": dep_id}
 
-    return {
+    out: dict[str, Any] = {
         "local_dev": {
             "title": "Connect from local machine",
             "commands": pf_lines,
@@ -100,12 +132,33 @@ def build_runtime_instructions(
                 },
                 {
                     "method": "GET",
+                    "path": f"{api_base}/deployments/{dep_id}/runtime/exposures",
+                    "description": "List service exposure records",
+                },
+                {
+                    "method": "POST",
+                    "path": f"{api_base}/deployments/{dep_id}/runtime/services/{{runtime_service_resource_id}}/expose",
+                    "description": "Create/update external reachability metadata for one service row",
+                },
+                {
+                    "method": "DELETE",
+                    "path": f"{api_base}/deployments/{dep_id}/runtime/services/{{runtime_service_resource_id}}/expose",
+                    "description": "Mark exposure as removed",
+                },
+                {
+                    "method": "GET",
                     "path": f"{api_base}/topologies/{topo_id}/runtime",
                     "description": "Topology-wide runtime view",
                 },
             ],
         },
     }
+    if exposed_items:
+        out["exposed_services"] = {
+            "title": "Exposed services",
+            "items": exposed_items,
+        }
+    return out
 
 
 def deployment_access_status_label(dep: Deployment) -> str:

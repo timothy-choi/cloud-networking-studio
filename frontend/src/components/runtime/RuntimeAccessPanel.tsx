@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ApiError } from '../../api/client';
+import { ApiError, formatApiError } from '../../api/client';
 import { fetchDeploymentRuntime } from '../../api/deploymentRuntime';
+import {
+  fetchRuntimeDeploymentLogs,
+  fetchRuntimeServiceLogs,
+  postRuntimeServiceHealth,
+  postRuntimeTrafficTest,
+} from '../../api/runtimeOperations';
 import { exposeDeploymentService, unexposeDeploymentService } from '../../api/serviceExposure';
 import { Spinner } from '../Spinner';
 import type {
@@ -9,7 +15,16 @@ import type {
   ServiceExposureRow,
 } from '../../types/runtime';
 
-const TABS = ['overview', 'nodes', 'services', 'endpoints', 'instructions'] as const;
+const TABS = [
+  'overview',
+  'nodes',
+  'services',
+  'endpoints',
+  'instructions',
+  'op_logs',
+  'op_health',
+  'op_traffic',
+] as const;
 type TabId = (typeof TABS)[number];
 
 const TAB_LABEL: Record<TabId, string> = {
@@ -18,6 +33,9 @@ const TAB_LABEL: Record<TabId, string> = {
   services: 'Services',
   endpoints: 'Endpoints',
   instructions: 'Instructions',
+  op_logs: 'Logs',
+  op_health: 'Health checks',
+  op_traffic: 'Traffic tests',
 };
 
 function formatPorts(ports: unknown): string {
@@ -263,6 +281,310 @@ function ServicesPanel({
   );
 }
 
+function OperationsLogsPanel({
+  deploymentId,
+  services,
+}: {
+  deploymentId: string;
+  services: RuntimeAccessResourceRow[];
+}) {
+  const selectable = useMemo(() => services.filter((s) => s.id), [services]);
+  const [resourceId, setResourceId] = useState(selectable[0]?.id ?? '');
+  const [tail, setTail] = useState(150);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!resourceId && selectable[0]?.id) setResourceId(selectable[0].id);
+  }, [resourceId, selectable]);
+
+  async function refreshAll() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetchRuntimeDeploymentLogs(deploymentId, tail);
+      setText(r.logs || JSON.stringify(r.items, null, 2));
+    } catch (e) {
+      setText('');
+      setErr(formatApiError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshOne() {
+    if (!resourceId) {
+      setErr('Select a service row with an id (deploy with Go runner to persist resources).');
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetchRuntimeServiceLogs(deploymentId, resourceId, tail);
+      setText(r.logs || JSON.stringify(r.items, null, 2));
+    } catch (e) {
+      setText('');
+      setErr(formatApiError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-cns-muted">
+        Fetches recent container or pod logs via the control plane (and Go runner when{' '}
+        <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">RUNTIME_EXECUTOR=go</code>).
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-xs text-cns-label">
+          Service resource
+          <select
+            className="mt-1 block w-64 max-w-full rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            value={resourceId}
+            onChange={(e) => setResourceId(e.target.value)}
+          >
+            <option value="">—</option>
+            {selectable.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} ({s.runtime_name})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs text-cns-label">
+          Tail lines
+          <input
+            type="number"
+            min={1}
+            max={5000}
+            className="mt-1 block w-24 rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            value={tail}
+            onChange={(e) => setTail(Number(e.target.value) || 100)}
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void refreshAll()}
+          className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+        >
+          Refresh all workloads
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void refreshOne()}
+          className="rounded-md border border-emerald-600 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/50"
+        >
+          Refresh selected
+        </button>
+      </div>
+      {err ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+          {err}
+        </div>
+      ) : null}
+      <textarea
+        readOnly
+        className="min-h-[220px] w-full resize-y rounded-lg border border-zinc-200 bg-zinc-950/90 p-3 font-mono text-[11px] text-zinc-100 dark:border-zinc-700"
+        value={busy ? 'Loading…' : text}
+        placeholder="Logs appear here after refresh."
+      />
+    </div>
+  );
+}
+
+function OperationsHealthPanel({
+  deploymentId,
+  services,
+}: {
+  deploymentId: string;
+  services: RuntimeAccessResourceRow[];
+}) {
+  const selectable = useMemo(() => services.filter((s) => s.id), [services]);
+  const [resourceId, setResourceId] = useState(selectable[0]?.id ?? '');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!resourceId && selectable[0]?.id) setResourceId(selectable[0].id);
+  }, [resourceId, selectable]);
+
+  async function run() {
+    if (!resourceId) {
+      setErr('Select a persisted service row.');
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setResult(null);
+    try {
+      const r = await postRuntimeServiceHealth(deploymentId, resourceId);
+      setResult(JSON.stringify(r, null, 2));
+    } catch (e) {
+      setErr(formatApiError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-cns-muted">
+        Runs an HTTP probe from inside the workload (Go runner). Requires member or owner on the project.
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-xs text-cns-label">
+          Service resource
+          <select
+            className="mt-1 block w-64 max-w-full rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            value={resourceId}
+            onChange={(e) => setResourceId(e.target.value)}
+          >
+            <option value="">—</option>
+            {selectable.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void run()}
+          className="rounded-md border border-emerald-600 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/50"
+        >
+          {busy ? 'Running…' : 'Run health check'}
+        </button>
+      </div>
+      {err ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+          {err}
+        </div>
+      ) : null}
+      {result ? (
+        <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-200 bg-zinc-950/90 p-3 font-mono text-[11px] text-zinc-100 dark:border-zinc-700">
+          {result}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+function OperationsTrafficPanel({
+  deploymentId,
+  services,
+}: {
+  deploymentId: string;
+  services: RuntimeAccessResourceRow[];
+}) {
+  const selectable = useMemo(() => services.filter((s) => s.id), [services]);
+  const [sourceId, setSourceId] = useState(selectable[0]?.id ?? '');
+  const [target, setTarget] = useState('');
+  const [protocol, setProtocol] = useState<'http' | 'ping'>('ping');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sourceId && selectable[0]?.id) setSourceId(selectable[0].id);
+  }, [sourceId, selectable]);
+
+  async function run() {
+    if (!sourceId) {
+      setErr('Select a source service resource.');
+      return;
+    }
+    if (!target.trim()) {
+      setErr('Enter a target topology node id or http(s) URL.');
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setResult(null);
+    try {
+      const r = await postRuntimeTrafficTest(deploymentId, {
+        source_runtime_resource_id: sourceId,
+        target: target.trim(),
+        protocol,
+      });
+      setResult(JSON.stringify(r, null, 2));
+    } catch (e) {
+      setErr(formatApiError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-cns-muted">
+        Executes ping or HTTP from the source workload toward another node IP or an absolute URL (Go runner in-network
+        exec). Requires member or owner.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="text-xs text-cns-label sm:col-span-1">
+          Source service resource
+          <select
+            className="mt-1 block w-full rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            value={sourceId}
+            onChange={(e) => setSourceId(e.target.value)}
+          >
+            <option value="">—</option>
+            {selectable.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs text-cns-label sm:col-span-1">
+          Protocol
+          <select
+            className="mt-1 block w-full rounded border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            value={protocol}
+            onChange={(e) => setProtocol(e.target.value as 'http' | 'ping')}
+          >
+            <option value="ping">ping</option>
+            <option value="http">http</option>
+          </select>
+        </label>
+        <label className="text-xs text-cns-label sm:col-span-2">
+          Target (node UUID or http URL)
+          <input
+            className="mt-1 block w-full rounded border border-zinc-300 bg-white px-2 py-1.5 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-900"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            placeholder="e.g. other-node-uuid or http://svc.namespace.svc.cluster.local:80/"
+          />
+        </label>
+      </div>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void run()}
+        className="rounded-md border border-emerald-600 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/50"
+      >
+        {busy ? 'Running…' : 'Run traffic test'}
+      </button>
+      {err ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+          {err}
+        </div>
+      ) : null}
+      {result ? (
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-200 bg-zinc-950/90 p-3 font-mono text-[11px] text-zinc-100 dark:border-zinc-700">
+          {result}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
 export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | null }) {
   const [tab, setTab] = useState<TabId>('overview');
   const [data, setData] = useState<DeploymentRuntimeDetailResponse | null>(null);
@@ -438,6 +760,16 @@ export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | nu
 
         {data && tab === 'instructions' && !data.instructions ? (
           <p className="text-sm text-cns-muted">No instructions available.</p>
+        ) : null}
+
+        {data && tab === 'op_logs' ? (
+          <OperationsLogsPanel deploymentId={deploymentId!} services={data.services} />
+        ) : null}
+        {data && tab === 'op_health' ? (
+          <OperationsHealthPanel deploymentId={deploymentId!} services={data.services} />
+        ) : null}
+        {data && tab === 'op_traffic' ? (
+          <OperationsTrafficPanel deploymentId={deploymentId!} services={data.services} />
         ) : null}
       </div>
     </section>

@@ -131,3 +131,58 @@ type TrafficResponse struct {
 	Success  bool   `json:"success"`
 	Error    *string `json:"error,omitempty"`
 }
+
+// RuntimeLogsItem is one workload slice inside a deployment-wide log bundle.
+type RuntimeLogsItem struct {
+	ServiceID string `json:"service_id,omitempty"`
+	NodeID    string `json:"node_id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Logs      string `json:"logs,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// RuntimeDeploymentLogsResponse is returned by GET .../runtime/logs and per-service log routes.
+type RuntimeDeploymentLogsResponse struct {
+	DeploymentID    string            `json:"deployment_id"`
+	ServiceID       string            `json:"service_id,omitempty"`
+	Logs            string            `json:"logs"`
+	Items           []RuntimeLogsItem `json:"items"`
+	RuntimeProvider string            `json:"runtime_provider"`
+}
+
+// RuntimeHealthProbeRequest optional POST body for health-check.
+type RuntimeHealthProbeRequest struct {
+	Port int    `json:"port,omitempty"`
+	Path string `json:"path,omitempty"`
+}
+
+// RuntimeHealthResponse is returned by POST .../health-check.
+type RuntimeHealthResponse struct {
+	Status    string `json:"status"` // passed | failed | unsupported
+	Target    string `json:"target"`
+	LatencyMs *int64 `json:"latency_ms,omitempty"`
+	Message   string `json:"message"`
+}
+
+// RuntimeTrafficOpRequest is the body for POST .../runtime/traffic-tests.
+type RuntimeTrafficOpRequest struct {
+	TopologyID     string  `json:"topology_id,omitempty"`
+	DeploymentID   string  `json:"deployment_id,omitempty"`
+	ProjectID      *string `json:"project_id,omitempty"`
+	SourceNodeID   string  `json:"source_node_id"`
+	Target         string  `json:"target"` // topology node id or http(s):// URL
+	Protocol       string  `json:"protocol"` // http | ping
+	Path           string  `json:"path,omitempty"`
+	Port           int     `json:"port,omitempty"`
+	Count          int     `json:"count,omitempty"`
+}
+
+// RuntimeTrafficOpResponse is returned by POST .../runtime/traffic-tests.
+type RuntimeTrafficOpResponse struct {
+	Status    string `json:"status"` // passed | failed | unsupported
+	Source    string `json:"source"`
+	Target    string `json:"target"`
+	Protocol  string `json:"protocol"`
+	Output    string `json:"output"`
+	LatencyMs *int64 `json:"latency_ms,omitempty"`
+}

@@ -110,16 +110,71 @@ func TestPostDeploymentInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestPostDeploymentSegmentedRejected(t *testing.T) {
-	s := &Server{cli: nil}
+func TestRuntimeDeploymentLogsDockerNilClient(t *testing.T) {
+	s := &Server{provider: "docker", cli: nil}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /deployments", s.handlePostDeployment)
-	body := `{"deployment_id":"d","topology_id":"550e8400-e29b-41d4-a716-446655440000","runtime_target":"docker","networking_mode":"bridge","segmented_networks":true,"nodes":[]}`
-	req := httptest.NewRequest(http.MethodPost, "/deployments", strings.NewReader(body))
+	mux.HandleFunc("GET /deployments/{id}/runtime/logs", s.handleRuntimeDeploymentLogs)
+	req := httptest.NewRequest(http.MethodGet, "/deployments/did/runtime/logs?topology_id=550e8400-e29b-41d4-a716-446655440000", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 got %d body=%q", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["runtime_provider"] != "docker" {
+		t.Fatalf("body %+v", body)
+	}
+}
+
+func TestRuntimeHealthResponseShape(t *testing.T) {
+	s := &Server{provider: "docker", cli: nil}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /deployments/{id}/runtime/services/{service_id}/health-check", s.handleRuntimeServiceHealth)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/deployments/did/runtime/services/nid/health-check?topology_id=t1",
+		strings.NewReader(`{"port":80,"path":"/"}`),
+	)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("want 400 got %d", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 got %d", rec.Code)
+	}
+	var body struct {
+		Status    string `json:"status"`
+		Target    string `json:"target"`
+		LatencyMs *int64 `json:"latency_ms"`
+		Message   string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Status != "failed" || body.Message == "" || body.LatencyMs == nil {
+		t.Fatalf("unexpected %+v", body)
+	}
+}
+
+func TestRuntimeServiceLogsKubernetesFake(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	s := &Server{
+		provider: "kubernetes",
+		k8s:      cs,
+		k8sCfg:   &rest.Config{Host: "http://127.0.0.1:1"},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /deployments/{id}/runtime/services/{service_id}/logs", s.handleRuntimeServiceLogs)
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/deployments/did/runtime/services/n1/logs?topology_id=t1&project_id=p1",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("want 404 got %d %s", rec.Code, rec.Body.String())
 	}
 }

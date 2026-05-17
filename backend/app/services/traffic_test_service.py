@@ -13,6 +13,7 @@ from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLe
 from app.models.topology import Topology, TopologyNode
 from app.models.traffic_test import TrafficTest, TrafficTestResult, TrafficTestStatus, TrafficTestType
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
+from app.runtime.go_runner_client import GoRunnerClient, use_go_runner_for_docker
 
 
 _CLAMP_COUNT = (1, 10)
@@ -120,6 +121,74 @@ def run_ping_test(
 
     tt.status = TrafficTestStatus.RUNNING
     tt.started_at = datetime.now(UTC)
+
+    if use_go_runner_for_docker():
+        tt.command = f"go-runner: ping (count={count_clamped})"
+        body = {
+            "type": "ping",
+            "topology_id": str(topology_id),
+            "source_node_id": str(source_node_id),
+            "target_node_id": str(target_node_id),
+            "count": count_clamped,
+        }
+        if deployment_id:
+            body["deployment_id"] = str(deployment_id)
+        try:
+            data = GoRunnerClient.from_settings().post_traffic_test(body)
+        except Exception as exc:
+            tt.status = TrafficTestStatus.FAILED
+            tt.finished_at = datetime.now(UTC)
+            session.add(
+                TrafficTestResult(
+                    traffic_test_id=tt.id,
+                    exit_code=1,
+                    stdout="",
+                    stderr=f"go runner traffic error: {exc}",
+                    latency_ms=None,
+                    success=False,
+                )
+            )
+            _emit_deployment_event(
+                session,
+                deployment_id,
+                DeploymentEventLevel.WARNING,
+                "Traffic test failed: go runner unreachable or invalid response",
+            )
+            session.flush()
+            return tt
+        exit_code = int(data.get("exit_code", 1))
+        stdout = str(data.get("stdout") or "")
+        stderr = str(data.get("stderr") or "")
+        ok = bool(data.get("success")) and exit_code == 0
+        lat = _parse_ping_latency_ms(stdout) if exit_code == 0 else None
+        tt.finished_at = datetime.now(UTC)
+        tt.status = TrafficTestStatus.SUCCEEDED if ok else TrafficTestStatus.FAILED
+        session.add(
+            TrafficTestResult(
+                traffic_test_id=tt.id,
+                exit_code=exit_code,
+                stdout=stdout,
+                stderr=stderr,
+                latency_ms=lat,
+                success=ok,
+            )
+        )
+        if ok:
+            _emit_deployment_event(
+                session,
+                deployment_id,
+                DeploymentEventLevel.INFO,
+                "Traffic test succeeded",
+            )
+        else:
+            _emit_deployment_event(
+                session,
+                deployment_id,
+                DeploymentEventLevel.WARNING,
+                "Traffic test failed",
+            )
+        session.flush()
+        return tt
 
     target_ip = provider.resolve_node_ipv4(topology_id, target_node_id, source_node_id)
     argv = _build_ping_argv(target_ip or "0.0.0.0", count_clamped)
@@ -246,6 +315,80 @@ def run_http_test(
 
     tt.status = TrafficTestStatus.RUNNING
     tt.started_at = datetime.now(UTC)
+
+    if use_go_runner_for_docker():
+        tt.command = f"go-runner: http port={port} path={path}"
+        body = {
+            "type": "http",
+            "topology_id": str(topology_id),
+            "source_node_id": str(source_node_id),
+            "target_node_id": str(target_node_id),
+            "path": path,
+            "port": port,
+        }
+        if deployment_id:
+            body["deployment_id"] = str(deployment_id)
+        try:
+            data = GoRunnerClient.from_settings().post_traffic_test(body)
+        except Exception as exc:
+            tt.status = TrafficTestStatus.FAILED
+            tt.finished_at = datetime.now(UTC)
+            session.add(
+                TrafficTestResult(
+                    traffic_test_id=tt.id,
+                    exit_code=1,
+                    stdout="",
+                    stderr=f"go runner traffic error: {exc}",
+                    latency_ms=None,
+                    success=False,
+                )
+            )
+            _emit_deployment_event(
+                session,
+                deployment_id,
+                DeploymentEventLevel.WARNING,
+                "HTTP traffic test failed: go runner unreachable or invalid response",
+            )
+            session.flush()
+            return tt
+        exit_code = int(data.get("exit_code", 1))
+        stdout = str(data.get("stdout") or "")
+        stderr = str(data.get("stderr") or "")
+        ok = bool(data.get("success")) and exit_code == 0
+        tt.finished_at = datetime.now(UTC)
+        tt.status = TrafficTestStatus.SUCCEEDED if ok else TrafficTestStatus.FAILED
+        session.add(
+            TrafficTestResult(
+                traffic_test_id=tt.id,
+                exit_code=exit_code,
+                stdout=stdout,
+                stderr=stderr,
+                latency_ms=None,
+                success=ok,
+            )
+        )
+        _emit_deployment_event(
+            session,
+            deployment_id,
+            DeploymentEventLevel.INFO,
+            "HTTP traffic test result recorded",
+        )
+        if ok:
+            _emit_deployment_event(
+                session,
+                deployment_id,
+                DeploymentEventLevel.INFO,
+                "HTTP traffic test succeeded",
+            )
+        else:
+            _emit_deployment_event(
+                session,
+                deployment_id,
+                DeploymentEventLevel.WARNING,
+                "HTTP traffic test failed",
+            )
+        session.flush()
+        return tt
 
     target_ip = provider.resolve_node_ipv4(topology_id, target_node_id, source_node_id)
     if target_ip is None:

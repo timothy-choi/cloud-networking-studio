@@ -64,6 +64,9 @@ class DeploymentPlan:
     segmented_networks: bool
     subnet_cidr: str | None
     """Preferred Docker IPAM subnet from the first link that declares a CIDR (legacy path)."""
+    deployment_id: UUID | None = None
+    project_id: UUID | None = None
+    requested_by_user_id: UUID | None = None
 
 
 def _node_degrees(topology: Topology) -> dict[UUID, int]:
@@ -96,7 +99,13 @@ def _resolve_endpoint_ip(
     return raw_node
 
 
-def build_deployment_plan(topology: Topology) -> DeploymentPlan:
+def build_deployment_plan(
+    topology: Topology,
+    *,
+    deployment_id: UUID | None = None,
+    project_id: UUID | None = None,
+    requested_by_user_id: UUID | None = None,
+) -> DeploymentPlan:
     """
     Produce a provider-neutral plan from ORM state.
 
@@ -174,4 +183,7 @@ def build_deployment_plan(topology: Topology) -> DeploymentPlan:
         plan_links=tuple(plan_links_list),
         segmented_networks=multinet,
         subnet_cidr=subnet_cidr,
+        deployment_id=deployment_id,
+        project_id=project_id if project_id is not None else topology.project_id,
+        requested_by_user_id=requested_by_user_id,
     )

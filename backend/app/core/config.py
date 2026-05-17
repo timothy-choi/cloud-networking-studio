@@ -58,6 +58,22 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="AUTH_REQUIRE_LOGIN",
     )
+    # --- Optional Go runtime runner (RUNTIME_EXECUTOR=go) ---
+    runtime_executor: str = Field(
+        default="python",
+        validation_alias="RUNTIME_EXECUTOR",
+        description="python: docker-py in API process; go: delegate deploy/destroy/logs/traffic to cns-runner",
+    )
+    go_runner_url: str = Field(
+        default="http://runner:8090",
+        validation_alias="GO_RUNNER_URL",
+    )
+    go_runner_timeout_seconds: float = Field(
+        default=600.0,
+        ge=5.0,
+        le=3600.0,
+        validation_alias="GO_RUNNER_TIMEOUT_SECONDS",
+    )
 
 
 settings = Settings()

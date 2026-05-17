@@ -39,7 +39,12 @@ class RuntimeProvider(ABC):
 
     @abstractmethod
     def fetch_logs_for_node(
-        self, topology_id: UUID, node_id: UUID, tail: int
+        self,
+        topology_id: UUID,
+        node_id: UUID,
+        tail: int,
+        *,
+        deployment_id: UUID | None = None,
     ) -> str | None:
         """Return recent container stdout/stderr, or None if no matching container."""
 

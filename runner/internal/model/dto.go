@@ -39,11 +39,44 @@ type Event struct {
 	Message string `json:"message"`
 }
 
+// RuntimePort describes a listener on a workload or service.
+type RuntimePort struct {
+	Port       int    `json:"port"`
+	TargetPort int    `json:"target_port,omitempty"`
+	Protocol   string `json:"protocol"`
+}
+
+// RuntimeAccessResource is one materialized unit (node, service, network, …).
+type RuntimeAccessResource struct {
+	Type                 string            `json:"type"`
+	NodeID               string            `json:"node_id,omitempty"`
+	ServiceID            string            `json:"service_id,omitempty"`
+	Name                 string            `json:"name"`
+	RuntimeName          string            `json:"runtime_name"`
+	Status               string            `json:"status,omitempty"`
+	NamespaceOrNetwork   string            `json:"namespace_or_network,omitempty"`
+	Ports                []RuntimePort     `json:"ports,omitempty"`
+	InternalURL          string            `json:"internal_url,omitempty"`
+	ExternalURL          *string           `json:"external_url,omitempty"`
+	Metadata             map[string]string `json:"metadata,omitempty"`
+}
+
+// RuntimeAccess is returned on successful deploy for control-plane persistence and UX.
+type RuntimeAccess struct {
+	DeploymentID       string                  `json:"deployment_id"`
+	TopologyID         string                  `json:"topology_id"`
+	Status             string                  `json:"status"`
+	RuntimeProvider    string                  `json:"runtime_provider"`
+	NamespaceOrNetwork string                  `json:"namespace_or_network"`
+	Resources          []RuntimeAccessResource `json:"resources"`
+}
+
 type DeploymentResponse struct {
-	Status          string  `json:"status"`
-	RuntimeProvider string  `json:"runtime_provider"`
-	Events          []Event `json:"events"`
-	Error           *string `json:"error,omitempty"`
+	Status          string         `json:"status"`
+	RuntimeProvider string         `json:"runtime_provider"`
+	Events          []Event        `json:"events"`
+	RuntimeAccess   *RuntimeAccess `json:"runtime_access,omitempty"`
+	Error           *string        `json:"error,omitempty"`
 }
 
 type RuntimeStatus struct {

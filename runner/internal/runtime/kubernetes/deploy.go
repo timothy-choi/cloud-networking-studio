@@ -94,6 +94,16 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 	ns := NamespaceFor(derefStr(req.ProjectID), req.TopologyID, req.DeploymentID)
 	events = append(events, ev("info", fmt.Sprintf("Kubernetes: using namespace %s", ns)))
 
+	var accessResources []model.RuntimeAccessResource
+	accessResources = append(accessResources, model.RuntimeAccessResource{
+		Type:                 "namespace",
+		Name:                 ns,
+		RuntimeName:          ns,
+		Status:               "active",
+		NamespaceOrNetwork:   ns,
+		Metadata:             map[string]string{"topology_id": strings.TrimSpace(req.TopologyID)},
+	})
+
 	_, err := client.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		_, err = client.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
@@ -223,10 +233,56 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 			return model.DeploymentResponse{Status: "failed", RuntimeProvider: "kubernetes", Events: events, Error: &msg}
 		}
 		events = append(events, ev("info", fmt.Sprintf("Kubernetes Service applied: %s/%s", ns, svcName)))
+
+		internalURL := clusterInternalServiceURL(ns, svcName, 80)
+		nid := strings.TrimSpace(pn.ID)
+		accessResources = append(accessResources, model.RuntimeAccessResource{
+			Type:                 "node",
+			NodeID:               nid,
+			Name:                 strings.TrimSpace(pn.Name),
+			RuntimeName:          dname,
+			Status:               "running",
+			NamespaceOrNetwork:   ns,
+			InternalURL:          internalURL,
+			Metadata: map[string]string{
+				"deployment": dname,
+				"service":    svcName,
+			},
+		})
+		accessResources = append(accessResources, model.RuntimeAccessResource{
+			Type:                 "service",
+			ServiceID:            nid,
+			Name:                 strings.TrimSpace(pn.Name),
+			RuntimeName:          svcName,
+			Status:               "running",
+			NamespaceOrNetwork:   ns,
+			Ports:                []model.RuntimePort{{Port: 80, TargetPort: 80, Protocol: "TCP"}},
+			InternalURL:          internalURL,
+			Metadata: map[string]string{
+				"dns": fmt.Sprintf("%s.%s.svc.cluster.local", svcName, ns),
+			},
+		})
 	}
 
 	events = append(events, ev("info", "Kubernetes deployment completed successfully"))
-	return model.DeploymentResponse{Status: "succeeded", RuntimeProvider: "kubernetes", Events: events}
+	ra := &model.RuntimeAccess{
+		DeploymentID:       strings.TrimSpace(req.DeploymentID),
+		TopologyID:         strings.TrimSpace(req.TopologyID),
+		Status:             "running",
+		RuntimeProvider:    "kubernetes",
+		NamespaceOrNetwork: ns,
+		Resources:          accessResources,
+	}
+	return model.DeploymentResponse{
+		Status:          "succeeded",
+		RuntimeProvider: "kubernetes",
+		Events:          events,
+		RuntimeAccess:   ra,
+	}
+}
+
+func clusterInternalServiceURL(namespace, svc string, port int) string {
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", svc, namespace, port)
 }
 
 func int32Ptr(i int32) *int32 { return &i }

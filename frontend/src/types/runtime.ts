@@ -70,3 +70,45 @@ export interface HealingResponse {
 
 /** Aggregated health tier for UI badges (derived from runtime + topology). */
 export type RuntimeHealthTier = 'healthy' | 'degraded' | 'failed' | 'idle';
+
+/** Persisted / merged runtime access row (node, service, network, …). */
+export type RuntimeAccessResourceRow = {
+  id?: string;
+  type: string;
+  node_id?: string | null;
+  service_id?: string | null;
+  name: string;
+  runtime_name: string;
+  runtime_provider?: string;
+  namespace_or_network?: string | null;
+  status?: string | null;
+  ports?: unknown;
+  internal_url?: string | null;
+  external_url?: string | null;
+  metadata?: Record<string, string> | null;
+};
+
+export type RuntimeAccessEndpoint = {
+  kind?: string;
+  name?: string;
+  internal_url?: string | null;
+  external_url?: string | null;
+};
+
+/** Full deployment runtime payload including integration instructions. */
+export interface DeploymentRuntimeDetailResponse {
+  deployment_id: string;
+  topology_id: string;
+  runtime_provider: string;
+  deployment_status: DeploymentStatus;
+  networks: RuntimeNetworkResponse[];
+  containers: RuntimeContainerResponse[];
+  node_runtime_mapping: Record<string, string>;
+  container_states: Record<string, string>;
+  status?: string | null;
+  namespace_or_network?: string | null;
+  nodes: RuntimeAccessResourceRow[];
+  services: RuntimeAccessResourceRow[];
+  endpoints: RuntimeAccessEndpoint[];
+  instructions: Record<string, unknown> | null;
+}

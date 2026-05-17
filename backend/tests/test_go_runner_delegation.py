@@ -83,14 +83,14 @@ def test_go_executor_deploy_calls_runner_client(go_executor_no_fake_docker, monk
 
     def capture_post(self, plan: DeploymentPlan):
         calls.append("post_deployment")
-        return [(DeploymentEventLevel.INFO, "stubbed runner deploy")]
+        return [(DeploymentEventLevel.INFO, "stubbed runner deploy")], None
 
     monkeypatch.setattr(grc.GoRunnerClient, "post_deployment", capture_post)
     prov = runtime_provider_for_topology("docker")
     assert isinstance(prov, GoHybridDockerRuntimeProvider)
-    events = prov.deploy(_minimal_plan())
+    outcome = prov.deploy(_minimal_plan())
     assert calls == ["post_deployment"]
-    assert events[0][1] == "stubbed runner deploy"
+    assert outcome.events[0][1] == "stubbed runner deploy"
 
 
 def test_go_executor_destroy_calls_runner_client(go_executor_no_fake_docker, monkeypatch):

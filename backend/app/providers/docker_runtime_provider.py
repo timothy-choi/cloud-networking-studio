@@ -13,7 +13,7 @@ import docker
 from docker.errors import APIError, ImageNotFound, NotFound
 
 from app.models.deployment import DeploymentEventLevel
-from app.providers.runtime_provider import ProviderEvent, RuntimeProvider
+from app.providers.runtime_provider import DeployOutcome, ProviderEvent, RuntimeProvider
 from app.providers.runtime_types import (
     ProviderExecResult,
     ProviderHealingResult,
@@ -313,7 +313,7 @@ def _verify_cns_network_attachment(
 class FakeDockerRuntimeProvider(RuntimeProvider):
     """Timeline simulation — no Docker socket (tests / forced fake mode)."""
 
-    def deploy(self, plan: DeploymentPlan) -> list[ProviderEvent]:
+    def deploy(self, plan: DeploymentPlan) -> DeployOutcome:
         events: list[ProviderEvent] = [
             (DeploymentEventLevel.INFO, "Deployment plan validated"),
             (
@@ -359,7 +359,7 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
                 (DeploymentEventLevel.INFO, "Deployment simulation completed"),
             ]
         )
-        return events
+        return DeployOutcome(events=events, runtime_access=None)
 
     def destroy(
         self,
@@ -458,9 +458,10 @@ class DockerRuntimeProvider(RuntimeProvider):
     def __init__(self, client: docker.DockerClient | None = None) -> None:
         self._client = client or docker.from_env()
 
-    def deploy(self, plan: DeploymentPlan) -> list[ProviderEvent]:
+    def deploy(self, plan: DeploymentPlan) -> DeployOutcome:
         if plan.segmented_networks:
-            return self._deploy_segmented_multinet(plan)
+            ev = self._deploy_segmented_multinet(plan)
+            return DeployOutcome(events=ev, runtime_access=None)
         events: list[ProviderEvent] = []
         net_name = topology_network_name(plan.topology_id)
 
@@ -510,7 +511,7 @@ class DockerRuntimeProvider(RuntimeProvider):
                 "Deployment completed successfully",
             )
         )
-        return events
+        return DeployOutcome(events=events, runtime_access=None)
 
     def _deploy_segmented_multinet(self, plan: DeploymentPlan) -> list[ProviderEvent]:
         """One Docker bridge per logical ``network_name``; routers attach to multiple segments."""

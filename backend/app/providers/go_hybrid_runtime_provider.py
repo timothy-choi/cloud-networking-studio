@@ -7,7 +7,7 @@ from uuid import UUID
 
 from app.models.deployment import DeploymentEventLevel
 from app.providers.docker_runtime_provider import DockerRuntimeProvider
-from app.providers.runtime_provider import ProviderEvent, RuntimeProvider
+from app.providers.runtime_provider import DeployOutcome, ProviderEvent, RuntimeProvider
 from app.providers.runtime_types import (
     ProviderExecResult,
     ProviderHealingResult,
@@ -33,9 +33,10 @@ class GoHybridDockerRuntimeProvider(RuntimeProvider):
         self._docker = docker
         self._runner = runner
 
-    def deploy(self, plan: DeploymentPlan) -> list[ProviderEvent]:
+    def deploy(self, plan: DeploymentPlan) -> DeployOutcome:
         _log.info("runtime_executor=go delegating deploy to Go runner")
-        return self._runner.post_deployment(plan)
+        events, ra = self._runner.post_deployment(plan)
+        return DeployOutcome(events=events, runtime_access=ra)
 
     def destroy(
         self,

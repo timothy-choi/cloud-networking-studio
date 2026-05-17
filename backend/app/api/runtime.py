@@ -15,7 +15,6 @@ from app.models.deployment import DeploymentEvent, DeploymentEventLevel
 from app.models.user import User
 from app.services import runtime_state_service as runtime_svc
 from app.services.access_control import (
-    get_deployment_for_user,
     get_node_for_user,
     get_topology_for_user,
     require_deployment_editor,
@@ -23,7 +22,6 @@ from app.services.access_control import (
 from app.runtime.go_runner_client import effective_runtime_executor
 from app.schemas.runtime import (
     ReconciliationResponse,
-    RuntimeDeploymentResponse,
     RuntimeLogsResponse,
     RuntimeStatsResponse,
     RuntimeTopologyResponse,
@@ -80,20 +78,6 @@ def _topology_http(session, topology_id: UUID):
         ) from None
 
 
-def _deployment_http(session, deployment_id: UUID):
-    try:
-        return runtime_svc.build_deployment_runtime(
-            session,
-            deployment_id,
-            emit_inspection_event=True,
-        )
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Deployment not found",
-        ) from None
-
-
 @router.get(
     "/topologies/{topology_id}/runtime",
     response_model=RuntimeTopologyResponse,
@@ -106,22 +90,6 @@ def get_topology_runtime(
 ) -> RuntimeTopologyResponse:
     get_topology_for_user(db, user, topology_id)
     body = _topology_http(db, topology_id)
-    db.commit()
-    return body
-
-
-@router.get(
-    "/deployments/{deployment_id}/runtime",
-    response_model=RuntimeDeploymentResponse,
-    summary="Deployment runtime snapshot",
-)
-def get_deployment_runtime(
-    deployment_id: UUID,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-) -> RuntimeDeploymentResponse:
-    get_deployment_for_user(db, user, deployment_id)
-    body = _deployment_http(db, deployment_id)
     db.commit()
     return body
 

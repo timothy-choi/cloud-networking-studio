@@ -16,6 +16,7 @@ import { DeploymentEventStream } from '../components/events/DeploymentEventStrea
 import { FailureHistory } from '../components/failures/FailureHistory';
 import { RuntimeHealthBadges } from '../components/runtime/RuntimeHealthBadges';
 import { RuntimeMetricsPanel } from '../components/runtime/RuntimeMetricsPanel';
+import { RuntimeAccessPanel } from '../components/runtime/RuntimeAccessPanel';
 import { Spinner } from '../components/Spinner';
 import { TopologyWorkspace } from '../components/topology/TopologyWorkspace';
 import { TrafficValidationSection } from '../components/traffic/TrafficValidationSection';
@@ -371,6 +372,8 @@ export function TopologyDetailPage() {
           latestSeverity={latestSeverity}
         />
       )}
+
+      {topology && deploymentId ? <RuntimeAccessPanel deploymentId={deploymentId} /> : null}
 
       {topology && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

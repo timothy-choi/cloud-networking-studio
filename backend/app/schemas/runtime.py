@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -107,6 +108,25 @@ class RuntimeDeploymentResponse(BaseModel):
     containers: list[RuntimeContainerResponse]
     node_runtime_mapping: dict[str, str] = Field(default_factory=dict)
     container_states: dict[str, str] = Field(default_factory=dict)
+    # --- Runtime access layer (persisted from Go runner when available) ---
+    status: str | None = Field(
+        default=None,
+        description="Coarse access status: running|pending|failed|destroyed (from deployment).",
+    )
+    namespace_or_network: str | None = None
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    services: list[dict[str, Any]] = Field(default_factory=list)
+    endpoints: list[dict[str, Any]] = Field(default_factory=list)
+    instructions: dict[str, Any] | None = None
+
+
+class RuntimeLogsResponse(BaseModel):
+    """Recent stdout/stderr from the materialized node container."""
+
+    node_id: UUID
+    topology_id: UUID
+    tail: int
+    logs: str
 
 
 class RuntimeStatsResponse(BaseModel):
@@ -121,13 +141,27 @@ class RuntimeStatsResponse(BaseModel):
     network_tx_bytes: int | None = None
 
 
-class RuntimeLogsResponse(BaseModel):
-    """Recent stdout/stderr from the materialized node container."""
+class RuntimeLogsBundleResponse(BaseModel):
+    """Aggregated log pointers for a deployment (per-node logs remain on ``/nodes/...``)."""
 
-    node_id: UUID
-    topology_id: UUID
-    tail: int
-    logs: str
+    deployment_id: UUID
+    logs_available: bool
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RuntimeDeploymentSectionResponse(BaseModel):
+    deployment_id: UUID
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RuntimeDeploymentServicesSectionResponse(BaseModel):
+    deployment_id: UUID
+    services: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RuntimeInstructionsOnlyResponse(BaseModel):
+    deployment_id: UUID
+    instructions: dict[str, Any]
 
 
 class StoppedContainerRef(BaseModel):

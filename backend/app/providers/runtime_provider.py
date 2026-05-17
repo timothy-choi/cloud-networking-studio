@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from app.models.deployment import DeploymentEventLevel
@@ -18,15 +20,24 @@ from app.services.deployment_planner import DeploymentPlan
 ProviderEvent = tuple[DeploymentEventLevel, str]
 
 
+@dataclass(frozen=True)
+class DeployOutcome:
+    """Result of applying a deployment plan to a runtime."""
+
+    events: list[ProviderEvent]
+    runtime_access: dict[str, Any] | None = None
+
+
 class RuntimeProvider(ABC):
     """Execute a deployment plan against a concrete infrastructure backend."""
 
     @abstractmethod
-    def deploy(self, plan: DeploymentPlan) -> list[ProviderEvent]:
+    def deploy(self, plan: DeploymentPlan) -> DeployOutcome:
         """
         Run (or simulate) deployment steps.
 
-        Returns (level, message) rows stored as deployment events.
+        Returns events (level, message) for deployment audit rows and optional
+        ``runtime_access`` payload from the Go runner for persistence.
         """
 
     @abstractmethod

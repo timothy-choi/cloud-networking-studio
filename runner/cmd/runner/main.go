@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/api"
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/runtime"
 )
 
 func main() {
@@ -18,7 +19,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("runner init: %v", err)
 	}
-	log.Printf("cns-runner listening on %s", addr)
+	log.Printf("cns-runner listening on %s (RUNTIME_PROVIDER=%s)", addr, runtime.RuntimeProviderEnv())
 	log.Fatal(http.ListenAndServe(addr, withDeploymentRequestLogging(srv.Handler())))
 }
 

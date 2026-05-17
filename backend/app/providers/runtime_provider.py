@@ -30,7 +30,13 @@ class RuntimeProvider(ABC):
         """
 
     @abstractmethod
-    def destroy(self, topology_id: UUID, deployment_id: UUID) -> list[ProviderEvent]:
+    def destroy(
+        self,
+        topology_id: UUID,
+        deployment_id: UUID,
+        *,
+        project_id: UUID | None = None,
+    ) -> list[ProviderEvent]:
         """Tear down external resources created for this topology/deployment."""
 
     @abstractmethod
@@ -45,6 +51,7 @@ class RuntimeProvider(ABC):
         tail: int,
         *,
         deployment_id: UUID | None = None,
+        project_id: UUID | None = None,
     ) -> str | None:
         """Return recent container stdout/stderr, or None if no matching container."""
 

@@ -274,7 +274,7 @@ def destroy_deployment(
         _append_event(db, dep.id, "Deployment stopping — tearing down runtime resources.")
         db.flush()
 
-    rows = provider.destroy(topo.id, dep.id)
+    rows = provider.destroy(topo.id, dep.id, project_id=topo.project_id)
 
     for level, msg in rows:
         db.add(

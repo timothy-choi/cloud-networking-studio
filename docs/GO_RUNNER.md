@@ -7,7 +7,7 @@ Cloud Networking Studio started with a **FastAPI control plane** and a **Python 
 The **Go runner** (`runner/`, binary `cns-runner`) is an **optional** HTTP service that sits between FastAPI and the engine:
 
 - **FastAPI** — auth, projects, persistence, deployment records, traffic-test records, public HTTP API.
-- **Go runner** — deploy/destroy/logs/traffic-test execution against Docker **now**, with room for a **Kubernetes** implementation later without growing the Python process.
+- **Go runner** — deploy/destroy/logs/traffic-test execution against **Docker** (default) or **Kubernetes** when `RUNTIME_PROVIDER` is set, without growing the Python process.
 
 The **Python Docker provider remains** the default (`RUNTIME_EXECUTOR=python`) so existing behaviour, tests, and CI are unchanged.
 
@@ -23,10 +23,12 @@ Browser / API clients
         │
         └─ RUNTIME_EXECUTOR=go ──────► HTTP ──► cns-runner (Go)
                                               │
-                                              └─► Docker Engine API
+                                              ├─► RUNTIME_PROVIDER=docker ──► Docker Engine API
+                                              │
+                                              └─► RUNTIME_PROVIDER=kubernetes ──► Kubernetes API (local kubeconfig / in-cluster)
 ```
 
-When `RUNTIME_EXECUTOR=go` and `runtime_target` is `docker`, the API uses **`GoHybridDockerRuntimeProvider`**: deploy, destroy, node logs, and traffic tests are sent to the runner; **inspect**, **stats**, **reconcile**, **exec** (except traffic), and lifecycle helpers still use **docker-py** in the backend for consistent behaviour until the Go surface fully replaces those paths.
+When `RUNTIME_EXECUTOR=go` and `runtime_target` is `docker`, the API uses **`GoHybridDockerRuntimeProvider`**: deploy, destroy, node logs, and traffic tests are sent to the runner; **inspect**, **stats**, **reconcile**, **exec** (except traffic), and lifecycle helpers still use **docker-py** in the backend for consistent behaviour until the Go surface fully replaces those paths. With **`RUNTIME_PROVIDER=kubernetes`** on the runner, those mutating calls target the cluster instead of Docker while the hybrid provider still uses docker-py for read-only inspection (see [Kubernetes runtime](KUBERNETES_RUNTIME.md)).
 
 ## Environment variables
 
@@ -37,17 +39,23 @@ When `RUNTIME_EXECUTOR=go` and `runtime_target` is `docker`, the API uses **`GoH
 | `GO_RUNNER_TIMEOUT_SECONDS` | `600` | HTTP client timeout for runner calls. |
 | `CNS_USE_FAKE_DOCKER` | unset | When `1`/`true`/`yes`, the stack uses the fake provider and **never** calls the Go runner, even if `RUNTIME_EXECUTOR=go`. |
 
-The runner listens on **`8090`** by default, or `RUNNER_LISTEN_ADDR` inside the runner container.
+**Runner container** (process env read by `cns-runner`, e.g. in `docker-compose.prod.yml`):
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `RUNTIME_PROVIDER` | `docker` | `docker` or `kubernetes` (`k8s` accepted). Selects which engine handles `POST /deployments`, `DELETE /deployments/{id}`, logs, and traffic tests. |
+| `KUBECONFIG` | (default rules) | When using Kubernetes, path to kubeconfig inside the runner container (mount from host for kind/minikube). |
+| `RUNNER_LISTEN_ADDR` | `:8090` | Listen address for the HTTP API. |
 
 ### Control plane status API
 
 - **`GET /runtime/status`** (also **`GET /api/runtime/status`** behind Caddy) — public probe, no auth.
   - **`RUNTIME_EXECUTOR=python`** — returns exactly `{"status":"ok","runtime_provider":"python"}`.
-  - **`RUNTIME_EXECUTOR=go`** — proxies JSON from **`GET {GO_RUNNER_URL}/runtime/status`**. If the runner is unreachable, the API responds with **503** and detail **`Go runner unavailable`**.
+  - **`RUNTIME_EXECUTOR=go`** — proxies JSON from **`GET {GO_RUNNER_URL}/runtime/status`**. If the runner is unreachable, the API responds with **503** and detail **`Go runner unavailable`**. When the runner uses Kubernetes, expect **`kubernetes_reachable`**, **`current_context`**, and **`runtime_provider`** reflecting the runner configuration (see [Kubernetes runtime](KUBERNETES_RUNTIME.md)).
 
 ## Docker Compose
 
-`docker-compose.prod.yml` defines a **`runner`** service (internal port `8090`, Docker socket mounted). The **backend** declares `depends_on: runner` with `condition: service_started` so the runner container exists before the API starts. With `RUNTIME_EXECUTOR=python`, the backend does not call the runner unless you switch executor.
+`docker-compose.prod.yml` defines a **`runner`** service (internal port `8090`, Docker socket mounted). The **backend** declares `depends_on: runner` with `condition: service_started` so the runner container exists before the API starts. With `RUNTIME_EXECUTOR=python`, the backend does not call the runner unless you switch executor. **`RUNTIME_PROVIDER`** defaults to **`docker`** on the runner; set **`kubernetes`** only when the runner container has a working kubeconfig (see [Kubernetes runtime](KUBERNETES_RUNTIME.md)).
 
 ## Local development
 
@@ -78,8 +86,8 @@ unset CNS_USE_FAKE_DOCKER   # real Docker required for hybrid + runner
 
 ### Limitations today
 
-The Go Docker path implements **non-segmented** topologies (single CNS bridge). **Segmented multinet** deployments still require `RUNTIME_EXECUTOR=python` until the Go provider gains parity.
+The Go Docker path implements **non-segmented** topologies (single CNS bridge). **Segmented multinet** deployments still require `RUNTIME_EXECUTOR=python` until the Go provider gains parity. The Go Kubernetes path does not support segmented multinet yet either.
 
-## Future: Kubernetes provider
+## Kubernetes runtime
 
-The runner package layout (`internal/runtime/docker/`, future `internal/runtime/kubernetes/`) is meant to grow a **second adapter** behind the same HTTP contract so FastAPI can keep one integration (`go_runner_client.py`) while the active engine switches from Docker to Kubernetes per topology or global config.
+See **[docs/KUBERNETES_RUNTIME.md](KUBERNETES_RUNTIME.md)** for architecture, local kind/minikube setup, namespace mapping, and limitations.

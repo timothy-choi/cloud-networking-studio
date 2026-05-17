@@ -47,19 +47,29 @@ type DeploymentResponse struct {
 }
 
 type RuntimeStatus struct {
-	Status          string `json:"status"`
-	RuntimeProvider string `json:"runtime_provider"`
-	DockerReachable bool   `json:"docker_reachable"`
-	Message         string `json:"message,omitempty"`
+	Status                 string `json:"status"`
+	RuntimeProvider        string `json:"runtime_provider"`
+	DockerReachable        bool   `json:"docker_reachable"`
+	KubernetesReachable    bool   `json:"kubernetes_reachable"`
+	CurrentContext         string `json:"current_context,omitempty"`
+	Message                string `json:"message,omitempty"`
+}
+
+type ResourceRef struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
 }
 
 type DeploymentGetResponse struct {
-	DeploymentID    string `json:"deployment_id"`
-	TopologyID        string `json:"topology_id"`
-	Status            string `json:"status"`
-	RuntimeProvider   string `json:"runtime_provider"`
-	ContainerIDs      []string `json:"container_ids,omitempty"`
-	Error             *string `json:"error,omitempty"`
+	DeploymentID    string         `json:"deployment_id"`
+	TopologyID      string         `json:"topology_id"`
+	Status          string         `json:"status"`
+	RuntimeProvider string         `json:"runtime_provider"`
+	ContainerIDs    []string       `json:"container_ids,omitempty"`
+	Namespace       string         `json:"namespace,omitempty"`
+	Resources       []ResourceRef  `json:"resources,omitempty"`
+	Error           *string        `json:"error,omitempty"`
 }
 
 type LogsResponse struct {
@@ -70,14 +80,15 @@ type LogsResponse struct {
 }
 
 type TrafficRequest struct {
-	Type           string `json:"type"` // ping | http
-	TopologyID     string `json:"topology_id"`
-	SourceNodeID   string `json:"source_node_id"`
-	TargetNodeID   string `json:"target_node_id"`
-	Count          int    `json:"count,omitempty"`
-	Path           string `json:"path,omitempty"`
-	Port           int    `json:"port,omitempty"`
-	DeploymentID   string `json:"deployment_id,omitempty"`
+	Type           string  `json:"type"` // ping | http
+	TopologyID     string  `json:"topology_id"`
+	SourceNodeID   string  `json:"source_node_id"`
+	TargetNodeID   string  `json:"target_node_id"`
+	Count          int     `json:"count,omitempty"`
+	Path           string  `json:"path,omitempty"`
+	Port           int     `json:"port,omitempty"`
+	DeploymentID   string  `json:"deployment_id,omitempty"`
+	ProjectID      *string `json:"project_id,omitempty"`
 }
 
 type TrafficResponse struct {

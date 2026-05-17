@@ -37,9 +37,17 @@ class GoHybridDockerRuntimeProvider(RuntimeProvider):
         _log.info("runtime_executor=go delegating deploy to Go runner")
         return self._runner.post_deployment(plan)
 
-    def destroy(self, topology_id: UUID, deployment_id: UUID) -> list[ProviderEvent]:
+    def destroy(
+        self,
+        topology_id: UUID,
+        deployment_id: UUID,
+        *,
+        project_id: UUID | None = None,
+    ) -> list[ProviderEvent]:
         _log.info("runtime_executor=go delegating destroy to Go runner")
-        return self._runner.delete_deployment(deployment_id, topology_id)
+        return self._runner.delete_deployment(
+            deployment_id, topology_id, project_id=project_id
+        )
 
     def inspect_topology_runtime(self, topology_id: UUID) -> ProviderRuntimeSnapshot:
         return self._docker.inspect_topology_runtime(topology_id)
@@ -51,13 +59,24 @@ class GoHybridDockerRuntimeProvider(RuntimeProvider):
         tail: int,
         *,
         deployment_id: UUID | None = None,
+        project_id: UUID | None = None,
     ) -> str | None:
         if deployment_id is not None:
-            text = self._runner.get_deployment_logs(deployment_id, topology_id, node_id, tail)
+            text = self._runner.get_deployment_logs(
+                deployment_id,
+                topology_id,
+                node_id,
+                tail,
+                project_id=project_id,
+            )
             if text is not None:
                 return text
         return self._docker.fetch_logs_for_node(
-            topology_id, node_id, tail, deployment_id=deployment_id
+            topology_id,
+            node_id,
+            tail,
+            deployment_id=deployment_id,
+            project_id=project_id,
         )
 
     def fetch_stats_for_node(

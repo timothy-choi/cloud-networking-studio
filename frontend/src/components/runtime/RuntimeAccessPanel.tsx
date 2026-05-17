@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { fetchDeploymentRuntime } from '../../api/deploymentRuntime';
+import { exposeDeploymentService, unexposeDeploymentService } from '../../api/serviceExposure';
 import { Spinner } from '../Spinner';
-import type { DeploymentRuntimeDetailResponse, RuntimeAccessResourceRow } from '../../types/runtime';
+import type {
+  DeploymentRuntimeDetailResponse,
+  RuntimeAccessResourceRow,
+  ServiceExposureRow,
+} from '../../types/runtime';
 
 const TABS = ['overview', 'nodes', 'services', 'endpoints', 'instructions'] as const;
 type TabId = (typeof TABS)[number];
@@ -35,11 +40,21 @@ function InstructionSection({ modeKey, body }: { modeKey: string; body: unknown 
   const notes = typeof d.notes === 'string' ? d.notes : null;
   const configMap = d.config_map;
   const endpoints = Array.isArray(d.endpoints) ? d.endpoints : null;
+  const items = Array.isArray(d.items) ? d.items : null;
 
   return (
     <section className="rounded-lg border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-950/40">
       <h4 className="text-xs font-semibold uppercase tracking-wide text-cns-label">{title}</h4>
       {notes ? <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">{notes}</p> : null}
+      {items && items.length > 0 ? (
+        <ul className="mt-2 space-y-2 text-sm text-zinc-800 dark:text-zinc-200">
+          {items.map((it, idx) => (
+            <li key={idx} className="rounded border border-zinc-200 bg-white/80 px-2 py-1.5 font-mono text-[11px] dark:border-zinc-700 dark:bg-zinc-900/60">
+              {typeof it === 'object' && it !== null ? JSON.stringify(it) : String(it)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {commands.length > 0 ? (
         <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-950/90 p-2 font-mono text-[11px] text-zinc-100">
           {commands.join('\n')}
@@ -102,6 +117,146 @@ function ResourceTable({ rows }: { rows: RuntimeAccessResourceRow[] }) {
               </td>
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ServicesPanel({
+  deploymentId,
+  services,
+  exposures,
+  onRefresh,
+}: {
+  deploymentId: string;
+  services: RuntimeAccessResourceRow[];
+  exposures: ServiceExposureRow[] | undefined;
+  onRefresh: () => Promise<void>;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const activeByResource = useMemo(() => {
+    const m = new Map<string, ServiceExposureRow>();
+    for (const e of exposures ?? []) {
+      if (e.status === 'active') {
+        m.set(e.runtime_resource_id, e);
+      }
+    }
+    return m;
+  }, [exposures]);
+
+  if (services.length === 0) {
+    return (
+      <p className="text-sm text-cns-muted">
+        No persisted runtime rows yet. Deploy with the Go runner to populate services.
+      </p>
+    );
+  }
+
+  async function onExpose(svcId: string) {
+    setBusyId(svcId);
+    try {
+      await exposeDeploymentService(deploymentId, svcId, {});
+      await onRefresh();
+    } catch (e) {
+      window.alert(e instanceof ApiError ? `${e.status} ${e.statusText}` : 'Expose failed');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onUnexpose(svcId: string) {
+    setBusyId(svcId);
+    try {
+      await unexposeDeploymentService(deploymentId, svcId);
+      await onRefresh();
+    } catch (e) {
+      window.alert(e instanceof ApiError ? `${e.status} ${e.statusText}` : 'Unexpose failed');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="overflow-x-auto space-y-3">
+      <p className="text-xs text-cns-muted">
+        Expose registers how you can reach a workload from outside the lab network (host ports, port-forward, or future
+        ingress). The control plane stores hints; your environment still runs the actual port-forward or tunnel.
+      </p>
+      <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+        <thead>
+          <tr className="border-b border-zinc-200 text-xs uppercase tracking-wide text-cns-label dark:border-zinc-700">
+            <th className="py-2 pr-3 font-medium">Name</th>
+            <th className="py-2 pr-3 font-medium">Runtime</th>
+            <th className="py-2 pr-3 font-medium">Internal</th>
+            <th className="py-2 pr-3 font-medium">Exposure</th>
+            <th className="py-2 pr-3 font-medium">External</th>
+            <th className="py-2 font-medium">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {services.map((r, i) => {
+            const rid = r.id;
+            const active = rid ? activeByResource.get(rid) : undefined;
+            const meta = active?.metadata;
+            const cmds = meta && Array.isArray(meta.commands) ? (meta.commands as string[]) : [];
+            return (
+              <tr key={`${r.runtime_name}-${i}`} className="border-b border-zinc-100 align-top dark:border-zinc-800">
+                <td className="py-2 pr-3 font-medium">{r.name}</td>
+                <td className="py-2 pr-3 font-mono text-xs">{r.runtime_name}</td>
+                <td className="py-2 pr-3 break-all font-mono text-[11px] text-emerald-800 dark:text-emerald-300">
+                  {r.internal_url ?? '—'}
+                </td>
+                <td className="py-2 pr-3 text-xs">
+                  {active ? (
+                    <div>
+                      <div className="font-semibold text-zinc-800 dark:text-zinc-100">{active.exposure_type}</div>
+                      <div className="text-cns-muted">{active.status}</div>
+                      {active.expires_at ? (
+                        <div className="mt-0.5 text-[11px] text-cns-muted">expires {active.expires_at}</div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <span className="text-cns-muted">—</span>
+                  )}
+                </td>
+                <td className="py-2 pr-3 break-all font-mono text-[11px]">
+                  {active?.external_url ? (
+                    <span className="text-emerald-800 dark:text-emerald-300">{active.external_url}</span>
+                  ) : cmds.length > 0 ? (
+                    <pre className="max-h-28 overflow-auto whitespace-pre-wrap rounded bg-zinc-950/90 p-1.5 text-[10px] text-zinc-100">
+                      {cmds.join('\n')}
+                    </pre>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+                <td className="py-2">
+                  {!rid ? (
+                    <span className="text-xs text-cns-muted">No row id</span>
+                  ) : active ? (
+                    <button
+                      type="button"
+                      disabled={busyId === rid}
+                      onClick={() => void onUnexpose(rid)}
+                      className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                    >
+                      {busyId === rid ? '…' : 'Unexpose'}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busyId === rid}
+                      onClick={() => void onExpose(rid)}
+                      className="rounded-md border border-emerald-600 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
+                    >
+                      {busyId === rid ? '…' : 'Expose'}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -207,6 +362,12 @@ export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | nu
               <dd className="mt-1 break-all font-mono text-xs">{data.namespace_or_network ?? '—'}</dd>
             </div>
             <div className="sm:col-span-2">
+              <dt className="text-xs uppercase tracking-wide text-cns-label">Active exposures</dt>
+              <dd className="mt-1 text-sm font-medium">
+                {(data.exposures ?? []).filter((e) => e.status === 'active').length}
+              </dd>
+            </div>
+            <div className="sm:col-span-2">
               <dt className="text-xs uppercase tracking-wide text-cns-label">Deployment id</dt>
               <dd className="mt-1 font-mono text-xs text-cns-muted">{data.deployment_id}</dd>
             </div>
@@ -214,7 +375,14 @@ export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | nu
         ) : null}
 
         {data && tab === 'nodes' ? <ResourceTable rows={data.nodes} /> : null}
-        {data && tab === 'services' ? <ResourceTable rows={data.services} /> : null}
+        {data && tab === 'services' ? (
+          <ServicesPanel
+            deploymentId={deploymentId}
+            services={data.services}
+            exposures={data.exposures}
+            onRefresh={load}
+          />
+        ) : null}
 
         {data && tab === 'endpoints' ? (
           data.endpoints.length === 0 ? (
@@ -256,6 +424,7 @@ export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | nu
                   ['ci_cd', 'Use in CI/CD'],
                   ['kubernetes', 'Use from Kubernetes'],
                   ['api', 'Control through API'],
+                  ['exposed_services', 'Exposed services'],
                 ] as const
               ).map(([key, heading]) => (
                 <div key={key}>

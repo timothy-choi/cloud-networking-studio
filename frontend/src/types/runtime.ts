@@ -95,6 +95,22 @@ export type RuntimeAccessEndpoint = {
   external_url?: string | null;
 };
 
+/** Step 40: user-requested external reachability for one persisted service row. */
+export type ServiceExposureRow = {
+  id: string;
+  deployment_id: string;
+  runtime_resource_id: string;
+  exposure_type: string;
+  external_url?: string | null;
+  external_host?: string | null;
+  external_port?: number | null;
+  status: string;
+  expires_at?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
 /** Full deployment runtime payload including integration instructions. */
 export interface DeploymentRuntimeDetailResponse {
   deployment_id: string;
@@ -111,4 +127,5 @@ export interface DeploymentRuntimeDetailResponse {
   services: RuntimeAccessResourceRow[];
   endpoints: RuntimeAccessEndpoint[];
   instructions: Record<string, unknown> | null;
+  exposures?: ServiceExposureRow[];
 }

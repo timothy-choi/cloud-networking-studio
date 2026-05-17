@@ -96,12 +96,12 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 
 	var accessResources []model.RuntimeAccessResource
 	accessResources = append(accessResources, model.RuntimeAccessResource{
-		Type:                 "namespace",
-		Name:                 ns,
-		RuntimeName:          ns,
-		Status:               "active",
-		NamespaceOrNetwork:   ns,
-		Metadata:             map[string]string{"topology_id": strings.TrimSpace(req.TopologyID)},
+		Type:               "namespace",
+		Name:               ns,
+		RuntimeName:        ns,
+		Status:             "active",
+		NamespaceOrNetwork: ns,
+		Metadata:           map[string]string{"topology_id": strings.TrimSpace(req.TopologyID)},
 	})
 
 	_, err := client.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
@@ -237,29 +237,35 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 		internalURL := clusterInternalServiceURL(ns, svcName, 80)
 		nid := strings.TrimSpace(pn.ID)
 		accessResources = append(accessResources, model.RuntimeAccessResource{
-			Type:                 "node",
-			NodeID:               nid,
-			Name:                 strings.TrimSpace(pn.Name),
-			RuntimeName:          dname,
-			Status:               "running",
-			NamespaceOrNetwork:   ns,
-			InternalURL:          internalURL,
+			Type:               "node",
+			NodeID:             nid,
+			Name:               strings.TrimSpace(pn.Name),
+			RuntimeName:        dname,
+			Status:             "running",
+			NamespaceOrNetwork: ns,
+			InternalURL:        internalURL,
 			Metadata: map[string]string{
-				"deployment": dname,
-				"service":    svcName,
+				"deployment":              dname,
+				"service":                 svcName,
+				"cluster_service_type":    "ClusterIP",
+				"public_access":           "manual_port_forward_required",
+				"manual_port_forward_cmd": fmt.Sprintf("kubectl port-forward -n %s svc/%s 8080:80", ns, svcName),
 			},
 		})
 		accessResources = append(accessResources, model.RuntimeAccessResource{
-			Type:                 "service",
-			ServiceID:            nid,
-			Name:                 strings.TrimSpace(pn.Name),
-			RuntimeName:          svcName,
-			Status:               "running",
-			NamespaceOrNetwork:   ns,
-			Ports:                []model.RuntimePort{{Port: 80, TargetPort: 80, Protocol: "TCP"}},
-			InternalURL:          internalURL,
+			Type:               "service",
+			ServiceID:          nid,
+			Name:               strings.TrimSpace(pn.Name),
+			RuntimeName:        svcName,
+			Status:             "running",
+			NamespaceOrNetwork: ns,
+			Ports:              []model.RuntimePort{{Port: 80, TargetPort: 80, Protocol: "TCP"}},
+			InternalURL:        internalURL,
 			Metadata: map[string]string{
-				"dns": fmt.Sprintf("%s.%s.svc.cluster.local", svcName, ns),
+				"dns":                     fmt.Sprintf("%s.%s.svc.cluster.local", svcName, ns),
+				"cluster_service_type":    "ClusterIP",
+				"public_access":           "manual_port_forward_required",
+				"manual_port_forward_cmd": fmt.Sprintf("kubectl port-forward -n %s svc/%s 8080:80", ns, svcName),
 			},
 		})
 	}

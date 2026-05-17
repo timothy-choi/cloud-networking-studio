@@ -264,6 +264,52 @@ class GoRunnerClient:
             raise ValueError("runner returned non-object JSON for traffic test")
         return raw
 
+    def post_runtime_service_exec(
+        self,
+        deployment_id: UUID,
+        topology_id: UUID,
+        workload_node_id: str,
+        body: dict[str, Any],
+        *,
+        project_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, str] = {"topology_id": str(topology_id)}
+        if project_id is not None:
+            params["project_id"] = str(project_id)
+        with self._client() as client:
+            r = client.post(
+                f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/exec",
+                params=params,
+                json=body,
+            )
+        r.raise_for_status()
+        raw = r.json()
+        if not isinstance(raw, dict):
+            raise ValueError("runner returned non-object JSON for exec")
+        return raw
+
+    def post_runtime_service_restart(
+        self,
+        deployment_id: UUID,
+        topology_id: UUID,
+        workload_node_id: str,
+        *,
+        project_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, str] = {"topology_id": str(topology_id)}
+        if project_id is not None:
+            params["project_id"] = str(project_id)
+        with self._client() as client:
+            r = client.post(
+                f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/restart",
+                params=params,
+            )
+        r.raise_for_status()
+        raw = r.json()
+        if not isinstance(raw, dict):
+            raise ValueError("runner returned non-object JSON for restart")
+        return raw
+
 
 def _safe_json(r: httpx.Response) -> dict[str, Any]:
     try:

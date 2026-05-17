@@ -14,6 +14,7 @@ from app.db.session import Base
 
 if TYPE_CHECKING:
     from app.models.topology import Topology
+    from app.models.deployment_runtime_exec_result import DeploymentRuntimeExecResult
     from app.models.deployment_runtime_resource import DeploymentRuntimeResource
     from app.models.deployment_service_exposure import DeploymentServiceExposure
 
@@ -89,6 +90,11 @@ class Deployment(Base):
         passive_deletes=True,
     )
     service_exposures: Mapped[list["DeploymentServiceExposure"]] = relationship(
+        back_populates="deployment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    runtime_exec_results: Mapped[list["DeploymentRuntimeExecResult"]] = relationship(
         back_populates="deployment",
         cascade="all, delete-orphan",
         passive_deletes=True,

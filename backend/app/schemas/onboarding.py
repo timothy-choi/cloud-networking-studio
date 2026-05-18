@@ -18,7 +18,10 @@ class OnboardingStepResponse(BaseModel):
 
 class OnboardingStatusResponse(BaseModel):
     has_seen_onboarding: bool
-    completed_steps: list[str]
+    completed_steps: list[str] = Field(
+        ...,
+        description="Persisted step ids (manual completions plus auto-detections merged in). Sticky until POST /onboarding/reset.",
+    )
     steps: list[OnboardingStepResponse]
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -28,7 +31,7 @@ class OnboardingStatusUpdate(BaseModel):
     has_seen_onboarding: bool | None = None
     completed_steps: list[str] | None = Field(
         default=None,
-        description="When set, replaces the stored manual completion list.",
+        description="When set, replaces stored completions, then live auto-detection is merged in (empty list clears explicit history but project/topology may reappear from the workspace).",
     )
 
 

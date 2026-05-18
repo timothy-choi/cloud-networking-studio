@@ -46,6 +46,7 @@ STEP_HEALTH_CHECK = "health_check"
 STEP_SAFE_EXEC = "safe_exec"
 STEP_DESTROY_DEPLOYMENT = "destroy_deployment"
 
+
 _ONBOARDING_CATALOG: list[dict[str, str]] = [
     {
         "id": STEP_PROJECT,
@@ -88,6 +89,17 @@ _ONBOARDING_CATALOG: list[dict[str, str]] = [
         "description": "Tear down runtime resources when you are finished to free capacity.",
     },
 ]
+
+
+def _persistent_completed_ids(row: UserOnboarding) -> set[str]:
+    return {str(s).strip() for s in (row.completed_steps or []) if str(s).strip()}
+
+
+def _ordered_completed_list(merged: set[str]) -> list[str]:
+    catalog_ids = [e["id"] for e in _ONBOARDING_CATALOG]
+    out = [sid for sid in catalog_ids if sid in merged]
+    extras = sorted(sid for sid in merged if sid not in set(catalog_ids))
+    return out + extras
 
 
 def _project_ids_for_user(db: Session, user_id: UUID) -> list[UUID]:
@@ -185,27 +197,52 @@ def get_or_create_onboarding_row(db: Session, user_id: UUID) -> UserOnboarding:
     return row
 
 
-def build_status_response(db: Session, user: User) -> OnboardingStatusResponse:
+def build_status_response(
+    db: Session,
+    user: User,
+    *,
+    persist_auto_merge: bool = True,
+) -> OnboardingStatusResponse:
+    """Return checklist state.
+
+    When ``persist_auto_merge`` is true (default), union live auto-detection into ``completed_steps`` and
+    persist so completions are sticky across later state loss (e.g. destroy). When false (used right
+    after reset), do not write auto-detections to the DB; still show live auto in per-step ``completed``
+    for display so the response matches the pre-reset UX.
+    """
     row = get_or_create_onboarding_row(db, user.id)
-    manual = set(str(s) for s in (row.completed_steps or []) if str(s).strip())
     auto = _auto_detected(db, user)
+    persistent_before = _persistent_completed_ids(row)
+    if persist_auto_merge:
+        merged = persistent_before | {sid for sid, ok in auto.items() if ok}
+        ordered = _ordered_completed_list(merged)
+        if set(ordered) != persistent_before:
+            row.completed_steps = ordered
+            db.commit()
+            db.refresh(row)
+
+    persistent_db = _persistent_completed_ids(row)
+    if persist_auto_merge:
+        display_done = persistent_db
+    else:
+        display_done = persistent_db | {sid for sid, ok in auto.items() if ok}
+
     steps: list[OnboardingStepResponse] = []
     for entry in _ONBOARDING_CATALOG:
         sid = entry["id"]
-        ad = bool(auto.get(sid))
-        done = sid in manual or ad
+        done = sid in display_done
         steps.append(
             OnboardingStepResponse(
                 id=sid,
                 title=entry["title"],
                 description=entry["description"],
                 completed=done,
-                auto_detected=ad and sid not in manual,
+                auto_detected=bool(auto.get(sid)) and sid not in persistent_before,
             )
         )
     return OnboardingStatusResponse(
         has_seen_onboarding=bool(row.has_seen_onboarding),
-        completed_steps=sorted(manual),
+        completed_steps=sorted(persistent_db),
         steps=steps,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -217,7 +254,8 @@ def update_onboarding_status(db: Session, user: User, body: OnboardingStatusUpda
     if body.has_seen_onboarding is not None:
         row.has_seen_onboarding = body.has_seen_onboarding
     if body.completed_steps is not None:
-        row.completed_steps = [str(s).strip() for s in body.completed_steps if str(s).strip()]
+        cur = {str(s).strip() for s in body.completed_steps if str(s).strip()}
+        row.completed_steps = _ordered_completed_list(cur)
     db.commit()
     db.refresh(row)
     return build_status_response(db, user)
@@ -229,11 +267,11 @@ def complete_onboarding_step(db: Session, user: User, step: str) -> OnboardingSt
     if sid not in valid:
         raise ValueError("unknown step id")
     row = get_or_create_onboarding_row(db, user.id)
-    cur = list(row.completed_steps or [])
-    if sid not in cur:
-        cur.append(sid)
-    row.completed_steps = cur
+    cur = _persistent_completed_ids(row)
+    cur.add(sid)
+    row.completed_steps = _ordered_completed_list(cur)
     db.commit()
+    db.refresh(row)
     return build_status_response(db, user)
 
 
@@ -242,7 +280,8 @@ def reset_onboarding(db: Session, user: User) -> OnboardingStatusResponse:
     row.has_seen_onboarding = False
     row.completed_steps = []
     db.commit()
-    return build_status_response(db, user)
+    db.refresh(row)
+    return build_status_response(db, user, persist_auto_merge=False)
 
 
 def _get_or_create_demo_project(db: Session, user: User) -> Project:

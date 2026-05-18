@@ -9,6 +9,7 @@ import (
 	docker "github.com/fsouza/go-dockerclient"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/trafficutil"
 )
 
 func clampTail(tail int) int {
@@ -211,6 +212,9 @@ func RunRuntimeTrafficOp(ctx context.Context, cli *docker.Client, req model.Runt
 		}
 		if code != 0 {
 			base.Status = "failed"
+			if trafficutil.HTTPWgetMissing(stderr) {
+				base.Output = strings.TrimSpace("HTTP test tool is missing in client image\n" + base.Output)
+			}
 			return base
 		}
 		base.Status = "passed"

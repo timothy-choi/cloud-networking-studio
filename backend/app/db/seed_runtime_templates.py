@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -44,15 +46,15 @@ STARTER_SPECS: list[dict[str, Any]] = [
                     "id": "cs-client",
                     "name": "client",
                     "node_type": "generic",
-                    "image": None,
+                    "image": "alpine:3.19",
                     "ip_address": None,
                     "config": None,
                 },
                 {
                     "id": "cs-service",
-                    "name": "service",
+                    "name": "server",
                     "node_type": "generic",
-                    "image": None,
+                    "image": "nginx:alpine",
                     "ip_address": None,
                     "config": None,
                 },
@@ -199,4 +201,17 @@ def ensure_starter_runtime_templates(db: Session) -> None:
                 slug=slug,
             )
         )
+    db.commit()
+    _refresh_client_service_catalog_snapshot(db)
+
+
+def _refresh_client_service_catalog_snapshot(db: Session) -> None:
+    """Apply latest ``client-service`` graph to existing catalog rows (idempotent)."""
+    spec = next((s for s in STARTER_SPECS if s["slug"] == "client-service"), None)
+    if spec is None:
+        return
+    row = db.scalar(select(RuntimeTemplate).where(RuntimeTemplate.slug == "client-service"))
+    if row is None:
+        return
+    row.topology_snapshot = spec["snapshot"]
     db.commit()

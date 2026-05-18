@@ -144,6 +144,30 @@ def test_viewer_cannot_clone(client_strict):
     assert r.status_code == 403
 
 
+def test_client_service_starter_snapshot_http_lab(client_strict):
+    """Built-in client + server template uses nginx + alpine with wget for reliable HTTP traffic tests."""
+    ha, _, pid, _ = _project_topology(client_strict)
+    with SessionLocal() as db:
+        tpl_id = db.scalar(select(RuntimeTemplate.id).where(RuntimeTemplate.slug == "client-service"))
+    assert tpl_id is not None
+    cl = client_strict.post(
+        f"/templates/{tpl_id}/clone",
+        headers=ha,
+        json={"name": "cloned-http-lab", "project_id": pid},
+    )
+    assert cl.status_code == 201, cl.text
+    tid = cl.json()["id"]
+    nodes = client_strict.get(f"/topologies/{tid}/nodes", headers=ha).json()
+    by_name = {n["name"]: n for n in nodes}
+    assert "client" in by_name and "server" in by_name
+    assert by_name["client"]["image"] == "alpine:3.19"
+    assert "nginx" in (by_name["server"]["image"] or "").lower()
+    assert by_name["client"]["node_type"] == "generic"
+    assert by_name["server"]["node_type"] == "generic"
+    links = client_strict.get(f"/topologies/{tid}/links", headers=ha).json()
+    assert len(links) == 1
+
+
 def test_delete_built_in_forbidden(client_strict):
     ha, _, _, _ = _project_topology(client_strict)
     with SessionLocal() as db:

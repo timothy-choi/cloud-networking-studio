@@ -16,6 +16,7 @@ import (
 	executil "k8s.io/client-go/util/exec"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/trafficutil"
 )
 
 func podExec(ctx context.Context, cfg *rest.Config, client kubernetes.Interface, ns, podName string, argv []string) (stdout, stderr string, exitCode int, err error) {
@@ -204,6 +205,9 @@ func RunRuntimeTrafficOp(ctx context.Context, cfg *rest.Config, client kubernete
 		}
 		if code != 0 {
 			base.Status = "failed"
+			if trafficutil.HTTPWgetMissing(stderr) {
+				base.Output = strings.TrimSpace("HTTP test tool is missing in client image\n" + base.Output)
+			}
 			return base
 		}
 		base.Status = "passed"

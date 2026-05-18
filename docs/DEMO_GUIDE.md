@@ -6,7 +6,7 @@ This script is for recruiters, interviewers, or new teammates. You can run every
 
 - Bring up the stack (see repository **README** quickstart): API, Postgres, frontend, and the **Go runtime executor** when you plan to show live deploys, Runtime Access, and in-network checks.
 - Log in or register — registration creates a starter **project** automatically.
-- Optional: open **Dashboard** and use **Start demo (optional)** to create the `CNS Quick demo` project, clone the built-in `client-service` template, deploy, and jump to the topology page in one action.
+- Optional: open **Dashboard** and use **Start demo (optional)** to create the `CNS Quick demo` project, clone the built-in `client-service` template (Alpine client + **nginx** server on port 80), deploy, and jump to the topology page in one action.
 
 ## 5-minute narrative (UI)
 

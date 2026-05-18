@@ -14,6 +14,7 @@ import {
   type RuntimeExecResultPayload,
 } from '../../api/runtimeExec';
 import { exposeDeploymentService, unexposeDeploymentService } from '../../api/serviceExposure';
+import { pickDefaultHttpTrafficTarget } from '../../lib/runtimeTrafficDefaults';
 import { Spinner } from '../Spinner';
 import type {
   DeploymentRuntimeDetailResponse,
@@ -514,6 +515,17 @@ function OperationsTrafficPanel({
     if (!sourceId && selectable[0]?.id) setSourceId(selectable[0].id);
   }, [sourceId, selectable]);
 
+  useEffect(() => {
+    if (protocol !== 'http') return;
+    const peer = pickDefaultHttpTrafficTarget(services, sourceId);
+    if (!peer) return;
+    setTarget((prev) => {
+      const p = prev.trim();
+      if (!p) return peer;
+      return prev;
+    });
+  }, [protocol, sourceId, services]);
+
   async function run() {
     if (!sourceId) {
       setErr('Select a source service resource.');
@@ -574,12 +586,12 @@ function OperationsTrafficPanel({
           </select>
         </label>
         <label className="text-xs text-cns-label sm:col-span-2">
-          Target (node UUID or http URL)
+          Target (internal service URL recommended for HTTP — auto-filled from Runtime Access)
           <input
             className="mt-1 block w-full rounded border border-zinc-300 bg-white px-2 py-1.5 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-900"
             value={target}
             onChange={(e) => setTarget(e.target.value)}
-            placeholder="e.g. other-node-uuid or http://svc.namespace.svc.cluster.local:80/"
+            placeholder="e.g. http://cns-node-…-server:80/ or peer node UUID for ping"
           />
         </label>
       </div>

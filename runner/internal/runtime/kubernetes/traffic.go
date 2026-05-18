@@ -16,6 +16,7 @@ import (
 	executil "k8s.io/client-go/util/exec"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/trafficutil"
 )
 
 // RunTrafficTest runs ping or wget inside the source pod toward the target pod IP.
@@ -109,11 +110,18 @@ func RunTrafficTest(ctx context.Context, cfg *rest.Config, client kubernetes.Int
 		}
 	}
 	ok := exit == 0
+	stdErr := stderr.String()
+	var errPtr *string
+	if strings.EqualFold(tt, "http") && !ok && trafficutil.HTTPWgetMissing(stdErr) {
+		msg := "HTTP test tool is missing in client image"
+		errPtr = &msg
+	}
 	return model.TrafficResponse{
 		ExitCode: exit,
 		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
+		Stderr:   stdErr,
 		Success:  ok,
+		Error:    errPtr,
 	}
 }
 

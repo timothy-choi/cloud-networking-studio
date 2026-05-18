@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+DEFAULT_API_BASE = "http://localhost/api"
+
 
 def default_config_path() -> Path:
     override = (os.environ.get("CNS_CONFIG") or "").strip()
@@ -32,11 +34,25 @@ def save_config(data: dict[str, Any]) -> None:
 
 
 def effective_base_url(cli_override: str | None) -> str:
+    """
+    API root precedence:
+
+    1. ``--base-url``
+    2. ``CNS_BASE_URL`` (``CNS_API_BASE_URL`` accepted as legacy alias)
+    3. saved config ``api_base``
+    4. default ``http://localhost/api`` (Docker Compose + Caddy)
+    """
     return (
         (cli_override or "").strip()
-        or (os.environ.get("CNS_API_BASE_URL") or "").strip().rstrip("/")
+        or (
+            os.environ.get("CNS_BASE_URL")
+            or os.environ.get("CNS_API_BASE_URL")
+            or ""
+        )
+        .strip()
+        .rstrip("/")
         or (load_config().get("api_base") or "").strip().rstrip("/")
-        or "http://127.0.0.1:8000"
+        or DEFAULT_API_BASE
     )
 
 

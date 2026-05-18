@@ -6,7 +6,7 @@ Use **personal API tokens** (`POST /api-tokens`) as Bearer credentials in pipeli
 
 1. In the app UI, open **API tokens** and create a token (or call `POST /api-tokens` with a JWT from login).
 2. Store the plaintext secret once in your CI provider (e.g. GitHub Actions **secret** `CNS_TOKEN`).
-3. Set the API base URL your runner can reach (e.g. `https://api.example.com` or internal URL). Use secret `CNS_API_BASE_URL`.
+3. Set the API base URL your runner can reach (e.g. `https://api.example.com/api` or internal URL). Prefer secret **`CNS_BASE_URL`**; **`CNS_API_BASE_URL`** is still read as a legacy alias by the CLI.
 
 ## CLI (`python -m cli.cns`)
 
@@ -14,6 +14,7 @@ From the repository root (with `PYTHONPATH` including the repo root):
 
 ```bash
 export PYTHONPATH=.
+python3 -m cli.cns config get --json
 python3 -m cli.cns login --email "$CNS_EMAIL" --password "$CNS_PASSWORD"
 python3 -m cli.cns --json projects list
 ```
@@ -24,11 +25,23 @@ Or write a token from the UI:
 echo "$CNS_TOKEN" | python3 -m cli.cns token set
 ```
 
+Or persist only the base URL:
+
+```bash
+python3 -m cli.cns config set base_url https://api.example.com/api
+```
+
 Global flags (before or on each subcommand, depending on shell layout — use `--json` on the leaf command for clarity):
 
 - `--json` — structured JSON on stdout  
-- `--base-url` — overrides `CNS_API_BASE_URL` and config file  
+- `--base-url` — highest precedence; overrides `CNS_BASE_URL` / `CNS_API_BASE_URL`, then saved config, then default `http://localhost/api`  
 - `--token` — overrides `CNS_TOKEN` and config file  
+
+Config commands:
+
+- `cns config get` — show config path, saved `api_base`, effective base URL, and whether a token is stored  
+- `cns config set base_url <url>` — persist API root for future commands  
+- `cns config unset base_url` — remove saved API root (fall back to env/default)  
 
 Config file default: `~/.config/cns/config.json` (override with `CNS_CONFIG`).
 
@@ -43,7 +56,7 @@ on:
   workflow_dispatch:
 
 env:
-  CNS_API_BASE_URL: ${{ secrets.CNS_API_BASE_URL }}
+  CNS_BASE_URL: ${{ secrets.CNS_BASE_URL }}
   CNS_TOKEN: ${{ secrets.CNS_TOKEN }}
   CNS_TOPOLOGY_ID: ${{ secrets.CNS_TOPOLOGY_ID }}
 
@@ -97,7 +110,7 @@ jobs:
           python-version: "3.12"
       - name: Destroy deployment
         env:
-          CNS_API_BASE_URL: ${{ secrets.CNS_API_BASE_URL }}
+          CNS_BASE_URL: ${{ secrets.CNS_BASE_URL }}
           CNS_TOKEN: ${{ secrets.CNS_TOKEN }}
         run: |
           export PYTHONPATH="${{ github.workspace }}"
@@ -125,6 +138,7 @@ Notes:
 | Poll | `GET` | `/deployments/{deployment_id}` |
 | Runtime | `GET` | `/deployments/{deployment_id}/runtime` |
 | Health | `POST` | `/deployments/{deployment_id}/runtime/services/{service_id}/health-check` |
+| Engine cleanup (status unchanged) | `POST` | `/deployments/{deployment_id}/runtime/cleanup` |
 | Destroy | `POST` | `/deployments/{deployment_id}/destroy` |
 
 Authorization header: `Authorization: Bearer <jwt-or-api-token>`.

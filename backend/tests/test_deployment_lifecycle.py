@@ -311,3 +311,46 @@ def test_lifecycle_status_sequence_on_success(client):
     assert body["status"] == "succeeded"
     assert body["started_at"] is not None
     assert body["finished_at"] is not None
+
+
+def test_runtime_cleanup_runs_provider_destroy_without_status_change(client, monkeypatch):
+    tid, _, _ = _topology_two_nodes_linked(client)
+    dep = client.post(f"/topologies/{tid}/deploy").json()
+    did = dep["id"]
+    assert str(dep["status"]).lower() == "succeeded"
+    called = {"n": 0}
+    import app.api.deployments as depmod
+
+    real = depmod.runtime_provider_for_topology
+
+    def wrap(rt):
+        p = real(rt)
+        orig_destroy = p.destroy
+
+        def counted_destroy(*a, **k):
+            called["n"] += 1
+            return orig_destroy(*a, **k)
+
+        p.destroy = counted_destroy  # type: ignore[method-assign]
+        return p
+
+    monkeypatch.setattr(depmod, "runtime_provider_for_topology", wrap)
+    r = client.post(f"/deployments/{did}/runtime/cleanup")
+    assert r.status_code == 200
+    assert r.json().get("ok") is True
+    assert called["n"] == 1
+    again = client.get(f"/deployments/{did}").json()
+    assert str(again["status"]).lower() == "succeeded"
+
+
+def test_runtime_cleanup_returns_403_when_not_editor(client, monkeypatch):
+    from fastapi import HTTPException
+
+    import app.api.deployments as depmod
+
+    def deny(*_a, **_k):
+        raise HTTPException(status_code=403, detail="denied")
+
+    monkeypatch.setattr(depmod, "require_deployment_editor", deny)
+    r = client.post(f"/deployments/{uuid.uuid4()}/runtime/cleanup")
+    assert r.status_code == 403

@@ -47,9 +47,9 @@ def test_demo_full_flow_contains_expected_sections_and_commands():
         assert needle in text, f"missing expected fragment: {needle}"
 
 
-def test_cleanup_script_filters_on_project_label():
+def test_cleanup_script_filters_on_app_label():
     text = CLEANUP.read_text()
     assert "set -euo pipefail" in text
-    assert "cns.project=cloud-networking-studio" in text
+    assert "label=app=cloud-networking-studio" in text
     assert "docker rm" in text
     assert "docker network rm" in text

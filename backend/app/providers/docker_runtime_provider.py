@@ -79,18 +79,36 @@ def container_name(node_id: UUID, node_name: str) -> str:
     return f"cns-node-{short_id}-{safe}"
 
 
-def _base_labels(topology_id: UUID) -> dict[str, str]:
-    return {
-        "cns.project": "cloud-networking-studio",
+def _cns_resource_labels(
+    topology_id: UUID,
+    *,
+    project_id: UUID | None = None,
+    deployment_id: UUID | None = None,
+) -> dict[str, str]:
+    """Labels applied to CNS-managed Docker networks and containers."""
+    labels: dict[str, str] = {
+        "app": "cloud-networking-studio",
         "cns.topology_id": str(topology_id),
         "cns.managed": "true",
     }
+    if project_id is not None:
+        labels["cns.project_id"] = str(project_id)
+    if deployment_id is not None:
+        labels["cns.deployment_id"] = str(deployment_id)
+    return labels
 
 
 def _container_labels(
-    topology_id: UUID, node_id: UUID, forwarding_role: str | None = None
+    topology_id: UUID,
+    node_id: UUID,
+    *,
+    project_id: UUID | None = None,
+    deployment_id: UUID | None = None,
+    forwarding_role: str | None = None,
 ) -> dict[str, str]:
-    labels = _base_labels(topology_id)
+    labels = _cns_resource_labels(
+        topology_id, project_id=project_id, deployment_id=deployment_id
+    )
     labels["cns.node_id"] = str(node_id)
     if forwarding_role:
         labels["cns.forwarding_role"] = forwarding_role
@@ -211,6 +229,82 @@ def _disconnect_default_bridge(
         pass
     except APIError:
         pass
+
+
+def _collect_ipv4_networks_from_engine_ipam(
+    client: docker.DockerClient,
+) -> list[ipaddress.IPv4Network]:
+    """Parse IPv4 subnets from all Docker networks (for overlap checks)."""
+    out: list[ipaddress.IPv4Network] = []
+    try:
+        raw = client.networks.list()
+    except APIError:
+        return out
+    for n in raw:
+        attrs = getattr(n, "attrs", None) or {}
+        ipam = attrs.get("IPAM") or {}
+        for cfg in ipam.get("Config") or []:
+            sub = (cfg.get("Subnet") or "").strip()
+            if not sub:
+                continue
+            try:
+                net = ipaddress.ip_network(sub, strict=False)
+                if isinstance(net, ipaddress.IPv4Network):
+                    out.append(net)
+            except ValueError:
+                continue
+    return out
+
+
+def _subnet_overlaps_used(
+    candidate: ipaddress.IPv4Network, used: list[ipaddress.IPv4Network]
+) -> bool:
+    return any(candidate.overlaps(u) for u in used)
+
+
+def _iter_fallback_lab_slash24() -> list[ipaddress.IPv4Network]:
+    """Private /24 candidates when an explicit topology CIDR collides with the host Docker IPAM."""
+    nets: list[ipaddress.IPv4Network] = []
+    for second in (201, 202, 203, 88, 89, 90):
+        for third in range(0, 256):
+            nets.append(ipaddress.ip_network(f"10.{second}.{third}.0/24"))
+    for third in range(0, 256):
+        nets.append(ipaddress.ip_network(f"172.30.{third}.0/24"))
+    return nets
+
+
+def _allocate_non_overlapping_ipv4_subnet(
+    preferred: str,
+    used: list[ipaddress.IPv4Network],
+) -> tuple[str | None, str | None]:
+    """
+    Pick a usable IPv4 subnet for Docker bridge IPAM.
+
+    Returns (cidr_string, info_message). cidr_string None means exhausted / unusable.
+    """
+    try:
+        pref = ipaddress.ip_network(preferred.strip(), strict=False)
+    except ValueError:
+        return preferred.strip(), None
+    if not isinstance(pref, ipaddress.IPv4Network):
+        return str(pref), None
+    if not _subnet_overlaps_used(pref, used):
+        return str(pref.with_prefixlen), None
+    if int(pref.prefixlen) != 24:
+        return None, None
+    for cand in _iter_fallback_lab_slash24():
+        if not _subnet_overlaps_used(cand, used):
+            return (
+                str(cand),
+                f"Docker subnet {pref} overlaps an existing network; using alternate {cand}.",
+            )
+    return None, None
+
+
+DOCKER_SUBNET_OVERLAP_USER_MESSAGE = (
+    "Docker network subnet overlaps with an existing network. "
+    "CNS attempted cleanup/retry but could not allocate a network."
+)
 
 
 def _ipam_from_cidr(subnet_cidr: str | None):
@@ -368,11 +462,11 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
         *,
         project_id: UUID | None = None,
     ) -> list[ProviderEvent]:
-        _ = (deployment_id, project_id)
+        _ = project_id
         return [
             (
                 DeploymentEventLevel.INFO,
-                f"Destroy simulated for topology {topology_id} (no Docker socket)",
+                f"Destroy simulated for topology {topology_id} deployment {deployment_id} (no Docker socket)",
             ),
         ]
 
@@ -472,16 +566,37 @@ class DockerRuntimeProvider(RuntimeProvider):
 
         _remove_network_if_exists(self._client, net_name)
 
-        ipam = _ipam_from_cidr(plan.subnet_cidr)
+        used_nets = _collect_ipv4_networks_from_engine_ipam(self._client)
+        chosen_subnet = plan.subnet_cidr
+        if plan.subnet_cidr:
+            chosen, overlap_note = _allocate_non_overlapping_ipv4_subnet(
+                plan.subnet_cidr, used_nets
+            )
+            if chosen is None:
+                events.append(
+                    (DeploymentEventLevel.ERROR, DOCKER_SUBNET_OVERLAP_USER_MESSAGE)
+                )
+                _rollback_topology_deploy(self._client, plan.topology_id)
+                raise RuntimeError(DOCKER_SUBNET_OVERLAP_USER_MESSAGE) from None
+            if overlap_note:
+                events.append((DeploymentEventLevel.INFO, overlap_note))
+            chosen_subnet = chosen
+
+        ipam = _ipam_from_cidr(chosen_subnet)
+        res_labels = _cns_resource_labels(
+            plan.topology_id,
+            project_id=plan.project_id,
+            deployment_id=plan.deployment_id,
+        )
         try:
             self._client.networks.create(
                 name=net_name,
                 driver="bridge",
                 ipam=ipam,
-                labels=_base_labels(plan.topology_id),
+                labels=res_labels,
                 check_duplicate=True,
             )
-            extra = f" (subnet {plan.subnet_cidr})" if plan.subnet_cidr else ""
+            extra = f" (subnet {chosen_subnet})" if chosen_subnet else ""
             events.append(
                 (
                     DeploymentEventLevel.INFO,
@@ -489,13 +604,29 @@ class DockerRuntimeProvider(RuntimeProvider):
                 )
             )
         except APIError as exc:
-            events.append(
-                (
-                    DeploymentEventLevel.ERROR,
-                    f"Docker network creation failed: {exc.explanation}",
+            blob = f"{getattr(exc, 'explanation', None) or ''} {exc}".lower()
+            if (
+                "overlap" in blob
+                or "pool overlaps" in blob
+                or "pool overlap" in blob
+            ) and plan.subnet_cidr:
+                events.append(
+                    (DeploymentEventLevel.ERROR, DOCKER_SUBNET_OVERLAP_USER_MESSAGE)
                 )
-            )
+            else:
+                events.append(
+                    (
+                        DeploymentEventLevel.ERROR,
+                        f"Docker network creation failed: {exc.explanation}",
+                    )
+                )
             _rollback_topology_deploy(self._client, plan.topology_id)
+            if (
+                "overlap" in blob
+                or "pool overlaps" in blob
+                or "pool overlap" in blob
+            ) and plan.subnet_cidr:
+                raise RuntimeError(DOCKER_SUBNET_OVERLAP_USER_MESSAGE) from exc
             raise
 
         try:
@@ -528,6 +659,10 @@ class DockerRuntimeProvider(RuntimeProvider):
             key = pl.network_name.strip().lower()
             links_by_logical[key].append(pl)
 
+        used_tracker: list[ipaddress.IPv4Network] = list(
+            _collect_ipv4_networks_from_engine_ipam(self._client)
+        )
+
         for key, lst in links_by_logical.items():
             logical_label = lst[0].network_name
             dname = segment_docker_network_name(tid, logical_label)
@@ -535,22 +670,52 @@ class DockerRuntimeProvider(RuntimeProvider):
             cidr = next((x.cidr for x in lst if x.cidr), None)
             user_logical_gw = next((x.gateway for x in lst if x.gateway), None)
             reserved = _segment_reserved_endpoint_ips(lst)
-            docker_bridge_gw = _pick_docker_bridge_gateway_ip(cidr, reserved) if cidr else None
+            cidr_effective = cidr
+            if cidr:
+                chosen, overlap_note = _allocate_non_overlapping_ipv4_subnet(
+                    cidr, used_tracker
+                )
+                if chosen is None:
+                    events.append(
+                        (DeploymentEventLevel.ERROR, DOCKER_SUBNET_OVERLAP_USER_MESSAGE)
+                    )
+                    _rollback_topology_deploy(self._client, tid)
+                    raise RuntimeError(DOCKER_SUBNET_OVERLAP_USER_MESSAGE) from None
+                if overlap_note:
+                    events.append((DeploymentEventLevel.INFO, overlap_note))
+                cidr_effective = chosen
+                try:
+                    used_tracker.append(
+                        ipaddress.ip_network(chosen, strict=False)
+                    )
+                except ValueError:
+                    pass
+            docker_bridge_gw = (
+                _pick_docker_bridge_gateway_ip(cidr_effective, reserved)
+                if cidr_effective
+                else None
+            )
             _remove_network_if_exists(self._client, dname)
-            if cidr and docker_bridge_gw is not None:
-                ipam = _ipam_from_cidr_and_gateway(cidr, docker_bridge_gw)
-            elif cidr:
-                ipam = _ipam_from_cidr(cidr)
+            if cidr_effective and docker_bridge_gw is not None:
+                ipam = _ipam_from_cidr_and_gateway(cidr_effective, docker_bridge_gw)
+            elif cidr_effective:
+                ipam = _ipam_from_cidr(cidr_effective)
                 events.append(
                     (
                         DeploymentEventLevel.WARNING,
                         f"Segment {logical_label}: could not pick a Docker bridge gateway outside "
-                        f"reserved container IPs {sorted(reserved)} — using default IPAM gateway for {cidr}.",
+                        f"reserved container IPs {sorted(reserved)} — using default IPAM gateway for {cidr_effective}.",
                     )
                 )
             else:
                 ipam = None
-            labels = dict(_base_labels(tid))
+            labels = dict(
+                _cns_resource_labels(
+                    tid,
+                    project_id=plan.project_id,
+                    deployment_id=plan.deployment_id,
+                )
+            )
             labels["cns.logical_network"] = logical_label[:120]
             labels["cns.network_role"] = "segment"
             labels["cns.multinet"] = "true"
@@ -565,17 +730,36 @@ class DockerRuntimeProvider(RuntimeProvider):
                 events.append(
                     (
                         DeploymentEventLevel.INFO,
-                        f"Segment Docker network created: {dname} (logical={logical_label}, cidr={cidr}, "
+                        f"Segment Docker network created: {dname} (logical={logical_label}, cidr={cidr_effective}, "
                         f"docker_bridge_gateway={docker_bridge_gw or 'default'}, "
                         f"reserved_container_ips={sorted(reserved)}, "
                         f"link_gateway_fields={user_logical_gw or 'none'} — topology default routes still use link gateway / router NIC IPs)",
                     )
                 )
             except APIError as exc:
-                events.append(
-                    (DeploymentEventLevel.ERROR, f"Segment network {dname} failed: {exc.explanation}")
-                )
+                blob = f"{getattr(exc, 'explanation', None) or ''} {exc}".lower()
+                if (
+                    "overlap" in blob
+                    or "pool overlaps" in blob
+                    or "pool overlap" in blob
+                ) and cidr:
+                    events.append(
+                        (DeploymentEventLevel.ERROR, DOCKER_SUBNET_OVERLAP_USER_MESSAGE)
+                    )
+                else:
+                    events.append(
+                        (
+                            DeploymentEventLevel.ERROR,
+                            f"Segment network {dname} failed: {exc.explanation}",
+                        )
+                    )
                 _rollback_topology_deploy(self._client, tid)
+                if (
+                    "overlap" in blob
+                    or "pool overlaps" in blob
+                    or "pool overlap" in blob
+                ) and cidr:
+                    raise RuntimeError(DOCKER_SUBNET_OVERLAP_USER_MESSAGE) from exc
                 raise
 
         attach: dict[UUID, list[tuple[str, str]]] = defaultdict(list)
@@ -648,7 +832,11 @@ class DockerRuntimeProvider(RuntimeProvider):
             )
             net_cfg = self._make_cns_networking_config(first_net, first_ip)
             labels = _container_labels(
-                tid, pn.id, "segment_router" if is_router else "leaf"
+                tid,
+                pn.id,
+                project_id=plan.project_id,
+                deployment_id=plan.deployment_id,
+                forwarding_role="segment_router" if is_router else "leaf",
             )
             if is_router:
                 host_conf = api.create_host_config(
@@ -867,7 +1055,11 @@ class DockerRuntimeProvider(RuntimeProvider):
                     _container_labels(
                         plan.topology_id,
                         pn.id,
-                        "segment_router" if pn.node_type == "router" else "leaf",
+                        project_id=plan.project_id,
+                        deployment_id=plan.deployment_id,
+                        forwarding_role=(
+                            "segment_router" if pn.node_type == "router" else "leaf"
+                        ),
                     ),
                     net_name,
                     ipv4_for_cfg,
@@ -946,42 +1138,54 @@ class DockerRuntimeProvider(RuntimeProvider):
         *,
         project_id: UUID | None = None,
     ) -> list[ProviderEvent]:
-        _ = (deployment_id, project_id)
-        tid = str(topology_id)
+        _ = project_id
         events: list[ProviderEvent] = []
 
-        containers = self._client.containers.list(
-            all=True,
-            filters={"label": [f"cns.topology_id={tid}"]},
+        containers = list_containers_for_cns_deployment_teardown(
+            self._client, topology_id, deployment_id
         )
         for ctr in containers:
+            cname = getattr(ctr, "name", "") or ""
             try:
                 events.append(
                     (
                         DeploymentEventLevel.INFO,
-                        f"Stopping container: {ctr.name}",
+                        f"Stopping container: {cname}",
                     )
                 )
-                ctr.stop(timeout=15)
-                ctr.remove()
+                try:
+                    ctr.stop(timeout=15)
+                except NotFound:
+                    pass
+                except APIError:
+                    pass
+                try:
+                    ctr.remove(force=True)
+                except NotFound:
+                    pass
                 events.append(
                     (
                         DeploymentEventLevel.INFO,
-                        f"Removed container: {ctr.name}",
+                        f"Removed container: {cname}",
                     )
                 )
             except APIError as exc:
                 events.append(
                     (
                         DeploymentEventLevel.WARNING,
-                        f"Container teardown issue ({ctr.name}): {exc.explanation}",
+                        f"Container teardown issue ({cname}): {exc.explanation}",
                     )
                 )
 
         events.append(
-            (DeploymentEventLevel.INFO, "Removing labeled Docker networks for topology (legacy + segments)")
+            (
+                DeploymentEventLevel.INFO,
+                "Removing labeled Docker networks (deployment + topology segments)",
+            )
         )
-        _remove_all_topology_networks(self._client, topology_id)
+        remove_cns_networks_for_deployment_teardown(
+            self._client, topology_id, deployment_id
+        )
         events.append(
             (DeploymentEventLevel.INFO, "Docker network cleanup completed (best-effort)")
         )
@@ -1280,6 +1484,54 @@ def _normalize_exec_run(raw) -> ProviderExecResult:
         return str(x) if x is not None else ""
 
     return ProviderExecResult(int(ec) if ec is not None else -1, dec(so_b), dec(se_b))
+
+
+def _docker_network_export_name(net_obj) -> str:
+    name = getattr(net_obj, "name", None) or (getattr(net_obj, "attrs", None) or {}).get(
+        "Name"
+    ) or ""
+    if isinstance(name, str) and name.startswith("/"):
+        return name[1:]
+    return str(name) if name else ""
+
+
+def list_containers_for_cns_deployment_teardown(
+    client: docker.DockerClient, topology_id: UUID, deployment_id: UUID
+) -> list:
+    """Union of containers labeled for this deployment and topology-managed CNS containers."""
+    by_id: dict[str, object] = {}
+    dep_s, tid_s = str(deployment_id), str(topology_id)
+    for flt in (
+        {"label": [f"cns.deployment_id={dep_s}"]},
+        {"label": [f"cns.topology_id={tid_s}", "cns.managed=true"]},
+    ):
+        try:
+            for ctr in client.containers.list(all=True, filters=flt):
+                cid = getattr(ctr, "id", None)
+                if not cid:
+                    attrs = getattr(ctr, "attrs", None) or {}
+                    cid = attrs.get("Id")
+                if cid and cid not in by_id:
+                    by_id[str(cid)] = ctr
+        except APIError:
+            continue
+    return list(by_id.values())
+
+
+def remove_cns_networks_for_deployment_teardown(
+    client: docker.DockerClient, topology_id: UUID, deployment_id: UUID
+) -> None:
+    """Remove networks labeled for the deployment, then all topology-labeled CNS bridges."""
+    dep_s = str(deployment_id)
+    try:
+        dep_nets = client.networks.list(filters={"label": [f"cns.deployment_id={dep_s}"]})
+    except APIError:
+        dep_nets = []
+    for n in dep_nets:
+        nm = _docker_network_export_name(n)
+        if nm:
+            _remove_network_if_exists(client, nm)
+    _remove_all_topology_networks(client, topology_id)
 
 
 def _topology_runtime_filters(topology_id: UUID) -> dict[str, list[str]]:

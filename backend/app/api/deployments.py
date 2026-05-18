@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
@@ -346,6 +347,52 @@ def destroy_deployment(
     db.commit()
 
     return _load_deployment_full(db, deployment_id)
+
+
+@router.post(
+    "/deployments/{deployment_id}/runtime/cleanup",
+    summary="Engine-only runtime cleanup",
+    response_description="Runs provider label-based teardown; does not change deployment status.",
+)
+def runtime_engine_cleanup(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Best-effort Docker/Kubernetes cleanup for this deployment without stopping it in the database."""
+    dep = require_deployment_editor(db, user, deployment_id)
+    topo = db.get(Topology, dep.topology_id)
+    if topo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topology not found",
+        )
+
+    provider = runtime_provider_for_topology(dep.runtime_target)
+    rows = provider.destroy(topo.id, dep.id, project_id=topo.project_id)
+
+    for level, msg in rows:
+        db.add(
+            DeploymentEvent(
+                deployment_id=dep.id,
+                level=level,
+                message=msg,
+            )
+        )
+    db.add(
+        DeploymentEvent(
+            deployment_id=dep.id,
+            level=DeploymentEventLevel.INFO,
+            message="Runtime cleanup invoked (engine resources only; deployment status unchanged).",
+        )
+    )
+    db.commit()
+
+    return {
+        "ok": True,
+        "deployment_id": str(dep.id),
+        "events": [{"level": level.value, "message": msg} for level, msg in rows],
+    }
 
 
 def _deployment_runtime_snapshot(db: Session, deployment_id: UUID) -> RuntimeDeploymentResponse:

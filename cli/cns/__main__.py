@@ -1,4 +1,4 @@
-"""``python -m cli.cns`` — terminal and CI client for Cloud Networking Studio (Step 44)."""
+"""``python -m cli.cns`` — terminal and CI client for Cloud Networking Studio."""
 
 from __future__ import annotations
 
@@ -9,8 +9,15 @@ import time
 import urllib.error
 from typing import Any
 
-from cli.cns.config import default_config_path, effective_base_url, effective_token, load_config, save_config
-from cli.cns.http_client import ApiHttpError, request_json
+from cli.cns.config import (
+    DEFAULT_API_BASE,
+    default_config_path,
+    effective_base_url,
+    effective_token,
+    load_config,
+    save_config,
+)
+from cli.cns.http_client import ApiConnectionError, ApiHttpError, request_json
 
 
 def _out(data: Any, *, as_json: bool) -> None:
@@ -26,15 +33,27 @@ def _url(base: str, path: str) -> str:
     return f"{b}{p}"
 
 
+def _friendly_unreachable(base: str) -> None:
+    print(
+        f"Could not reach CNS API at {base}. "
+        "Start Docker Compose or set --base-url/CNS_BASE_URL.",
+        file=sys.stderr,
+    )
+
+
 def cmd_login(args: argparse.Namespace) -> int:
     base = effective_base_url(args.base_url)
-    code, data = request_json(
-        "POST",
-        _url(base, "/auth/login"),
-        token=None,
-        body={"email": args.email, "password": args.password},
-        timeout=30.0,
-    )
+    try:
+        code, data = request_json(
+            "POST",
+            _url(base, "/auth/login"),
+            token=None,
+            body={"email": args.email, "password": args.password},
+            timeout=30.0,
+        )
+    except ApiConnectionError:
+        _friendly_unreachable(base)
+        return 1
     if code != 200 or not isinstance(data, dict) or "access_token" not in data:
         _out({"error": "login failed", "status": code, "body": data}, as_json=args.json)
         return 1
@@ -64,6 +83,44 @@ def cmd_token_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_config_get(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    out = {
+        "config_path": str(default_config_path()),
+        "api_base": cfg.get("api_base") or "",
+        "effective_base_url": effective_base_url(args.base_url),
+        "token_set": bool((cfg.get("token") or "").strip()),
+    }
+    _out(out, as_json=args.json)
+    return 0
+
+
+def cmd_config_set(args: argparse.Namespace) -> int:
+    if args.key != "base_url":
+        print("Only 'base_url' is supported for config set", file=sys.stderr)
+        return 1
+    url = (args.value or "").strip().rstrip("/")
+    if not url:
+        print("base_url must be non-empty", file=sys.stderr)
+        return 1
+    cfg = load_config()
+    cfg["api_base"] = url
+    save_config(cfg)
+    _out({"ok": True, "api_base": url}, as_json=args.json)
+    return 0
+
+
+def cmd_config_unset(args: argparse.Namespace) -> int:
+    if args.key != "base_url":
+        print("Only 'base_url' is supported for config unset", file=sys.stderr)
+        return 1
+    cfg = load_config()
+    cfg.pop("api_base", None)
+    save_config(cfg)
+    _out({"ok": True, "unset": "api_base"}, as_json=args.json)
+    return 0
+
+
 def _auth_headers(args: argparse.Namespace) -> tuple[str, str | None]:
     base = effective_base_url(args.base_url)
     tok = effective_token(args.token)
@@ -75,7 +132,11 @@ def cmd_projects_list(args: argparse.Namespace) -> int:
     if not tok:
         print("No token: run `cns login` or `cns token set` or set CNS_TOKEN", file=sys.stderr)
         return 1
-    code, data = request_json("GET", _url(base, "/projects"), token=tok)
+    try:
+        code, data = request_json("GET", _url(base, "/projects"), token=tok)
+    except ApiConnectionError:
+        _friendly_unreachable(base)
+        return 1
     _out(data, as_json=args.json)
     return 0 if code == 200 else 1
 
@@ -86,7 +147,11 @@ def cmd_topologies_list(args: argparse.Namespace) -> int:
         print("No token", file=sys.stderr)
         return 1
     q = f"?project_id={args.project_id}" if getattr(args, "project_id", None) else ""
-    code, data = request_json("GET", _url(base, f"/topologies{q}"), token=tok)
+    try:
+        code, data = request_json("GET", _url(base, f"/topologies{q}"), token=tok)
+    except ApiConnectionError:
+        _friendly_unreachable(base)
+        return 1
     _out(data, as_json=args.json)
     return 0 if code == 200 else 1
 
@@ -96,7 +161,11 @@ def cmd_templates_list(args: argparse.Namespace) -> int:
     if not tok:
         print("No token", file=sys.stderr)
         return 1
-    code, data = request_json("GET", _url(base, "/templates"), token=tok)
+    try:
+        code, data = request_json("GET", _url(base, "/templates"), token=tok)
+    except ApiConnectionError:
+        _friendly_unreachable(base)
+        return 1
     _out(data, as_json=args.json)
     return 0 if code == 200 else 1
 
@@ -107,31 +176,37 @@ def cmd_deploy(args: argparse.Namespace) -> int:
         print("No token", file=sys.stderr)
         return 1
     tid: str | None = None
-    if args.topology_id:
-        tid = args.topology_id
-    elif args.template_id:
-        pid = args.project_id
-        if not pid:
-            _, plist = request_json("GET", _url(base, "/projects"), token=tok)
-            if not isinstance(plist, list) or not plist:
-                print("No project_id and could not infer from /projects", file=sys.stderr)
+    try:
+        if args.topology_id:
+            tid = args.topology_id
+        elif args.template_id:
+            pid = args.project_id
+            if not pid:
+                _, plist = request_json("GET", _url(base, "/projects"), token=tok)
+                if not isinstance(plist, list) or not plist:
+                    print("No project_id and could not infer from /projects", file=sys.stderr)
+                    return 1
+                pid = str(plist[0]["id"])
+            code, topo = request_json(
+                "POST",
+                _url(base, f"/templates/{args.template_id}/clone"),
+                token=tok,
+                body={"name": args.name or None, "project_id": pid},
+                timeout=120.0,
+            )
+            if code != 201 or not isinstance(topo, dict):
+                _out({"error": "clone failed", "status": code, "body": topo}, as_json=args.json)
                 return 1
-            pid = str(plist[0]["id"])
-        code, topo = request_json(
-            "POST",
-            _url(base, f"/templates/{args.template_id}/clone"),
-            token=tok,
-            body={"name": args.name or None, "project_id": pid},
-            timeout=120.0,
-        )
-        if code != 201 or not isinstance(topo, dict):
-            _out({"error": "clone failed", "status": code, "body": topo}, as_json=args.json)
+            tid = str(topo["id"])
+        else:
+            print("Specify --topology-id or --template-id", file=sys.stderr)
             return 1
-        tid = str(topo["id"])
-    else:
-        print("Specify --topology-id or --template-id", file=sys.stderr)
+        code, dep = request_json(
+            "POST", _url(base, f"/topologies/{tid}/deploy"), token=tok, timeout=600.0
+        )
+    except ApiConnectionError:
+        _friendly_unreachable(base)
         return 1
-    code, dep = request_json("POST", _url(base, f"/topologies/{tid}/deploy"), token=tok, timeout=600.0)
     _out(dep, as_json=args.json)
     return 0 if code == 201 else 1
 
@@ -144,7 +219,16 @@ def cmd_wait(args: argparse.Namespace) -> int:
     deadline = time.monotonic() + args.timeout
     last: Any = None
     while time.monotonic() < deadline:
-        code, dep = request_json("GET", _url(base, f"/deployments/{args.deployment_id}"), token=tok, timeout=60.0)
+        try:
+            code, dep = request_json(
+                "GET",
+                _url(base, f"/deployments/{args.deployment_id}"),
+                token=tok,
+                timeout=60.0,
+            )
+        except ApiConnectionError:
+            _friendly_unreachable(base)
+            return 1
         last = dep
         if code == 200 and isinstance(dep, dict):
             st = str(dep.get("status", "")).lower()
@@ -161,7 +245,16 @@ def cmd_runtime(args: argparse.Namespace) -> int:
     if not tok:
         print("No token", file=sys.stderr)
         return 1
-    code, data = request_json("GET", _url(base, f"/deployments/{args.deployment_id}/runtime"), token=tok, timeout=60.0)
+    try:
+        code, data = request_json(
+            "GET",
+            _url(base, f"/deployments/{args.deployment_id}/runtime"),
+            token=tok,
+            timeout=60.0,
+        )
+    except ApiConnectionError:
+        _friendly_unreachable(base)
+        return 1
     _out(data, as_json=args.json)
     return 0 if code == 200 else 1
 
@@ -171,13 +264,20 @@ def cmd_health_check(args: argparse.Namespace) -> int:
     if not tok:
         print("No token", file=sys.stderr)
         return 1
-    code, data = request_json(
-        "POST",
-        _url(base, f"/deployments/{args.deployment_id}/runtime/services/{args.service_id}/health-check"),
-        token=tok,
-        body={},
-        timeout=60.0,
-    )
+    try:
+        code, data = request_json(
+            "POST",
+            _url(
+                base,
+                f"/deployments/{args.deployment_id}/runtime/services/{args.service_id}/health-check",
+            ),
+            token=tok,
+            body={},
+            timeout=60.0,
+        )
+    except ApiConnectionError:
+        _friendly_unreachable(base)
+        return 1
     _out(data, as_json=args.json)
     return 0 if code == 200 else 1
 
@@ -187,13 +287,17 @@ def cmd_destroy(args: argparse.Namespace) -> int:
     if not tok:
         print("No token", file=sys.stderr)
         return 1
-    code, data = request_json(
-        "POST",
-        _url(base, f"/deployments/{args.deployment_id}/destroy"),
-        token=tok,
-        body={},
-        timeout=300.0,
-    )
+    try:
+        code, data = request_json(
+            "POST",
+            _url(base, f"/deployments/{args.deployment_id}/destroy"),
+            token=tok,
+            body={},
+            timeout=300.0,
+        )
+    except ApiConnectionError:
+        _friendly_unreachable(base)
+        return 1
     _out(data, as_json=args.json)
     return 0 if code == 200 else 1
 
@@ -201,7 +305,11 @@ def cmd_destroy(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", help="Print JSON")
-    common.add_argument("--base-url", default=None, help="API root (CNS_API_BASE_URL / config)")
+    common.add_argument(
+        "--base-url",
+        default=None,
+        help=f"API root (precedence over CNS_BASE_URL / config; default {DEFAULT_API_BASE})",
+    )
     common.add_argument("--token", default=None, help="Bearer (CNS_TOKEN / config)")
 
     p = argparse.ArgumentParser(prog="cns", description="Cloud Networking Studio CLI", parents=[common])
@@ -217,6 +325,18 @@ def build_parser() -> argparse.ArgumentParser:
     pset = ptok_sub.add_parser("set", parents=[common], help="Store API token or JWT")
     pset.add_argument("token", nargs="?", default="")
     pset.set_defaults(func=cmd_token_set)
+
+    pcfg = sub.add_parser("config", parents=[common], help="Inspect or change CLI config")
+    pcfg_sub = pcfg.add_subparsers(dest="config_cmd", required=True)
+    pcfg_get = pcfg_sub.add_parser("get", parents=[common], help="Show config path and effective API base")
+    pcfg_get.set_defaults(func=cmd_config_get)
+    pcfg_set = pcfg_sub.add_parser("set", parents=[common], help="Set a config value")
+    pcfg_set.add_argument("key", choices=["base_url"])
+    pcfg_set.add_argument("value")
+    pcfg_set.set_defaults(func=cmd_config_set)
+    pcfg_unset = pcfg_sub.add_parser("unset", parents=[common], help="Remove a config value")
+    pcfg_unset.add_argument("key", choices=["base_url"])
+    pcfg_unset.set_defaults(func=cmd_config_unset)
 
     pp = sub.add_parser("projects", parents=[common], help="Projects")
     pp_sub = pp.add_subparsers(dest="projects_cmd", required=True)
@@ -271,6 +391,10 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.func(args))
     except ApiHttpError as e:
         _out({"error": "api_http_error", "status": e.status, "detail": e.payload}, as_json=args.json)
+        return 1
+    except ApiConnectionError:
+        base = effective_base_url(getattr(args, "base_url", None))
+        _friendly_unreachable(base)
         return 1
     except urllib.error.URLError as e:
         print(f"Request failed: {e}", file=sys.stderr)

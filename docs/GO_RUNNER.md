@@ -50,8 +50,8 @@ When `RUNTIME_EXECUTOR=go` and `runtime_target` is `docker`, the API uses **`GoH
 ### Control plane status API
 
 - **`GET /runtime/status`** (also **`GET /api/runtime/status`** behind Caddy) — public probe, no auth.
-  - **`RUNTIME_EXECUTOR=python`** — returns exactly `{"status":"ok","runtime_provider":"python"}`.
-  - **`RUNTIME_EXECUTOR=go`** — proxies JSON from **`GET {GO_RUNNER_URL}/runtime/status`**. If the runner is unreachable, the API responds with **503** and detail **`Go runner unavailable`**. When the runner uses Kubernetes, expect **`kubernetes_reachable`**, **`current_context`**, and **`runtime_provider`** reflecting the runner configuration (see [Kubernetes runtime](KUBERNETES_RUNTIME.md)).
+  - **`RUNTIME_EXECUTOR=python`** — returns JSON including `backend_status`, `runtime_executor`, `docker_reachable`, and related probe fields.
+  - **`RUNTIME_EXECUTOR=go`** — merges JSON from **`GET {GO_RUNNER_URL}/runtime/status`**. If the runner is unreachable, the API still returns **HTTP 200** with `status: degraded`, `runner_reachable: false`, and `message` describing the failure (so dashboards can render without treating the probe as a hard outage). When the runner uses Kubernetes, expect **`kubernetes_reachable`**, **`current_context`**, and **`runtime_provider`** reflecting the runner configuration (see [Kubernetes runtime](KUBERNETES_RUNTIME.md)).
 
 ## Docker Compose
 

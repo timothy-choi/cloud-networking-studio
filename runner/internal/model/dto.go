@@ -86,6 +86,10 @@ type RuntimeStatus struct {
 	KubernetesReachable    bool   `json:"kubernetes_reachable"`
 	CurrentContext         string `json:"current_context,omitempty"`
 	Message                string `json:"message,omitempty"`
+	BackendStatus          string `json:"backend_status,omitempty"`
+	RuntimeExecutor        string `json:"runtime_executor,omitempty"`
+	RunnerReachable        *bool  `json:"runner_reachable,omitempty"`
+	LastRuntimeError       string `json:"last_runtime_error,omitempty"`
 }
 
 type ResourceRef struct {

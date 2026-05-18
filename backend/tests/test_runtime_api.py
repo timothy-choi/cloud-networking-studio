@@ -299,7 +299,10 @@ def test_public_runtime_status_python_executor(client):
     r = client.get("/runtime/status")
     assert r.status_code == 200
     data = r.json()
-    assert data == {"status": "ok", "runtime_provider": "python"}
+    assert data.get("backend_status") == "ok"
+    assert data.get("runtime_executor") == "python"
+    assert data.get("runtime_provider") == "python"
+    assert "docker_reachable" in data
 
 
 def test_health_accepts_optional_api_prefix(client):
@@ -324,6 +327,7 @@ def test_deployment_runtime_get_routes_registered_under_deployments_tag():
     post_want = {
         "/deployments/{deployment_id}/runtime/services/{service_id}/health-check",
         "/deployments/{deployment_id}/runtime/traffic-tests",
+        "/deployments/{deployment_id}/runtime/cleanup",
     }
     found_get: set[str] = set()
     found_post: set[str] = set()
@@ -371,9 +375,11 @@ def test_public_runtime_status_go_proxies_runner(client, monkeypatch):
     body = r.json()
     assert body["runtime_provider"] == "docker"
     assert body["docker_reachable"] is True
+    assert body.get("runner_reachable") is True
+    assert body.get("backend_status") == "ok"
 
 
-def test_public_runtime_status_go_runner_unavailable_returns_503(client, monkeypatch):
+def test_public_runtime_status_go_runner_unavailable_returns_degraded(client, monkeypatch):
     from app.core import config
     from app.runtime import go_runner_client as grc
 
@@ -387,8 +393,11 @@ def test_public_runtime_status_go_runner_unavailable_returns_503(client, monkeyp
 
     monkeypatch.setattr(grc.GoRunnerClient, "get_runtime_status", boom)
     r = client.get("/runtime/status")
-    assert r.status_code == 503
-    assert r.json()["detail"] == "Go runner unavailable"
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("status") == "degraded"
+    assert body.get("runner_reachable") is False
+    assert "unavailable" in (body.get("message") or "").lower()
 
 
 def _bearer_headers(client_strict, prefix: str) -> dict[str, str]:

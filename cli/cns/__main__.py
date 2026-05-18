@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 import time
+import urllib.error
 from typing import Any
 
 from cli.cns.config import default_config_path, effective_base_url, effective_token, load_config, save_config
@@ -270,6 +271,9 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.func(args))
     except ApiHttpError as e:
         _out({"error": "api_http_error", "status": e.status, "detail": e.payload}, as_json=args.json)
+        return 1
+    except urllib.error.URLError as e:
+        print(f"Request failed: {e}", file=sys.stderr)
         return 1
 
 

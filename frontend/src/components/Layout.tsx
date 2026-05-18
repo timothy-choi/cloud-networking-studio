@@ -1,5 +1,6 @@
 import { Link, Outlet } from 'react-router-dom';
 import { getApiBase } from '../api/client';
+import { PlatformStatusBanner } from './PlatformStatusBanner';
 import { useAuth } from '../auth/AuthContext';
 
 export function Layout() {
@@ -49,6 +50,7 @@ export function Layout() {
                 {getApiBase()}
               </span>
             </div>
+            <PlatformStatusBanner />
           </div>
         </div>
       </header>

@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-FILTER='label=cns.project=cloud-networking-studio'
+FILTER='label=app=cloud-networking-studio'
 
 echo "Removing CNS-managed containers (${FILTER})..."
 while read -r cid; do

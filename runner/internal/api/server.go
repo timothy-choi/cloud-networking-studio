@@ -207,14 +207,13 @@ func (s *Server) handleDeleteDeploymentID(w http.ResponseWriter, r *http.Request
 			msg := "docker client not initialized"
 			resp = model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Error: &msg}
 		} else {
-			events := rdocker.DestroyTopology(ctx, s.cli, topologyID)
+			events := rdocker.DestroyDeployment(ctx, s.cli, deploymentID, topologyID)
 			resp = model.DeploymentResponse{Status: "succeeded", RuntimeProvider: "docker"}
 			for _, e := range events {
 				resp.Events = append(resp.Events, e)
 			}
 		}
 	}
-	_ = deploymentID
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }

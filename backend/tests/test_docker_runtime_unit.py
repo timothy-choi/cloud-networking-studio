@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from unittest.mock import MagicMock
 
 import pytest
@@ -68,6 +69,8 @@ def _sample_plan() -> DeploymentPlan:
         ),
         segmented_networks=False,
         subnet_cidr="10.200.0.0/24",
+        deployment_id=uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+        project_id=uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
     )
 
 
@@ -85,6 +88,88 @@ def _make_container_mock(ip: str, net_name: str) -> MagicMock:
 
     c.reload.side_effect = reload_fn
     return c
+
+
+def test_docker_deploy_auto_ipam_when_no_subnet():
+    plan = replace(_sample_plan(), subnet_cidr=None)
+    net_name = topology_network_name(plan.topology_id)
+
+    mock_client = MagicMock()
+    mock_client.api.create_endpoint_config.return_value = {}
+    mock_client.api.create_networking_config.return_value = {}
+    mock_client.api.create_container.side_effect = [{"Id": "a1"}, {"Id": "b1"}]
+    mock_client.api.start = MagicMock()
+    ca = _make_container_mock("10.200.0.10", net_name)
+    cb = _make_container_mock("10.200.0.11", net_name)
+
+    def get_by_id(cid):
+        if cid == "a1":
+            return ca
+        if cid == "b1":
+            return cb
+        raise NotFound("no such container")
+
+    mock_client.containers.get.side_effect = get_by_id
+
+    labeled = MagicMock()
+    labeled.attrs = {"Id": "nid001", "Labels": {"cns.topology_id": str(plan.topology_id)}}
+
+    def _net_list(*_a, **_kw):
+        fl = _kw.get("filters")
+        if fl:
+            return [labeled]
+        return []
+
+    mock_client.networks.list.side_effect = _net_list
+
+    DockerRuntimeProvider(client=mock_client).deploy(plan)
+    _args, kwargs = mock_client.networks.create.call_args
+    assert kwargs.get("ipam") is None
+
+
+def test_docker_deploy_subnet_overlap_selects_alternate():
+    plan = _sample_plan()
+    net_name = topology_network_name(plan.topology_id)
+
+    overlap = MagicMock()
+    overlap.attrs = {
+        "IPAM": {"Config": [{"Subnet": "10.200.0.0/24", "Gateway": "10.200.0.1"}]}
+    }
+
+    mock_client = MagicMock()
+    mock_client.api.create_endpoint_config.return_value = {}
+    mock_client.api.create_networking_config.return_value = {}
+    mock_client.api.create_container.side_effect = [{"Id": "a1"}, {"Id": "b1"}]
+    mock_client.api.start = MagicMock()
+    ca = _make_container_mock("10.200.0.10", net_name)
+    cb = _make_container_mock("10.200.0.11", net_name)
+
+    def get_by_id(cid):
+        if cid == "a1":
+            return ca
+        if cid == "b1":
+            return cb
+        raise NotFound("no such container")
+
+    mock_client.containers.get.side_effect = get_by_id
+
+    labeled = MagicMock()
+    labeled.attrs = {"Id": "nid001", "Labels": {"cns.topology_id": str(plan.topology_id)}}
+
+    def _net_list(*_a, **_kw):
+        fl = _kw.get("filters")
+        if fl:
+            return [labeled]
+        return [overlap]
+
+    mock_client.networks.list.side_effect = _net_list
+
+    events = DockerRuntimeProvider(client=mock_client).deploy(plan).events
+    _args, kwargs = mock_client.networks.create.call_args
+    assert kwargs["ipam"] is not None
+    assert "10.201." in str(kwargs["ipam"]) or "172.30." in str(kwargs["ipam"])
+    msgs = [m for _, m in events]
+    assert any("overlaps" in m.lower() for m in msgs)
 
 
 def test_topology_network_name_stable():
@@ -123,7 +208,11 @@ def test_docker_deploy_uses_api_create_container_and_static_endpoint():
 
     mock_labeled_net = MagicMock()
     mock_labeled_net.attrs = {"Id": "nid001", "Labels": {"cns.topology_id": str(plan.topology_id)}}
-    mock_client_networks.list.return_value = [mock_labeled_net]
+
+    def _net_list_deploy(*_a, **_kw):
+        return [mock_labeled_net] if _kw.get("filters") else []
+
+    mock_client_networks.list.side_effect = _net_list_deploy
 
     provider = DockerRuntimeProvider(client=mock_client)
 
@@ -133,7 +222,9 @@ def test_docker_deploy_uses_api_create_container_and_static_endpoint():
     _args, kwargs = mock_client_networks.create.call_args
     assert kwargs["name"] == net_name
     assert kwargs["driver"] == "bridge"
-    assert kwargs["labels"]["cns.project"] == "cloud-networking-studio"
+    assert kwargs["labels"]["app"] == "cloud-networking-studio"
+    assert kwargs["labels"]["cns.deployment_id"] == str(plan.deployment_id)
+    assert kwargs["labels"]["cns.project_id"] == str(plan.project_id)
 
     assert mock_api.create_container.call_count == 2
     for call in mock_api.create_container.call_args_list:
@@ -185,14 +276,17 @@ def test_docker_deploy_no_premature_assigned_ip_event():
         raise NotFound("no such container")
 
     mock_client.containers.get.side_effect = get_by_id
-    mock_client.networks.list.return_value = [
-        MagicMock(
-            attrs={
-                "Id": "nid001",
-                "Labels": {"cns.topology_id": str(plan.topology_id)},
-            }
-        )
-    ]
+    labeled = MagicMock(
+        attrs={
+            "Id": "nid001",
+            "Labels": {"cns.topology_id": str(plan.topology_id)},
+        }
+    )
+
+    def _nl(*_a, **_kw):
+        return [labeled] if _kw.get("filters") else []
+
+    mock_client.networks.list.side_effect = _nl
 
     events = DockerRuntimeProvider(client=mock_client).deploy(plan).events
     msgs = [m for _, m in events]
@@ -284,13 +378,31 @@ def test_docker_deploy_failure_on_network_create():
 def test_docker_destroy_removes_labeled_resources():
     mock_client = MagicMock()
     ctr = MagicMock()
+    ctr.id = "cid-1"
     ctr.name = "/cns-node-test"
-    mock_client.containers.list.return_value = [ctr]
+
+    def _ctr_list(*_a, **_kw):
+        fl = (_kw.get("filters") or {}).get("label") or []
+        if any("cns.deployment_id=" in x for x in fl):
+            return []
+        return [ctr]
+
+    mock_client.containers.list.side_effect = _ctr_list
 
     mock_net = MagicMock()
     mock_net.name = "cns-topology-aaaaaaaaaaaa"
     mock_net.attrs = {"Name": "/cns-topology-aaaaaaaaaaaa"}
-    mock_client.networks.list.return_value = [mock_net]
+    mock_net.ID = "net-1"
+
+    def _net_list(*_a, **_kw):
+        fl = (_kw.get("filters") or {}).get("label") or []
+        if any("cns.deployment_id=" in x for x in fl):
+            return []
+        if any("cns.topology_id=" in x for x in fl):
+            return [mock_net]
+        return []
+
+    mock_client.networks.list.side_effect = _net_list
 
     net = MagicMock()
     mock_client.networks.get.return_value = net

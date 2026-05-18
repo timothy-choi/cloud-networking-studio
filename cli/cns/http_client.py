@@ -9,6 +9,14 @@ import urllib.request
 from typing import Any
 
 
+class ApiConnectionError(Exception):
+    """Transport failure before an HTTP response (e.g. connection refused)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
 def request_json(
     method: str,
     url: str,
@@ -42,6 +50,12 @@ def request_json(
         except json.JSONDecodeError:
             payload = {"detail": raw or e.reason}
         raise ApiHttpError(e.code, payload) from e
+    except urllib.error.URLError as e:
+        raise ApiConnectionError(str(e.reason or e)) from e
+    except TimeoutError as e:
+        raise ApiConnectionError(str(e)) from e
+    except OSError as e:
+        raise ApiConnectionError(str(e)) from e
 
 
 class ApiHttpError(Exception):

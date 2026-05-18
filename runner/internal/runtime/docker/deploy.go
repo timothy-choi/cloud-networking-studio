@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"regexp"
@@ -36,17 +37,26 @@ func ContainerName(nodeID, nodeName string) string {
 	return fmt.Sprintf("cns-node-%s-%s", short, safe)
 }
 
-func baseLabels(topologyID string) map[string]string {
-	return map[string]string{
-		"cns.project":     "cloud-networking-studio",
-		"cns.topology_id": topologyID,
+func cnsLabels(topologyID, deploymentID string, projectID *string) map[string]string {
+	m := map[string]string{
+		"app":             "cloud-networking-studio",
+		"cns.topology_id": strings.TrimSpace(topologyID),
 		"cns.managed":     "true",
 	}
+	if d := strings.TrimSpace(deploymentID); d != "" {
+		m["cns.deployment_id"] = d
+	}
+	if projectID != nil {
+		if p := strings.TrimSpace(*projectID); p != "" {
+			m["cns.project_id"] = p
+		}
+	}
+	return m
 }
 
-func nodeLabels(topologyID, nodeID, forwardingRole string) map[string]string {
-	m := baseLabels(topologyID)
-	m["cns.node_id"] = nodeID
+func nodeLabels(req *model.DeploymentRequest, nodeID, forwardingRole string) map[string]string {
+	m := cnsLabels(req.TopologyID, req.DeploymentID, req.ProjectID)
+	m["cns.node_id"] = strings.TrimSpace(nodeID)
 	if forwardingRole != "" {
 		m["cns.forwarding_role"] = forwardingRole
 	}
@@ -148,23 +158,51 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 
 	removeNetworkIfExists(cli, netName)
 
-	ipam := ipamFromSubnet(req.SubnetCIDR)
+	subnetStr := req.SubnetCIDR
+	if req.SubnetCIDR != nil && strings.TrimSpace(*req.SubnetCIDR) != "" {
+		chosen, note, err := resolveBridgeSubnet(cli, strings.TrimSpace(*req.SubnetCIDR))
+		if err != nil {
+			if errors.Is(err, errSubnetOverlap) {
+				msg := dockerSubnetOverlapMessage
+				events = append(events, ev("error", msg))
+				return model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Events: events, Error: &msg}
+			}
+			msg := fmt.Sprintf("Docker subnet resolution failed: %v", err)
+			events = append(events, ev("error", msg))
+			return model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Events: events, Error: &msg}
+		}
+		if note != "" {
+			events = append(events, ev("info", note))
+		}
+		if chosen != "" {
+			cs := chosen
+			subnetStr = &cs
+		}
+	}
+
+	ipam := ipamFromSubnet(subnetStr)
 	_, netErr := cli.CreateNetwork(docker.CreateNetworkOptions{
 		Context:        ctx,
 		Name:           netName,
 		Driver:         "bridge",
 		IPAM:           ipam,
-		Labels:         baseLabels(req.TopologyID),
+		Labels:         cnsLabels(req.TopologyID, req.DeploymentID, req.ProjectID),
 		CheckDuplicate: true,
 	})
 	if netErr != nil {
+		low := strings.ToLower(netErr.Error())
+		if strings.Contains(low, "overlap") || strings.Contains(low, "pool overlaps") {
+			msg := dockerSubnetOverlapMessage
+			events = append(events, ev("error", msg))
+			return model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Events: events, Error: &msg}
+		}
 		msg := fmt.Sprintf("Docker network creation failed: %v", netErr)
 		events = append(events, ev("error", msg))
 		return model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Events: events, Error: &msg}
 	}
 	extra := ""
-	if req.SubnetCIDR != nil && strings.TrimSpace(*req.SubnetCIDR) != "" {
-		extra = fmt.Sprintf(" (subnet %s)", strings.TrimSpace(*req.SubnetCIDR))
+	if subnetStr != nil && strings.TrimSpace(*subnetStr) != "" {
+		extra = fmt.Sprintf(" (subnet %s)", strings.TrimSpace(*subnetStr))
 	}
 	events = append(events, ev("info", fmt.Sprintf("Docker network created: %s%s", netName, extra)))
 
@@ -187,7 +225,7 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 		if strings.EqualFold(pn.NodeType, "router") {
 			role = "segment_router"
 		}
-		labels := nodeLabels(req.TopologyID, pn.ID, role)
+		labels := nodeLabels(req, pn.ID, role)
 
 		removeContainerIfExists(cli, cname)
 
@@ -226,13 +264,13 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 		if err != nil {
 			msg := fmt.Sprintf("container create failed (%s): %v", cname, err)
 			events = append(events, ev("error", msg))
-			_ = DestroyTopology(ctx, cli, req.TopologyID)
+			_ = DestroyDeployment(ctx, cli, req.DeploymentID, req.TopologyID)
 			return model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Events: events, Error: &msg}
 		}
 		if err := cli.StartContainer(ctr.ID, nil); err != nil {
 			msg := fmt.Sprintf("container start failed (%s): %v", cname, err)
 			events = append(events, ev("error", msg))
-			_ = DestroyTopology(ctx, cli, req.TopologyID)
+			_ = DestroyDeployment(ctx, cli, req.DeploymentID, req.TopologyID)
 			return model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Events: events, Error: &msg}
 		}
 		events = append(events, ev("info", fmt.Sprintf("Container started: %s", cname)))
@@ -300,40 +338,77 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 	}
 }
 
-// DestroyTopology removes labeled containers and CNS networks for a topology (best-effort).
+// DestroyTopology is legacy cleanup by topology id only (no deployment label filter).
 func DestroyTopology(ctx context.Context, cli *docker.Client, topologyID string) []model.Event {
+	return DestroyDeployment(ctx, cli, "", topologyID)
+}
+
+// DestroyDeployment tears down containers and networks labeled for a deployment and/or topology (best-effort).
+func DestroyDeployment(ctx context.Context, cli *docker.Client, deploymentID, topologyID string) []model.Event {
 	var events []model.Event
 	ev := func(level, msg string) model.Event { return model.Event{Level: level, Message: msg} }
+	did := strings.TrimSpace(deploymentID)
 	tid := strings.TrimSpace(topologyID)
-	ctrs, err := cli.ListContainers(docker.ListContainersOptions{
-		Context: ctx,
-		All:     true,
-		Filters: map[string][]string{"label": {fmt.Sprintf("cns.topology_id=%s", tid)}},
-	})
-	if err == nil {
+
+	seen := map[string]struct{}{}
+	filters := []map[string][]string{}
+	if did != "" {
+		filters = append(filters, map[string][]string{"label": {fmt.Sprintf("cns.deployment_id=%s", did)}})
+	}
+	if tid != "" {
+		filters = append(filters, map[string][]string{"label": {fmt.Sprintf("cns.topology_id=%s", tid)}})
+	}
+	for _, flt := range filters {
+		ctrs, err := cli.ListContainers(docker.ListContainersOptions{
+			Context: ctx,
+			All:     true,
+			Filters: flt,
+		})
+		if err != nil {
+			continue
+		}
 		for _, c := range ctrs {
-			id := c.ID
-			name := c.Names[0]
-			if strings.HasPrefix(name, "/") {
-				name = name[1:]
+			if _, ok := seen[c.ID]; ok {
+				continue
+			}
+			seen[c.ID] = struct{}{}
+			name := ""
+			if len(c.Names) > 0 {
+				name = c.Names[0]
+				if strings.HasPrefix(name, "/") {
+					name = name[1:]
+				}
 			}
 			events = append(events, ev("info", fmt.Sprintf("Stopping container: %s", name)))
-			_ = cli.StopContainer(id, 15)
-			_ = cli.RemoveContainer(docker.RemoveContainerOptions{Context: ctx, ID: id, Force: true})
+			_ = cli.StopContainer(c.ID, 15)
+			_ = cli.RemoveContainer(docker.RemoveContainerOptions{Context: ctx, ID: c.ID, Force: true})
 			events = append(events, ev("info", fmt.Sprintf("Removed container: %s", name)))
 		}
 	}
 
+	netSeen := map[string]struct{}{}
 	nets, err := cli.ListNetworks()
 	if err == nil {
 		for _, n := range nets {
 			if n.Labels == nil {
 				continue
 			}
-			if n.Labels["cns.topology_id"] == tid && n.Labels["cns.managed"] == "true" {
-				events = append(events, ev("info", fmt.Sprintf("Removing network: %s", n.Name)))
-				_ = cli.RemoveNetwork(n.ID)
+			rm := false
+			if did != "" && n.Labels["cns.deployment_id"] == did {
+				rm = true
 			}
+			if tid != "" && n.Labels["cns.topology_id"] == tid && n.Labels["cns.managed"] == "true" {
+				rm = true
+			}
+			if !rm {
+				continue
+			}
+			if _, ok := netSeen[n.ID]; ok {
+				continue
+			}
+			netSeen[n.ID] = struct{}{}
+			events = append(events, ev("info", fmt.Sprintf("Removing network: %s", n.Name)))
+			_ = cli.RemoveNetwork(n.ID)
 		}
 	}
 	events = append(events, ev("info", "Runtime resources destroyed"))

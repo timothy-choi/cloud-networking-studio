@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from uuid import UUID
 
@@ -30,38 +31,96 @@ from app.schemas.runtime import (
 
 router = APIRouter(tags=["runtime"])
 
+_last_runtime_status_error: str | None = None
+
 
 def _python_executor_runtime_status() -> dict[str, Any]:
-    """Local control-plane view when Docker work runs in-process (docker-py)."""
-    return {
+    """Control-plane view when Docker work runs in-process (docker-py)."""
+    global _last_runtime_status_error
+    out: dict[str, Any] = {
         "status": "ok",
         "runtime_provider": "python",
+        "runner_reachable": False,
+        "docker_reachable": False,
+        "kubernetes_reachable": False,
+        "current_context": "",
+        "message": "",
+        "last_runtime_error": _last_runtime_status_error,
     }
+    fake = os.environ.get("CNS_USE_FAKE_DOCKER", "").lower() in ("1", "true", "yes")
+    if fake:
+        out["message"] = "CNS_USE_FAKE_DOCKER: Docker engine not probed"
+        return out
+    try:
+        import docker as docker_mod
+
+        docker_mod.from_env().ping()
+        out["docker_reachable"] = True
+    except Exception as exc:  # noqa: BLE001 — best-effort probe
+        out["status"] = "degraded"
+        out["docker_reachable"] = False
+        err = str(exc)
+        out["message"] = err
+        _last_runtime_status_error = err
+        out["last_runtime_error"] = err
+    return out
 
 
 @router.get(
     "/runtime/status",
     summary="Control plane runtime executor status",
-    response_description="Executor mode: python returns fixed JSON; go proxies the runner.",
+    response_description="Executor mode, runner reachability, and provider probes.",
 )
 def get_runtime_executor_status() -> dict[str, Any]:
     """
     Public probe (no DB, no auth) — same routing pattern as ``GET /health`` via ``/api/runtime/status``.
 
-    * ``RUNTIME_EXECUTOR=python`` — ``{"status":"ok","runtime_provider":"python"}``.
-    * ``RUNTIME_EXECUTOR=go`` — JSON from ``GO_RUNNER_URL/runtime/status`` (503 if unreachable).
+    * ``RUNTIME_EXECUTOR=python`` — local Docker ping when available.
+    * ``RUNTIME_EXECUTOR=go`` — merges JSON from ``GO_RUNNER_URL/runtime/status``; if the runner is
+      unreachable, returns HTTP 200 with ``status: degraded`` and ``runner_reachable: false``.
     """
+    global _last_runtime_status_error
+    from app.core.config import settings
+
+    base: dict[str, Any] = {
+        "backend_status": "ok",
+        "runtime_executor": settings.runtime_executor,
+        "environment": settings.environment,
+    }
     if effective_runtime_executor() == "go":
         from app.runtime.go_runner_client import GoRunnerClient
 
         try:
-            return GoRunnerClient.from_settings().get_runtime_status()
+            data = GoRunnerClient.from_settings().get_runtime_status()
         except (httpx.HTTPError, ValueError):
+            _last_runtime_status_error = "Go runner unavailable"
+            return {
+                **base,
+                "status": "degraded",
+                "runner_reachable": False,
+                "runtime_provider": "unknown",
+                "docker_reachable": False,
+                "kubernetes_reachable": False,
+                "current_context": "",
+                "message": "Go runner unavailable",
+                "last_runtime_error": _last_runtime_status_error,
+            }
+        if not isinstance(data, dict):
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Go runner unavailable",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Go runner returned invalid JSON for /runtime/status",
             ) from None
-    return _python_executor_runtime_status()
+        merged: dict[str, Any] = {**base, **data, "runner_reachable": True}
+        merged.setdefault("runtime_executor", settings.runtime_executor)
+        if str(merged.get("status", "")).lower() != "ok":
+            _last_runtime_status_error = str(merged.get("message") or merged.get("status"))
+        else:
+            _last_runtime_status_error = None
+        merged["last_runtime_error"] = _last_runtime_status_error
+        return merged
+
+    body = {**base, **_python_executor_runtime_status()}
+    return body
 
 
 def _topology_http(session, topology_id: UUID):

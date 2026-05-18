@@ -411,8 +411,8 @@ echo "${ROUTED_DESTROY_JSON}" | jq '{id, status}'
 
 section "Verify Docker cleanup (optional)"
 if command -v docker >/dev/null 2>&1; then
-  CNT=$(docker ps -aq --filter 'label=cns.project=cloud-networking-studio' | wc -l | tr -d ' ')
-  NET=$(docker network ls -q --filter 'label=cns.project=cloud-networking-studio' | wc -l | tr -d ' ')
+  CNT=$(docker ps -aq --filter 'label=app=cloud-networking-studio' | wc -l | tr -d ' ')
+  NET=$(docker network ls -q --filter 'label=app=cloud-networking-studio' | wc -l | tr -d ' ')
   echo "remaining CNS-labeled containers: ${CNT}"
   echo "remaining CNS-labeled networks: ${NET}"
   if [[ "${CNT}" != "0" || "${NET}" != "0" ]]; then

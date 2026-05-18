@@ -6,6 +6,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { PublicHomeRoute } from './pages/PublicHomeRoute';
 import { RegisterPage } from './pages/RegisterPage';
+import { TemplatesPage } from './pages/TemplatesPage';
 import { TopologyDetailPage } from './pages/TopologyDetailPage';
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
           <Route element={<RequireSession />}>
             <Route element={<Layout />}>
               <Route path="dashboard" element={<DashboardPage />} />
+              <Route path="templates" element={<TemplatesPage />} />
               <Route path="topologies/:topologyId" element={<TopologyDetailPage />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>

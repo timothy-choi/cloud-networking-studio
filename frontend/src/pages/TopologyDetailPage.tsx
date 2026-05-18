@@ -17,6 +17,7 @@ import { FailureHistory } from '../components/failures/FailureHistory';
 import { RuntimeHealthBadges } from '../components/runtime/RuntimeHealthBadges';
 import { RuntimeMetricsPanel } from '../components/runtime/RuntimeMetricsPanel';
 import { RuntimeAccessPanel } from '../components/runtime/RuntimeAccessPanel';
+import { SaveAsTemplateModal } from '../components/templates/SaveAsTemplateModal';
 import { Spinner } from '../components/Spinner';
 import { TopologyWorkspace } from '../components/topology/TopologyWorkspace';
 import { TrafficValidationSection } from '../components/traffic/TrafficValidationSection';
@@ -103,6 +104,7 @@ export function TopologyDetailPage() {
   const [opsError, setOpsError] = useState<OperatorErrorPresentation | null>(null);
   const [pageToast, setPageToast] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
 
   const refreshLive = useCallback(async () => {
     await Promise.all([refetch(), refetchEvents(), refetchTraffic(), refetchFailures()]);
@@ -279,6 +281,15 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
+            disabled={opLocked}
+            title={viewerMode ? viewerHint : undefined}
+            onClick={() => setTemplateModalOpen(true)}
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+          >
+            Save as template
+          </button>
+          <button
+            type="button"
             disabled={opLocked || deleteBusy}
             title={viewerMode ? viewerHint : undefined}
             onClick={() => {
@@ -342,6 +353,18 @@ export function TopologyDetailPage() {
           {pageToast}
         </div>
       )}
+
+      {templateModalOpen ? (
+        <SaveAsTemplateModal
+          topologyId={id}
+          defaultName={topology?.name ?? 'Topology'}
+          onClose={() => setTemplateModalOpen(false)}
+          onCreated={() => {
+            setPageToast('Template saved. You can reuse it from the Templates library.');
+            window.setTimeout(() => setPageToast(null), 4200);
+          }}
+        />
+      ) : null}
 
       {degraded && (
         <div

@@ -91,6 +91,8 @@ def get_or_create_dev_user(db: Session) -> User:
 
 def run_startup_datafixes(engine: Engine) -> None:
     """Backfill topology.project_id and project owner memberships."""
+    from app.db.seed_runtime_templates import ensure_starter_runtime_templates
+
     with Session(engine) as db:
         _, proj = ensure_dev_user_and_project(db)
         db.execute(
@@ -101,3 +103,4 @@ def run_startup_datafixes(engine: Engine) -> None:
         for row in db.scalars(select(Project)).all():
             _ensure_owner_membership(db, project_id=row.id, user_id=row.owner_user_id)
         db.commit()
+        ensure_starter_runtime_templates(db)

@@ -13,6 +13,14 @@ export function Layout() {
             <Link to="/dashboard" className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
               Cloud Networking Studio
             </Link>
+            <nav className="hidden items-center gap-3 text-sm font-medium sm:flex">
+              <Link to="/dashboard" className="text-cns-muted hover:text-zinc-900 dark:hover:text-zinc-100">
+                Dashboard
+              </Link>
+              <Link to="/templates" className="text-cns-muted hover:text-zinc-900 dark:hover:text-zinc-100">
+                Templates
+              </Link>
+            </nav>
             <span className="hidden text-xs font-medium uppercase tracking-wider text-cns-label sm:inline">
               Control plane
             </span>

@@ -1,6 +1,14 @@
 # Architecture (portfolio overview)
 
-This document explains **Cloud Networking Studio (CNS)** in terms a recruiter or interviewer can follow in one sitting. For API-level diagrams, sequence charts, and extra detail, see **[system-architecture.md](system-architecture.md)**.
+**In 30 seconds:** Users edit a **network graph** in the UI; the API stores that intent in **PostgreSQL** and runs **deploy / destroy / traffic / failure / reconcile / heal** flows through a **runtime provider** (Docker is the primary implementation). A **Go runtime executor** can run beside FastAPI to apply richer plans and return detailed runtime metadata for **Runtime Access** and in-network checks. **Deployment events** give an append-only audit trail suitable for demos.
+
+This document explains **Cloud Networking Studio (CNS)** in terms a recruiter or interviewer can follow in one sitting. For API-level diagrams, sequence charts, and extra detail, see **[system-architecture.md](system-architecture.md)**. For a guided screen-share script, see **[DEMO_GUIDE.md](DEMO_GUIDE.md)**.
+
+### Why interviewers often care
+
+- **Clear boundary** — Domain logic and HTTP handlers stay separate from Docker (or Kubernetes) SDK calls; the provider is the seam you would extend in a real platform.
+- **Orchestration-shaped verbs** — Deploy, destroy, reconcile, and heal mirror how production control planes talk about state.
+- **Observable runs** — Structured events and metrics hooks show how you would operate the system, not only build it.
 
 ---
 
@@ -12,7 +20,8 @@ CNS is a **small control plane**: users describe infrastructure as data in **Pos
 |--------|----------------|
 | Desired state | Topologies, nodes, links, deployments (SQLAlchemy + Postgres) |
 | Orchestration logic | Services (planning, deploy pipeline, traffic, failures, reconcile/heal) |
-| Actual state | Docker Engine (networks, containers, exec) |
+| Rich apply + in-cluster probes (optional) | **Go runtime executor** — sidecar-style process the API calls for plans that need the runner |
+| Actual state | Docker Engine (networks, containers, exec) — or Kubernetes when configured |
 | Audit trail | Append-only **deployment events** |
 
 Handlers stay thin: validate input, call services, return JSON. Docker SDK calls stay **inside** the provider implementation, not scattered across routes.
@@ -99,6 +108,7 @@ Together they mirror **Day-2** platform operations: detect drift, then act — w
 |----------|----------|
 | [system-architecture.md](system-architecture.md) | Deeper diagrams and request flows |
 | [DEMO_SCRIPT.md](DEMO_SCRIPT.md) | Step-by-step UI and CLI demos |
+| [DEMO_GUIDE.md](DEMO_GUIDE.md) | 5-minute recruiter script, impressive moments, troubleshooting |
 | [RESUME_NOTES.md](RESUME_NOTES.md) | Resume bullets and interview framing |
 | [failure-recovery.md](failure-recovery.md) | Reconcile/heal and failure injection detail |
 | [repository-layout.md](repository-layout.md) | Where code lives in the repo |

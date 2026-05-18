@@ -10,6 +10,15 @@
 
 A **React dashboard** (`frontend/`) provides a topology list, a **React Flow** studio (manual editing + templates), deploy/runtime controls, traffic history, and raw JSON views — all backed by the same REST API as `curl` and the automated demo script.
 
+### Show this in an interview (about five minutes)
+
+Use this path when a recruiter or hiring manager is watching your screen — no need to narrate every file in the repo.
+
+1. **Sign in** (or register — a starter project is created for you).
+2. On the **Dashboard**, optionally click **Start demo (optional)** so a built-in template deploys and the lab opens in one step; otherwise pick a topology from the list.
+3. Open **Runtime Access** on the topology: run a **ping** or **HTTP** traffic test, skim **deployment events**, then **destroy** to show clean teardown.
+4. If they want the system story, open **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**; for a spoken script and troubleshooting, use **[docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md)**.
+
 ---
 
 ## Key features
@@ -63,6 +72,8 @@ flowchart LR
   SVC --> RP --> DK
   API --> TOPO
 ```
+
+An optional **Go runtime executor** can sit alongside FastAPI for richer deploy plans and runtime payloads (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)); local Docker-only demos still work when the executor is off.
 
 **Portfolio-friendly docs (start here):**
 

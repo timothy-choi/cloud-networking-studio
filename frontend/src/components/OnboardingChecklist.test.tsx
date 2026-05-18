@@ -36,7 +36,7 @@ describe('OnboardingChecklist', () => {
         />
       </MemoryRouter>,
     );
-    expect(html).toContain('Deploy your first network topology');
+    expect(html).toContain('Guided path: first deploy in minutes');
     expect(html).toContain('Start demo (optional)');
     expect(html).toContain('Create a topology');
   });

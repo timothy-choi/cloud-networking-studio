@@ -223,7 +223,8 @@ export function DashboardPage() {
           {refreshing && <Spinner className="h-5 w-5" />}
         </div>
         <p className="mt-1 max-w-2xl text-sm text-cns-muted">
-          Design environments, attach a runtime, and operate workloads. Topologies refresh every 10s.
+          Pick a project, open or create a topology, then deploy and use <strong className="font-semibold">Runtime Access</strong>{' '}
+          for traffic tests and operations. The list below refreshes about every 10s.
         </p>
       </div>
 

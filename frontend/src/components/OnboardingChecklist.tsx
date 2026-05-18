@@ -50,11 +50,11 @@ export function OnboardingChecklist({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold tracking-tight text-emerald-950 dark:text-emerald-100">
-            Deploy your first network topology
+            Guided path: first deploy in minutes
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-emerald-950/85 dark:text-emerald-100/85">
-            Optional checklist — about five minutes. Steps tick automatically when the platform sees matching activity,
-            or you can mark them manually.
+            Optional checklist for demos and interviews — about five minutes. Steps tick when the platform detects the
+            matching action, or use <strong className="font-semibold">Mark done</strong> if you showed the step another way.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

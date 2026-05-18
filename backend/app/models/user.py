@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 
 if TYPE_CHECKING:
+    from app.models.api_token import ApiToken
     from app.models.project import Project
     from app.models.project_membership import ProjectMembership
 
@@ -41,6 +42,11 @@ class User(Base):
         passive_deletes=True,
     )
     project_memberships: Mapped[list["ProjectMembership"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    api_tokens: Mapped[list["ApiToken"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,

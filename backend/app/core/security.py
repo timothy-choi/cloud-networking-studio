@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -57,3 +58,16 @@ def create_access_token(*, user_id: uuid.UUID, email: str) -> str:
 
 def decode_access_token(token: str) -> dict:
     return jwt.decode(token, settings.auth_secret_key, algorithms=[JWT_ALG])
+
+
+def hash_api_token_secret(secret: str) -> str:
+    """HMAC-SHA256 of the secret fragment using the app secret as key."""
+    key = settings.auth_secret_key.encode("utf-8")
+    return hmac.new(key, secret.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def verify_api_token_secret(secret: str, token_hash: str) -> bool:
+    try:
+        return hmac.compare_digest(hash_api_token_secret(secret), token_hash)
+    except Exception:
+        return False

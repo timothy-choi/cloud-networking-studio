@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './auth/AuthContext';
 import { RequireSession } from './auth/RequireSession';
 import { Layout } from './components/Layout';
+import { ApiTokensPage } from './pages/ApiTokensPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { PublicHomeRoute } from './pages/PublicHomeRoute';
@@ -20,6 +21,7 @@ export default function App() {
           <Route element={<RequireSession />}>
             <Route element={<Layout />}>
               <Route path="dashboard" element={<DashboardPage />} />
+              <Route path="api-tokens" element={<ApiTokensPage />} />
               <Route path="templates" element={<TemplatesPage />} />
               <Route path="topologies/:topologyId" element={<TopologyDetailPage />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />

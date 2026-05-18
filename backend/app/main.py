@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.api_tokens import router as api_tokens_router
 from app.api.auth import router as auth_router
 from app.api.controller import router as controller_router
 from app.api.deployments import router as deployments_router
@@ -23,6 +24,10 @@ OPENAPI_TAGS_METADATA: list[dict[str, str]] = [
     {
         "name": "auth",
         "description": "Register, login, and current user (**JWT** bearer tokens).",
+    },
+    {
+        "name": "api-tokens",
+        "description": "Personal **API tokens** (Bearer) for CLI and CI/CD — same project RBAC as interactive users.",
     },
     {
         "name": "projects",
@@ -97,6 +102,7 @@ app = FastAPI(
 )
 
 app.include_router(auth_router)
+app.include_router(api_tokens_router)
 app.include_router(projects_router)
 app.include_router(topologies_router)
 app.include_router(templates_router)

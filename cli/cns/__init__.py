@@ -1,0 +1,1 @@
+"""``cns`` command-line client."""

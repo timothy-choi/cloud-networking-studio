@@ -18,6 +18,7 @@ from app.models.topology import (
     TopologyNode,
     TopologyStatus,
 )
+from app.models.api_token import ApiToken
 from app.models.deployment import (
     Deployment,
     DeploymentEvent,
@@ -36,6 +37,7 @@ from app.models.failure_injection import (
 from app.models.runtime_template import RuntimeTemplate, TemplateVisibility
 
 __all__ = [
+    "ApiToken",
     "Deployment",
     "DeploymentRuntimeExecResult",
     "DeploymentRuntimeResource",

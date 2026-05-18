@@ -136,7 +136,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     )
 
 
-@router.get("/me", response_model=MeResponse, summary="Current user (requires Bearer JWT)")
+@router.get("/me", response_model=MeResponse, summary="Current user (requires Bearer JWT or API token)")
 def me(user: User = Depends(require_bearer_user)) -> MeResponse:
     return MeResponse(user=UserPublic.model_validate(user))
 

@@ -12,6 +12,7 @@ from app.api.failure_injections import router as failure_injections_router
 from app.api.metrics import router as metrics_router
 from app.api.projects import router as projects_router
 from app.api.runtime import router as runtime_router
+from app.api.templates import router as templates_router
 from app.api.topologies import router as topologies_router
 from app.api.traffic_tests import router as traffic_tests_router
 from app.core.config import settings
@@ -56,6 +57,10 @@ OPENAPI_TAGS_METADATA: list[dict[str, str]] = [
         "description": "Cross-topology **observability** counters and recent activity for dashboards (read-only).",
     },
     {
+        "name": "templates",
+        "description": "Save and reuse **topology/runtime** setups as templates; clone into new drafts.",
+    },
+    {
         "name": "health",
         "description": "Process-level probes for orchestrators and load balancers.",
     },
@@ -94,6 +99,7 @@ app = FastAPI(
 app.include_router(auth_router)
 app.include_router(projects_router)
 app.include_router(topologies_router)
+app.include_router(templates_router)
 app.include_router(deployments_router)
 app.include_router(runtime_router)
 app.include_router(controller_router)

@@ -33,6 +33,7 @@ from app.models.failure_injection import (
     FailureInjectionFailureType,
     FailureInjectionStatus,
 )
+from app.models.runtime_template import RuntimeTemplate, TemplateVisibility
 
 __all__ = [
     "Deployment",
@@ -48,10 +49,12 @@ __all__ = [
     "NodeType",
     "Project",
     "ProjectMembership",
+    "RuntimeTemplate",
     "Topology",
     "TopologyLink",
     "TopologyNode",
     "TopologyStatus",
+    "TemplateVisibility",
     "TrafficTest",
     "TrafficTestResult",
     "TrafficTestStatus",

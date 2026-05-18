@@ -28,6 +28,9 @@ export function Layout() {
             <span className="hidden text-xs font-medium uppercase tracking-wider text-cns-label sm:inline">
               Control plane
             </span>
+            <span className="hidden max-w-[14rem] truncate text-[11px] text-cns-muted lg:inline" title="Optional one-click lab from the Dashboard">
+              Demo tip: Dashboard → Start demo (optional)
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {user ? (

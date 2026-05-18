@@ -1,6 +1,23 @@
 # Cloud Networking Studio — 5-minute demo guide
 
+**Elevator pitch:** CNS is a small **control plane** — you model a network as a **saved graph** (topologies, nodes, links with CIDRs and gateways), **deploy** it to a real **Docker** runtime, run **synthetic traffic** and **failure** labs, then **reconcile** or **heal** against live state while the API streams **deployment events**. The UI and CLI are the same API.
+
 This script is for recruiters, interviewers, or new teammates. You can run everything in **Docker mode** on a laptop; **Kubernetes** is optional and only needed when you want to show cluster-backed labs.
+
+For how the pieces fit together (Postgres, FastAPI, provider boundary, Go executor), see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
+## Contents
+
+- [Before you start](#before-you-start)
+- [5-minute narrative (UI)](#5-minute-narrative-ui)
+- [Impressive moments (pick two if time is short)](#impressive-moments-pick-two-if-time-is-short)
+- [Docker mode demo](#docker-mode-demo)
+- [Kubernetes mode demo](#kubernetes-mode-demo)
+- [CLI / API tokens demo (90s)](#cli--api-tokens-demo-90s)
+- [What to highlight for recruiters / interviewers](#what-to-highlight-for-recruiters--interviewers)
+- [Troubleshooting (common)](#troubleshooting-common)
+- [Reset onboarding (testing)](#reset-onboarding-testing)
+- [Screenshot / GIF placeholders](#screenshot--gif-placeholders)
 
 ## Before you start
 
@@ -18,6 +35,15 @@ This script is for recruiters, interviewers, or new teammates. You can run every
 6. **Destroy (30s)** — Tear down the deployment when finished; mention this frees provider resources and is part of the guided checklist.
 
 Total ≈ 5 minutes with questions; skip **Expose** or **safe exec** if time is tight.
+
+## Impressive moments (pick two if time is short)
+
+These are high-signal beats that read well on a résumé screen share:
+
+- **Intent vs reality** — Show the topology graph, then **Deploy to runtime** and the transition from “desired” to containers and bridges that match the graph.
+- **Cross-segment proof** — After a **routed** lab deploys, run an **HTTP** or **ping** traffic test from a host on one segment to a service on another so the router path is undeniable.
+- **Day-2 operations** — Open **reconcile** output (drift) or run **heal** after a controlled failure; contrast with “fire and forget” scripts.
+- **Same API everywhere** — Create an **API token**, run one **`cns`** command from a terminal, and note the UI would see the same deployment records.
 
 ## Docker mode demo
 

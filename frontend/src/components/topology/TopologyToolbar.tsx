@@ -119,10 +119,26 @@ export function TopologyToolbar({
 
       <div className="flex flex-wrap items-center gap-2">
         <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-cns-inverse-label">Add</span>
-        <Btn disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onAddHost}>
+        <Btn
+          disabled={d || ro}
+          title={
+            ro
+              ? viewerHint
+              : 'Add a host-style workload node (Linux network namespace) you can link to networks and services.'
+          }
+          onClick={onAddHost}
+        >
           Host
         </Btn>
-        <Btn disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onAddService}>
+        <Btn
+          disabled={d || ro}
+          title={
+            ro
+              ? viewerHint
+              : 'Add an application/service node (HTTP, database, etc.) you will connect with links and expose after deploy.'
+          }
+          onClick={onAddService}
+        >
           Service
         </Btn>
         <Btn disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onAddRouter}>
@@ -138,7 +154,16 @@ export function TopologyToolbar({
           <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-cns-inverse-label">
             Connect
           </span>
-          <Btn variant={linkMode ? 'primary' : 'default'} disabled={d || ro} title={ro ? viewerHint : undefined} onClick={onToggleLinkMode}>
+          <Btn
+            variant={linkMode ? 'primary' : 'default'}
+            disabled={d || ro}
+            title={
+              ro
+                ? viewerHint
+                : 'Draw links between nodes: pick a source, then a target, to represent subnets and adjacency.'
+            }
+            onClick={onToggleLinkMode}
+          >
             {linkMode ? 'Link mode on' : 'Link mode'}
           </Btn>
           {linkMode ? (
@@ -162,7 +187,10 @@ export function TopologyToolbar({
         <Btn variant="subtle" disabled={d || ro || !hasSelection} title={ro ? viewerHint : undefined} onClick={onDeleteSelection}>
           Delete selected
         </Btn>
-        <label className="ml-auto flex items-center gap-2 text-[11px] text-cns-inverse-muted">
+        <label
+          title="Append a starter pattern from the gallery without replacing your graph."
+          className="ml-auto flex items-center gap-2 text-[11px] text-cns-inverse-muted"
+        >
           <span className="hidden sm:inline">Use template</span>
           <select
             className="max-w-[13rem] rounded-md border border-zinc-600 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100"
@@ -220,7 +248,7 @@ export function TopologyToolbar({
                 ? deployBlockReasons.join(' ')
                 : deployWarnings.length
                   ? 'Deploy enabled — review warnings above.'
-                  : undefined
+                  : 'Create a deployment record and provision networks/containers for this graph on the selected runtime provider.'
           }
         >
           Deploy to runtime

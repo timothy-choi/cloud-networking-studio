@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { getOnboardingStatus, startDemoLab, type OnboardingStatusPayload } from '../api/onboarding';
 import { formatApiError, getControllerStatus, getHealth } from '../api/client';
 import { getMetricsSummary } from '../api/metrics';
 import { listProjects } from '../api/projects';
@@ -7,6 +8,7 @@ import type { ProjectResponse } from '../api/projects';
 import { createDemoTopology, deleteTopology, listTopologies } from '../api/topologies';
 import { CreateBlankTopologyModal } from '../components/CreateBlankTopologyModal';
 import { CreateProjectModal } from '../components/CreateProjectModal';
+import { OnboardingChecklist } from '../components/OnboardingChecklist';
 import { ProjectMembersPanel } from '../components/ProjectMembersPanel';
 import { Spinner } from '../components/Spinner';
 import { usePolling } from '../hooks/usePolling';
@@ -74,6 +76,8 @@ export function DashboardPage() {
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [metrics, setMetrics] = useState<MetricsSummaryResponse | null>(null);
   const [metricsErr, setMetricsErr] = useState<string | null>(null);
+  const [onboarding, setOnboarding] = useState<OnboardingStatusPayload | null>(null);
+  const [demoFlowBusy, setDemoFlowBusy] = useState(false);
 
   const refresh = useCallback(
     async (projectIdOverride?: string | null) => {
@@ -107,6 +111,11 @@ export function DashboardPage() {
         setController(c);
         setTopologies(t);
         setMetrics(m);
+        try {
+          setOnboarding(await getOnboardingStatus());
+        } catch {
+          setOnboarding(null);
+        }
       } catch (e) {
         setHealthErr(formatApiError(e));
         setHealth(null);
@@ -135,6 +144,11 @@ export function DashboardPage() {
         } catch {
           setMetricsErr('Metrics summary unavailable');
         }
+        try {
+          setOnboarding(await getOnboardingStatus());
+        } catch {
+          setOnboarding(null);
+        }
       } finally {
         setRefreshing(false);
       }
@@ -143,6 +157,20 @@ export function DashboardPage() {
   );
 
   usePolling(refresh, 10_000, true);
+
+  async function onStartDemoFlow() {
+    setDemoFlowBusy(true);
+    try {
+      const out = await startDemoLab();
+      writeSessionProjectId(out.project_id);
+      await refresh(out.project_id);
+      navigate(`/topologies/${out.topology_id}`);
+    } catch (e) {
+      alert(formatApiError(e));
+    } finally {
+      setDemoFlowBusy(false);
+    }
+  }
 
   async function onCreateFromTemplate() {
     if (!selectedProjectId) {
@@ -198,6 +226,20 @@ export function DashboardPage() {
           Design environments, attach a runtime, and operate workloads. Topologies refresh every 10s.
         </p>
       </div>
+
+      {onboarding &&
+      (!onboarding.has_seen_onboarding || onboarding.steps.some((s) => !s.completed)) ? (
+        <OnboardingChecklist
+          steps={onboarding.steps}
+          hasSeenOnboarding={onboarding.has_seen_onboarding}
+          firstTopologyId={topologies[0]?.id ?? null}
+          selectedProjectId={selectedProjectId}
+          onOpenCreateProject={() => setProjectModalOpen(true)}
+          onRefresh={refresh}
+          demoBusy={demoFlowBusy}
+          onStartDemo={() => void onStartDemoFlow()}
+        />
+      ) : null}
 
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80">
         <div className="flex flex-wrap items-end gap-3">

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.api_token import ApiToken
     from app.models.project import Project
     from app.models.project_membership import ProjectMembership
+    from app.models.user_onboarding import UserOnboarding
 
 
 def _utc_now() -> datetime:
@@ -50,4 +51,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    onboarding: Mapped["UserOnboarding | None"] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
     )

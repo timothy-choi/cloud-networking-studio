@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { formatApiError } from '../api/client';
 import { createApiToken, listApiTokens, revokeApiToken, type ApiTokenCreated, type ApiTokenRow } from '../api/apiTokens';
+import { SectionEmptyState } from '../components/SectionEmptyState';
 import { Spinner } from '../components/Spinner';
 
 function fmtWhen(iso: string | null): string {
@@ -145,7 +146,16 @@ export function ApiTokensPage() {
             Loading…
           </div>
         ) : rows.length === 0 ? (
-          <p className="text-sm text-cns-muted">No tokens yet.</p>
+          <SectionEmptyState
+            title="No API tokens yet"
+            description="Personal Bearer tokens authenticate scripts and CI jobs with the same project access as your interactive login. Create one with the form above — the secret is shown only once, so copy it into your password manager."
+            secondaryHint={
+              <span>
+                See <code className="rounded bg-zinc-100 px-1 font-mono text-[10px] dark:bg-zinc-800">docs/CI_CD_INTEGRATION.md</code> and{' '}
+                <code className="rounded bg-zinc-100 px-1 font-mono text-[10px] dark:bg-zinc-800">python3 -m cli.cns</code> for examples.
+              </span>
+            }
+          />
         ) : (
           <ul className="space-y-2">
             {rows.map((r) => (

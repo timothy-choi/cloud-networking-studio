@@ -9,6 +9,7 @@ Application startup and tests should call ``import_all_orm_modules()`` from
 from app.models.project import Project
 from app.models.project_membership import ProjectMembership
 from app.models.user import User
+from app.models.user_onboarding import UserOnboarding
 
 # Topology graph entities before deployment FKs.
 from app.models.topology import (
@@ -62,4 +63,5 @@ __all__ = [
     "TrafficTestStatus",
     "TrafficTestType",
     "User",
+    "UserOnboarding",
 ]

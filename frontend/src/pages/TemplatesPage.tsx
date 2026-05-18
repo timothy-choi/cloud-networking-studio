@@ -4,6 +4,7 @@ import { formatApiError } from '../api/client';
 import { listProjects } from '../api/projects';
 import type { ProjectResponse } from '../api/projects';
 import { cloneTemplate, deleteTemplate, listTemplates, type RuntimeTemplateSummary } from '../api/templates';
+import { SectionEmptyState } from '../components/SectionEmptyState';
 import { Spinner } from '../components/Spinner';
 
 function fmtWhen(iso: string): string {
@@ -108,8 +109,21 @@ export function TemplatesPage() {
           Loading…
         </div>
       ) : (
-        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((t) => (
+        <>
+          {items.length === 0 ? (
+            <SectionEmptyState
+              title="No templates in the library"
+              description="Templates capture a reusable topology snapshot (nodes, links, runtime target). Built-in starters ship with the API; create your own from an existing topology with “Save as template”."
+              primaryAction={{ label: 'Back to dashboard', to: '/dashboard' }}
+              secondaryHint={
+                <span>
+                  Open any topology, then use <strong className="font-semibold">Save as template</strong> to add a private or project-scoped pattern here.
+                </span>
+              }
+            />
+          ) : (
+            <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {items.map((t) => (
             <li
               key={t.id}
               className="flex flex-col rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80"
@@ -169,6 +183,8 @@ export function TemplatesPage() {
             </li>
           ))}
         </ul>
+          )}
+        </>
       )}
 
       {cloneFor ? (

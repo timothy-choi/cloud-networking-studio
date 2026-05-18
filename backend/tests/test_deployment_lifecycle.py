@@ -78,7 +78,10 @@ def test_failed_deploy_records_cleanup_events(client, monkeypatch):
     tid, _, _ = _topology_two_nodes_linked(client)
     prov = MagicMock()
     prov.deploy.side_effect = RuntimeError("simulated failure")
-    monkeypatch.setattr("app.api.deployments.runtime_provider_for_topology", lambda _rt: prov)
+    monkeypatch.setattr(
+        "app.services.topology_deploy_execution.runtime_provider_for_topology",
+        lambda _rt: prov,
+    )
 
     r = client.post(f"/topologies/{tid}/deploy")
     assert r.status_code == 500

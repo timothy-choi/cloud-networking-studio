@@ -26,6 +26,7 @@ A **React dashboard** (`frontend/`) provides a topology list, a **React Flow** s
 | **Traffic tests** | **ICMP** and **HTTP** checks executed from one container toward another node’s workload |
 | **Failure injection** | **Stop**, **restart**, or **kill** a node’s backing container |
 | **CI & quality** | **GitHub Actions** — pytest, frontend build, **production Compose** + HTTP smoke ([docs/CI.md](docs/CI.md)); **`scripts/demo_full_flow.sh`** for flat + routed smoke |
+| **Onboarding & demo** | Dashboard **checklist** with auto-detected progress, optional **Start demo** (built-in template + deploy), and `GET/POST /onboarding/*` APIs ([docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md)) |
 
 ---
 
@@ -68,6 +69,7 @@ flowchart LR
 - [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — **Step 32** dashboard metrics, deployment timeline phases, operator-facing errors
 - [docs/AUTH.md](docs/AUTH.md) — **Step 34** users, projects, JWT auth, env vars, local vs production
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — control plane, topology model, Docker provider, traffic, failures, reconcile/heal (interviewer-oriented)
+- [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md) — **5-minute demo script** (Docker / Kubernetes / CLI), recruiter talking points, troubleshooting
 - [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) — exact **UI** and **CLI** demo steps and what each proves
 - [docs/RESUME_NOTES.md](docs/RESUME_NOTES.md) — **three resume bullets**, talking points, challenges solved
 - [docs/CICD_DEPLOYMENT.md](docs/CICD_DEPLOYMENT.md) — **Step 31** production deploy (EC2 Caddy HTTPS on **`api.cloudnetstudio.com`**, Vercel **`app`**, Cloudflare **DNS only**)
@@ -127,6 +129,7 @@ Add images under `docs/images/` (or your portfolio site) and link them here. Sug
 | **Runtime** | Collapsible runtime section: networks, node→container mapping, router `eth0`/`eth1`, route snippet |
 | **Traffic validation** | Last ping / HTTP cards + history for cross-segment tests |
 | **Failure + heal** | Stopped container state → **Reconcile** → **Heal** → green traffic again |
+| **Onboarding** | Dashboard **getting started** card, optional **Start demo**, API-driven checklist ([docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md)) |
 
 **Markdown image example (after you add files):**
 
@@ -195,6 +198,8 @@ npm run dev
 ```
 
 Open **http://localhost:5174**. During **`npm run dev`**, the UI uses **`/api/...`** on the same origin and **Vite proxies** to FastAPI on **8000**. Keep **`uvicorn`** running on **8000** while using the UI. **Sign in or register** so the app stores a JWT; the dashboard does not load until **`GET /auth/me`** succeeds with that token. For **`curl`** against **`AUTH_REQUIRE_LOGIN=false`**, unauthenticated calls still hit the implicit dev user on most routes (see [docs/AUTH.md](docs/AUTH.md)).
+
+**First-run onboarding:** the dashboard shows a **getting started** checklist (with **Start demo (optional)** to clone the built-in `client-service` template into a `CNS Quick demo` project, deploy, and open the lab). Progress syncs from `GET /onboarding/status` and auto-detects common actions where possible. Full walkthrough: [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md).
 
 **Production build:**
 

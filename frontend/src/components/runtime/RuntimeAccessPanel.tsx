@@ -14,6 +14,7 @@ import {
   type RuntimeExecResultPayload,
 } from '../../api/runtimeExec';
 import { exposeDeploymentService, unexposeDeploymentService } from '../../api/serviceExposure';
+import { pickDefaultHttpTrafficTarget } from '../../lib/runtimeTrafficDefaults';
 import { Spinner } from '../Spinner';
 import type {
   DeploymentRuntimeDetailResponse,
@@ -44,6 +45,18 @@ const TAB_LABEL: Record<TabId, string> = {
   op_health: 'Health checks',
   op_traffic: 'Traffic tests',
   op_exec: 'Safe exec',
+};
+
+const TAB_HINT: Record<TabId, string> = {
+  overview: 'Deployment-level access summary and exposure counts.',
+  nodes: 'Runtime resources mapped to topology host/router nodes.',
+  services: 'Service workloads, port mappings, Expose/Unexpose controls, logs, and restarts.',
+  endpoints: 'Internal DNS or URLs your other workloads should use inside the lab network.',
+  instructions: 'Copy-paste snippets for curl, kubectl, or compose-based workflows.',
+  op_logs: 'Fetch recent container logs for debugging connectivity and startup.',
+  op_health: 'HTTP probes executed from inside the network toward your services.',
+  op_traffic: 'Ping or HTTP checks between workloads using the Go runner.',
+  op_exec: 'Allowlisted shell commands for read-only diagnostics (safe exec).',
 };
 
 function formatPorts(ports: unknown): string {
@@ -502,6 +515,17 @@ function OperationsTrafficPanel({
     if (!sourceId && selectable[0]?.id) setSourceId(selectable[0].id);
   }, [sourceId, selectable]);
 
+  useEffect(() => {
+    if (protocol !== 'http') return;
+    const peer = pickDefaultHttpTrafficTarget(services, sourceId);
+    if (!peer) return;
+    setTarget((prev) => {
+      const p = prev.trim();
+      if (!p) return peer;
+      return prev;
+    });
+  }, [protocol, sourceId, services]);
+
   async function run() {
     if (!sourceId) {
       setErr('Select a source service resource.');
@@ -562,12 +586,12 @@ function OperationsTrafficPanel({
           </select>
         </label>
         <label className="text-xs text-cns-label sm:col-span-2">
-          Target (node UUID or http URL)
+          Target (internal service URL recommended for HTTP — auto-filled from Runtime Access)
           <input
             className="mt-1 block w-full rounded border border-zinc-300 bg-white px-2 py-1.5 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-900"
             value={target}
             onChange={(e) => setTarget(e.target.value)}
-            placeholder="e.g. other-node-uuid or http://svc.namespace.svc.cluster.local:80/"
+            placeholder="e.g. http://cns-node-…-server:80/ or peer node UUID for ping"
           />
         </label>
       </div>
@@ -904,8 +928,16 @@ export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | nu
     <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Runtime access</h2>
-          <p className="mt-1 max-w-3xl text-xs text-cns-muted">
+          <h2
+            className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50"
+            title="Live URLs, ports, and metadata returned by the runtime executor after a successful deploy. Use tabs for nodes, services, endpoints, and operations."
+          >
+            Runtime access
+          </h2>
+          <p
+            className="mt-1 max-w-3xl text-xs text-cns-muted"
+            title="Expose publishes selected ports to your laptop or ingress. Unexpose removes published routes while leaving the workload running."
+          >
             Use this deployment from your laptop, applications, CI/CD, other Kubernetes workloads, or the control-plane API.
             Resources are populated when the Go runner returns structured runtime metadata.
           </p>
@@ -932,6 +964,7 @@ export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | nu
           <button
             key={id}
             type="button"
+            title={TAB_HINT[id]}
             onClick={() => setTab(id)}
             className={
               tab === id

@@ -8,6 +8,7 @@ import (
 	docker "github.com/fsouza/go-dockerclient"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/trafficutil"
 )
 
 // RunTrafficTest executes ping or wget-based HTTP from source container to target IP (minimal parity with Python).
@@ -95,12 +96,19 @@ func RunTrafficTest(ctx context.Context, cli *docker.Client, req *model.TrafficR
 		return model.TrafficResponse{ExitCode: 1, Success: false, Stderr: msg, Error: &msg}
 	}
 	exit := ins.ExitCode
+	stderr := errBuf.String()
 	ok := exit == 0
+	var errPtr *string
+	if tt == "http" && !ok && trafficutil.HTTPWgetMissing(stderr) {
+		msg := "HTTP test tool is missing in client image"
+		errPtr = &msg
+	}
 	return model.TrafficResponse{
 		ExitCode: exit,
 		Stdout:   outBuf.String(),
-		Stderr:   errBuf.String(),
+		Stderr:   stderr,
 		Success:  ok,
+		Error:    errPtr,
 	}
 }
 

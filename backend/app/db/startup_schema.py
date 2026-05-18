@@ -39,6 +39,7 @@ def import_all_orm_modules() -> None:
     import app.models.topology  # noqa: F401
     import app.models.traffic_test  # noqa: F401
     import app.models.user  # noqa: F401
+    import app.models.user_onboarding  # noqa: F401
 
 
 def verify_core_schema(engine: Engine) -> None:

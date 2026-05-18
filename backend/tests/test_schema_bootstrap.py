@@ -18,6 +18,7 @@ def test_import_all_orm_modules_registers_users_table():
     assert "project_memberships" in names
     assert "deployment_runtime_resources" in names
     assert "deployment_service_exposures" in names
+    assert "user_onboarding" in names
 
 
 def test_verify_core_schema_after_create_all(engine_db):

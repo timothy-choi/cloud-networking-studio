@@ -8,6 +8,7 @@ import {
 } from '../api/deployments';
 import { injectStopNode, injectRestartNode, runHttpTest, runPingTest, deleteTopology } from '../api/topologies';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
+import { SectionEmptyState } from '../components/SectionEmptyState';
 import { DeploymentLifecycleTimeline } from '../components/deployment/DeploymentLifecycleTimeline';
 import { DeploymentPhaseStrip } from '../components/deployment/DeploymentPhaseStrip';
 import { DeploymentProgressRail } from '../components/deployment/DeploymentProgressRail';
@@ -396,6 +397,18 @@ export function TopologyDetailPage() {
         />
       )}
 
+      {topology && !deploymentId ? (
+        <SectionEmptyState
+          title="No active deployment yet"
+          description="Runtime Access, exposure controls, and in-network operations require a deployment record. Use Runtime actions below to deploy this topology to Docker or Kubernetes."
+          secondaryHint={
+            <Link to="#runtime-actions" className="font-semibold text-emerald-800 underline dark:text-emerald-400">
+              Jump to Runtime actions
+            </Link>
+          }
+        />
+      ) : null}
+
       {topology && deploymentId ? <RuntimeAccessPanel deploymentId={deploymentId} /> : null}
 
       {topology && (
@@ -424,9 +437,15 @@ export function TopologyDetailPage() {
         </div>
       )}
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/80">
+      <section
+        id="runtime-actions"
+        className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/80"
+      >
         <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Runtime actions</h2>
-        <p className="mt-0.5 text-xs text-cns-muted">
+        <p
+          className="mt-0.5 text-xs text-cns-muted"
+          title="Deploy applies the graph to the provider. Logs, health checks, traffic tests, and safe exec run against the active deployment. Reconcile and heal fix drift and unhealthy workloads."
+        >
           Runtime deployment, traffic checks, failure injection, and reconcile/heal for this lab. Live polling keeps data
           fresh.
         </p>

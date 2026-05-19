@@ -39,6 +39,11 @@ from app.schemas.runtime_exec import (
     RuntimeExecResultResponse,
     RuntimeRestartResponse,
 )
+from app.schemas.runtime_integration import (
+    DeploymentIntegrationResponse,
+    DeploymentRuntimeMappingResponse,
+)
+from app.schemas.runtime_terminal import TerminalSessionCreateResponse
 from app.schemas.service_exposure import (
     ServiceExposureCreate,
     ServiceExposureListResponse,
@@ -47,8 +52,10 @@ from app.schemas.service_exposure import (
 from app.services.deployment_service_exposure_service import DuplicateExposureError
 from app.services import deployment_service_exposure_service as exposure_svc
 from app.services import runtime_exec_service as runtime_exec_svc
+from app.services import runtime_integration_service as integration_svc
 from app.services import runtime_operations_service as runtime_ops
 from app.services import runtime_state_service as runtime_svc
+from app.services import runtime_terminal_service as terminal_svc
 from app.models.deployment_runtime_resource import DeploymentRuntimeResource
 
 router = APIRouter(tags=["deployments"])
@@ -604,6 +611,81 @@ def unexpose_runtime_service(
         )
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/deployments/{deployment_id}/runtime/integration",
+    response_model=DeploymentIntegrationResponse,
+    summary="Use this deployment — endpoints, env vars, and copy-paste snippets",
+)
+def get_deployment_runtime_integration(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DeploymentIntegrationResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        body = integration_svc.build_deployment_integration(db, deployment_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Deployment not found",
+        ) from None
+    db.commit()
+    return body
+
+
+@router.get(
+    "/deployments/{deployment_id}/runtime/mapping",
+    response_model=DeploymentRuntimeMappingResponse,
+    summary="Topology node to runtime resource mapping",
+)
+def get_deployment_runtime_mapping(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DeploymentRuntimeMappingResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        body = integration_svc.build_deployment_runtime_mapping(db, deployment_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Deployment not found",
+        ) from None
+    db.commit()
+    return body
+
+
+@router.post(
+    "/deployments/{deployment_id}/runtime/services/{service_id}/terminal",
+    response_model=TerminalSessionCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Open an interactive terminal session for a runtime service",
+)
+def post_deployment_runtime_service_terminal(
+    deployment_id: UUID,
+    service_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TerminalSessionCreateResponse:
+    require_deployment_editor(db, user, deployment_id)
+    try:
+        body = terminal_svc.create_terminal_session(
+            db, user.id, deployment_id, service_id
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc) or "Not found",
+        ) from exc
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    db.commit()
+    return body
 
 
 @router.get(

@@ -16,6 +16,10 @@ import {
 import { exposeDeploymentService, unexposeDeploymentService } from '../../api/serviceExposure';
 import { pickDefaultHttpTrafficTarget } from '../../lib/runtimeTrafficDefaults';
 import { Spinner } from '../Spinner';
+import { CopyButton } from './CopyButton';
+import { RuntimeMappingTab } from './RuntimeMappingTab';
+import { RuntimeTerminalTab } from './RuntimeTerminalTab';
+import { UseDeploymentTab } from './UseDeploymentTab';
 import type {
   DeploymentRuntimeDetailResponse,
   RuntimeAccessResourceRow,
@@ -24,6 +28,8 @@ import type {
 
 const TABS = [
   'overview',
+  'use_deployment',
+  'mapping',
   'nodes',
   'services',
   'endpoints',
@@ -32,11 +38,14 @@ const TABS = [
   'op_health',
   'op_traffic',
   'op_exec',
+  'op_terminal',
 ] as const;
 type TabId = (typeof TABS)[number];
 
 const TAB_LABEL: Record<TabId, string> = {
   overview: 'Overview',
+  use_deployment: 'Use deployment',
+  mapping: 'Topology → Runtime',
   nodes: 'Nodes',
   services: 'Services',
   endpoints: 'Endpoints',
@@ -45,10 +54,13 @@ const TAB_LABEL: Record<TabId, string> = {
   op_health: 'Health checks',
   op_traffic: 'Traffic tests',
   op_exec: 'Safe exec',
+  op_terminal: 'Terminal',
 };
 
 const TAB_HINT: Record<TabId, string> = {
   overview: 'Deployment-level access summary and exposure counts.',
+  use_deployment: 'Endpoints, env vars, and copy-paste integration snippets.',
+  mapping: 'How each topology node maps to containers, pods, and service URLs.',
   nodes: 'Runtime resources mapped to topology host/router nodes.',
   services: 'Service workloads, port mappings, Expose/Unexpose controls, logs, and restarts.',
   endpoints: 'Internal DNS or URLs your other workloads should use inside the lab network.',
@@ -57,6 +69,7 @@ const TAB_HINT: Record<TabId, string> = {
   op_health: 'HTTP probes executed from inside the network toward your services.',
   op_traffic: 'Ping or HTTP checks between workloads using the Go runner.',
   op_exec: 'Allowlisted shell commands for read-only diagnostics (safe exec).',
+  op_terminal: 'Interactive shell (members/owners). Use Safe exec for allowlisted diagnostics.',
 };
 
 function formatPorts(ports: unknown): string {
@@ -95,9 +108,14 @@ function InstructionSection({ modeKey, body }: { modeKey: string; body: unknown 
         </ul>
       ) : null}
       {commands.length > 0 ? (
-        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-950/90 p-2 font-mono text-[11px] text-zinc-100">
-          {commands.join('\n')}
-        </pre>
+        <>
+          <div className="mt-2 flex justify-end">
+            <CopyButton text={commands.join('\n')} />
+          </div>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-950/90 p-2 font-mono text-[11px] text-zinc-100">
+            {commands.join('\n')}
+          </pre>
+        </>
       ) : null}
       {env && Object.keys(env).length > 0 ? (
         <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-950/90 p-2 font-mono text-[11px] text-zinc-100">
@@ -167,11 +185,13 @@ function ServicesPanel({
   services,
   exposures,
   onRefresh,
+  readOnly = false,
 }: {
   deploymentId: string;
   services: RuntimeAccessResourceRow[];
   exposures: ServiceExposureRow[] | undefined;
   onRefresh: () => Promise<void>;
+  readOnly?: boolean;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const activeByResource = useMemo(() => {
@@ -276,7 +296,7 @@ function ServicesPanel({
                   ) : active ? (
                     <button
                       type="button"
-                      disabled={busyId === rid}
+                      disabled={readOnly || busyId === rid}
                       onClick={() => void onUnexpose(rid)}
                       className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
                     >
@@ -285,7 +305,7 @@ function ServicesPanel({
                   ) : (
                     <button
                       type="button"
-                      disabled={busyId === rid}
+                      disabled={readOnly || busyId === rid}
                       onClick={() => void onExpose(rid)}
                       className="rounded-md border border-emerald-600 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
                     >
@@ -683,9 +703,11 @@ function buildSafeExecCommand(preset: ExecPresetId, target: string): { ok: true;
 function OperationsExecPanel({
   deploymentId,
   services,
+  readOnly = false,
 }: {
   deploymentId: string;
   services: RuntimeAccessResourceRow[];
+  readOnly?: boolean;
 }) {
   const selectable = useMemo(() => services.filter((s) => s.id), [services]);
   const [resourceId, setResourceId] = useState(selectable[0]?.id ?? '');
@@ -775,6 +797,9 @@ function OperationsExecPanel({
         <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">RUNTIME_EXECUTOR=go</code>
         ). Arbitrary shell is not supported; commands are validated on the server. Requires member or owner.
       </p>
+      {readOnly ? (
+        <p className="text-sm text-amber-800 dark:text-amber-200">Viewer access: exec and restart are disabled.</p>
+      ) : null}
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-xs text-cns-label">
           Service resource
@@ -829,7 +854,7 @@ function OperationsExecPanel({
         </label>
         <button
           type="button"
-          disabled={busy}
+          disabled={readOnly || busy}
           onClick={() => void runExec()}
           className="rounded-md border border-emerald-600 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/50"
         >
@@ -837,7 +862,7 @@ function OperationsExecPanel({
         </button>
         <button
           type="button"
-          disabled={restartBusy || !resourceId}
+          disabled={readOnly || restartBusy || !resourceId}
           onClick={() => void restart()}
           className="rounded-md border border-amber-600 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/50"
         >
@@ -896,7 +921,13 @@ function OperationsExecPanel({
   );
 }
 
-export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | null }) {
+export function RuntimeAccessPanel({
+  deploymentId,
+  viewerMode = false,
+}: {
+  deploymentId: string | null;
+  viewerMode?: boolean;
+}) {
   const [tab, setTab] = useState<TabId>('overview');
   const [data, setData] = useState<DeploymentRuntimeDetailResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -985,6 +1016,12 @@ export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | nu
           </div>
         ) : null}
 
+        {deploymentId && tab === 'use_deployment' ? (
+          <UseDeploymentTab deploymentId={deploymentId} />
+        ) : null}
+
+        {deploymentId && tab === 'mapping' ? <RuntimeMappingTab deploymentId={deploymentId} /> : null}
+
         {data && tab === 'overview' ? (
           <dl className="grid gap-3 sm:grid-cols-2">
             <div>
@@ -1023,6 +1060,7 @@ export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | nu
             services={data.services}
             exposures={data.exposures}
             onRefresh={load}
+            readOnly={viewerMode}
           />
         ) : null}
 
@@ -1092,7 +1130,18 @@ export function RuntimeAccessPanel({ deploymentId }: { deploymentId: string | nu
           <OperationsTrafficPanel deploymentId={deploymentId!} services={data.services} />
         ) : null}
         {data && tab === 'op_exec' ? (
-          <OperationsExecPanel deploymentId={deploymentId!} services={data.services} />
+          <OperationsExecPanel
+            deploymentId={deploymentId!}
+            services={data.services}
+            readOnly={viewerMode}
+          />
+        ) : null}
+        {data && tab === 'op_terminal' ? (
+          <RuntimeTerminalTab
+            deploymentId={deploymentId!}
+            services={data.services}
+            readOnly={viewerMode}
+          />
         ) : null}
       </div>
     </section>

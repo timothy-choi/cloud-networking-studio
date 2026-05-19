@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -9,6 +10,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models.deployment_runtime_resource import DeploymentRuntimeResource
+
+_log = logging.getLogger(__name__)
 
 
 def _parse_uuid(val: str | None) -> uuid.UUID | None:
@@ -22,8 +25,18 @@ def _parse_uuid(val: str | None) -> uuid.UUID | None:
 
 def replace_runtime_resources_from_payload(
     db: Session, deployment_id: uuid.UUID, runtime_access: dict[str, Any]
-) -> None:
-    """Replace all persisted access rows for a deployment (idempotent on re-deploy)."""
+) -> int:
+    """Replace all persisted access rows for a deployment (idempotent on re-deploy).
+
+    Returns the number of resource rows written.
+    """
+    resources_in = runtime_access.get("resources") or []
+    count = sum(1 for row in resources_in if isinstance(row, dict))
+    _log.info(
+        "persisting runtime resources deployment_id=%s count=%s",
+        deployment_id,
+        count,
+    )
     db.execute(
         delete(DeploymentRuntimeResource).where(
             DeploymentRuntimeResource.deployment_id == deployment_id
@@ -32,7 +45,8 @@ def replace_runtime_resources_from_payload(
     prov = str(runtime_access.get("runtime_provider") or "").strip() or "unknown"
     ns = runtime_access.get("namespace_or_network")
     ns_s = str(ns).strip() if ns is not None else None
-    for row in runtime_access.get("resources") or []:
+    written = 0
+    for row in resources_in:
         if not isinstance(row, dict):
             continue
         rtype = str(row.get("type") or "unknown").strip()[:32]
@@ -67,6 +81,8 @@ def replace_runtime_resources_from_payload(
                 access_metadata=meta,
             )
         )
+        written += 1
+    return written
 
 
 def list_runtime_resources(db: Session, deployment_id: uuid.UUID) -> list[DeploymentRuntimeResource]:

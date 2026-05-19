@@ -29,6 +29,8 @@ export interface RuntimeContainerResponse {
   running: boolean;
   labels: Record<string, string>;
   node_id: string | null;
+  intended_ip?: string | null;
+  actual_runtime_ip?: string | null;
   ipv4_by_network: Record<string, string>;
   network_interfaces?: RuntimeNetworkInterfaceResponse[];
   routes_lines?: string[];

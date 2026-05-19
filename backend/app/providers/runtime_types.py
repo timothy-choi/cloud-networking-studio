@@ -52,6 +52,10 @@ class RuntimeContainerRecord:
     interface_lines: tuple[str, ...] = ()
     ip_forward_enabled: bool | None = None
     forwarding_role: str | None = None
+    intended_ip: str | None = None
+    """Topology intent IP (node ip_address) when set."""
+    actual_runtime_ip: str | None = None
+    """Primary IPv4 observed on the lab bridge at runtime (Docker-assigned or static)."""
 
 
 @dataclass(frozen=True)

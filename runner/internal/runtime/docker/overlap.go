@@ -11,6 +11,9 @@ import (
 const dockerSubnetOverlapMessage = "Docker network subnet overlaps with an existing network. " +
 	"CNS attempted cleanup/retry but could not allocate a network."
 
+const intentSubnetOverlapMessage = "Requested topology subnet overlaps with existing Docker network. " +
+	"Use managed mode or choose a different subnet."
+
 func listEngineIPv4Networks(cli *docker.Client) ([]*net.IPNet, error) {
 	nets, err := cli.ListNetworks()
 	if err != nil {
@@ -69,6 +72,15 @@ func cidrOverlap(a, b *net.IPNet) bool {
 	return a.Contains(b.IP) || a.Contains(bLast) || b.Contains(a.IP) || b.Contains(aLast)
 }
 
+func isIntentMode(mode string) bool {
+	switch strings.TrimSpace(strings.ToLower(mode)) {
+	case "intent", "intent_ips", "static":
+		return true
+	default:
+		return false
+	}
+}
+
 func pickFallbackSlash24(used []*net.IPNet) *net.IPNet {
 	seconds := []int{201, 202, 203, 88, 89, 90}
 	for _, b := range seconds {
@@ -95,7 +107,7 @@ func pickFallbackSlash24(used []*net.IPNet) *net.IPNet {
 }
 
 // resolveBridgeSubnet returns a /24 CIDR string for Docker IPAM, an optional info message, or empty if exhausted.
-func resolveBridgeSubnet(cli *docker.Client, preferred string) (string, string, error) {
+func resolveBridgeSubnet(cli *docker.Client, preferred string, intentMode bool) (string, string, error) {
 	used, err := listEngineIPv4Networks(cli)
 	if err != nil {
 		return "", "", err
@@ -109,6 +121,9 @@ func resolveBridgeSubnet(cli *docker.Client, preferred string) (string, string, 
 	}
 	if !cidrOverlapsUsed(pref, used) {
 		return pref.String(), "", nil
+	}
+	if intentMode {
+		return "", "", fmt.Errorf("%w", errSubnetOverlap)
 	}
 	ones, bits := pref.Mask.Size()
 	if bits != 32 || ones != 24 {

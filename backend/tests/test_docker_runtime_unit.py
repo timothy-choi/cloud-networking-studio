@@ -128,7 +128,7 @@ def test_docker_deploy_auto_ipam_when_no_subnet():
 
 
 def test_docker_deploy_subnet_overlap_selects_alternate():
-    plan = _sample_plan()
+    plan = replace(_sample_plan(), network_allocation_mode="managed")
     net_name = topology_network_name(plan.topology_id)
 
     overlap = MagicMock()
@@ -179,7 +179,7 @@ def test_topology_network_name_stable():
 
 
 def test_docker_deploy_uses_api_create_container_and_static_endpoint():
-    plan = _sample_plan()
+    plan = replace(_sample_plan(), network_allocation_mode="intent")
     net_name = topology_network_name(plan.topology_id)
 
     mock_client = MagicMock()

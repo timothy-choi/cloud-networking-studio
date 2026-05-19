@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.models.topology import NodeType, Topology
+from app.services.network_allocation import (
+    DEFAULT_NETWORK_ALLOCATION_MODE,
+    resolve_network_allocation_mode,
+)
 from app.services.segmented_topology import topology_is_segmented_multinet
 
 # Ordered orchestration phases — providers map these to concrete actions later.
@@ -64,6 +68,8 @@ class DeploymentPlan:
     segmented_networks: bool
     subnet_cidr: str | None
     """Preferred Docker IPAM subnet from the first link that declares a CIDR (legacy path)."""
+    network_allocation_mode: str = DEFAULT_NETWORK_ALLOCATION_MODE
+    """``managed`` (Docker assigns container IPs) or ``intent`` (honor topology static IPs)."""
     deployment_id: UUID | None = None
     project_id: UUID | None = None
     requested_by_user_id: UUID | None = None
@@ -105,6 +111,7 @@ def build_deployment_plan(
     deployment_id: UUID | None = None,
     project_id: UUID | None = None,
     requested_by_user_id: UUID | None = None,
+    network_allocation_mode: str | None = None,
 ) -> DeploymentPlan:
     """
     Produce a provider-neutral plan from ORM state.
@@ -172,6 +179,8 @@ def build_deployment_plan(
     )
     node_names = tuple(n.name for n in plan_nodes)
 
+    alloc_mode = resolve_network_allocation_mode(topology, network_allocation_mode)
+
     return DeploymentPlan(
         topology_id=topology.id,
         runtime_target=topology.runtime_target,
@@ -183,6 +192,7 @@ def build_deployment_plan(
         plan_links=tuple(plan_links_list),
         segmented_networks=multinet,
         subnet_cidr=subnet_cidr,
+        network_allocation_mode=alloc_mode,
         deployment_id=deployment_id,
         project_id=project_id if project_id is not None else topology.project_id,
         requested_by_user_id=requested_by_user_id,

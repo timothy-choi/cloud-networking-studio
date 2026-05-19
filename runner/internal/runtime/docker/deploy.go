@@ -158,12 +158,22 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 
 	removeNetworkIfExists(cli, netName)
 
+	intentMode := isIntentMode(req.NetworkAllocationMode)
+	if intentMode {
+		events = append(events, ev("info", "Network allocation mode: intent"))
+	} else {
+		events = append(events, ev("info", "Network allocation mode: managed"))
+	}
+
 	subnetStr := req.SubnetCIDR
 	if req.SubnetCIDR != nil && strings.TrimSpace(*req.SubnetCIDR) != "" {
-		chosen, note, err := resolveBridgeSubnet(cli, strings.TrimSpace(*req.SubnetCIDR))
+		chosen, note, err := resolveBridgeSubnet(cli, strings.TrimSpace(*req.SubnetCIDR), intentMode)
 		if err != nil {
 			if errors.Is(err, errSubnetOverlap) {
-				msg := dockerSubnetOverlapMessage
+				msg := intentSubnetOverlapMessage
+				if !intentMode {
+					msg = dockerSubnetOverlapMessage
+				}
 				events = append(events, ev("error", msg))
 				return model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Events: events, Error: &msg}
 			}
@@ -192,7 +202,10 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 	if netErr != nil {
 		low := strings.ToLower(netErr.Error())
 		if strings.Contains(low, "overlap") || strings.Contains(low, "pool overlaps") {
-			msg := dockerSubnetOverlapMessage
+			msg := intentSubnetOverlapMessage
+			if !intentMode {
+				msg = dockerSubnetOverlapMessage
+			}
 			events = append(events, ev("error", msg))
 			return model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Events: events, Error: &msg}
 		}
@@ -237,7 +250,7 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 		_ = cli.PullImage(docker.PullImageOptions{Context: ctx, Repository: repo, Tag: tag}, docker.AuthConfiguration{})
 
 		var staticIP string
-		if pn.IPAddress != nil {
+		if intentMode && pn.IPAddress != nil {
 			staticIP = strings.TrimSpace(*pn.IPAddress)
 		}
 		ep := &docker.EndpointConfig{}

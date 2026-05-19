@@ -6,7 +6,14 @@ import {
   healDeployment,
   reconcileDeployment,
 } from '../api/deployments';
-import { injectStopNode, injectRestartNode, runHttpTest, runPingTest, deleteTopology } from '../api/topologies';
+import {
+  injectStopNode,
+  injectRestartNode,
+  runHttpTest,
+  runPingTest,
+  deleteTopology,
+  patchTopology,
+} from '../api/topologies';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { SectionEmptyState } from '../components/SectionEmptyState';
 import { DeploymentLifecycleTimeline } from '../components/deployment/DeploymentLifecycleTimeline';
@@ -27,6 +34,11 @@ import { useFailures } from '../hooks/useFailures';
 import { useTopologyRuntime } from '../hooks/useTopologyRuntime';
 import { useTrafficTests } from '../hooks/useTrafficTests';
 import { computeDeployReadiness } from '../lib/deployReadiness';
+import {
+  NETWORK_ALLOCATION_HELP,
+  readNetworkAllocationMode,
+  type NetworkAllocationMode,
+} from '../lib/networkAllocation';
 import { deriveControlPlanePhase } from '../lib/deploymentUiPhase';
 import { formatLinkEdgeLabel } from '../lib/flowTopology';
 import { inferRoutedLabRoles, latestTrafficBetweenSorted, scanDeploymentEventsForRoutedIssues } from '../lib/routedTopology';
@@ -106,6 +118,15 @@ export function TopologyDetailPage() {
   const [pageToast, setPageToast] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [networkAllocationMode, setNetworkAllocationMode] =
+    useState<NetworkAllocationMode>('managed');
+  const [allocationModeSaving, setAllocationModeSaving] = useState(false);
+
+  useEffect(() => {
+    if (topology) {
+      setNetworkAllocationMode(readNetworkAllocationMode(topology.config));
+    }
+  }, [topology?.id, topology?.config]);
 
   const refreshLive = useCallback(async () => {
     await Promise.all([refetch(), refetchEvents(), refetchTraffic(), refetchFailures()]);
@@ -120,7 +141,27 @@ export function TopologyDetailPage() {
   const degraded = hasStoppedContainers(runtime);
   const healthTier = deriveRuntimeHealth(runtime, topology?.status ?? 'draft');
 
-  const deployReadiness = useMemo(() => computeDeployReadiness(nodes, links), [nodes, links]);
+  const deployReadiness = useMemo(
+    () => computeDeployReadiness(nodes, links, networkAllocationMode),
+    [nodes, links, networkAllocationMode],
+  );
+
+  const onNetworkAllocationModeChange = useCallback(
+    async (mode: NetworkAllocationMode) => {
+      if (!id || viewerMode) return;
+      setNetworkAllocationMode(mode);
+      setAllocationModeSaving(true);
+      try {
+        await patchTopology(id, { config: { network_allocation_mode: mode } });
+        await refetch();
+      } catch (e) {
+        setOpsError(formatOperatorError(e));
+      } finally {
+        setAllocationModeSaving(false);
+      }
+    },
+    [id, viewerMode, refetch],
+  );
 
   const hostTarget = useMemo(() => {
     if (nodes.length < 2) return null;
@@ -458,6 +499,33 @@ export function TopologyDetailPage() {
             <span className="font-semibold">Before deploy:</span> {deployReadiness.warnings.join(' ')}
           </p>
         ) : null}
+        <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-950/40">
+          <label className="text-xs font-semibold uppercase tracking-wide text-cns-label">
+            Network allocation
+          </label>
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <select
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+              value={networkAllocationMode}
+              disabled={opLocked || allocationModeSaving}
+              onChange={(e) =>
+                void onNetworkAllocationModeChange(e.target.value as NetworkAllocationMode)
+              }
+            >
+              <option value="managed">Managed networking (recommended)</option>
+              <option value="intent">Intent networking (advanced)</option>
+            </select>
+            {allocationModeSaving ? <Spinner className="h-5 w-5" /> : null}
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-cns-muted">
+            {NETWORK_ALLOCATION_HELP[networkAllocationMode]}
+          </p>
+          {topology?.runtime_target === 'kubernetes' && networkAllocationMode === 'intent' ? (
+            <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-200">
+              Intent IP preservation is currently supported for Docker runtime only.
+            </p>
+          ) : null}
+        </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
@@ -475,7 +543,7 @@ export function TopologyDetailPage() {
             }
             onClick={() =>
               wrap('deploy', async () => {
-                await deployTopology(id);
+                await deployTopology(id, { network_allocation_mode: networkAllocationMode });
               })
             }
             className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 cns-disabled-control dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
@@ -650,7 +718,7 @@ export function TopologyDetailPage() {
               title={viewerMode ? viewerHint : undefined}
               onClick={() =>
                 wrap('deploy-retry', async () => {
-                  await deployTopology(id);
+                  await deployTopology(id, { network_allocation_mode: networkAllocationMode });
                 })
               }
               className="mt-3 rounded-lg bg-red-800 px-4 py-2 text-xs font-semibold text-white hover:bg-red-900 disabled:opacity-50 dark:bg-red-700 dark:hover:bg-red-600"
@@ -1064,6 +1132,12 @@ export function TopologyDetailPage() {
                     <div className="mt-1 font-mono text-[10px] text-cns-muted">
                       node {c.node_id ?? '—'} · {c.running ? 'running' : 'stopped'}
                     </div>
+                    {c.intended_ip || c.actual_runtime_ip ? (
+                      <div className="mt-1 space-y-0.5 font-mono text-[10px] text-zinc-700 dark:text-zinc-300">
+                        {c.intended_ip ? <div>Intent IP: {c.intended_ip}</div> : null}
+                        {c.actual_runtime_ip ? <div>Runtime IP: {c.actual_runtime_ip}</div> : null}
+                      </div>
+                    ) : null}
                     <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
                       <span>
                         ip_forward:{' '}

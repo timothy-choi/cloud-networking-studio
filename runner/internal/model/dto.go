@@ -28,8 +28,9 @@ type DeploymentRequest struct {
 	RuntimeTarget       string     `json:"runtime_target"`
 	NetworkingMode      string     `json:"networking_mode"`
 	SegmentedNetworks   bool       `json:"segmented_networks"`
-	SubnetCIDR          *string    `json:"subnet_cidr"`
-	Nodes               []PlanNode `json:"nodes"`
+	SubnetCIDR              *string    `json:"subnet_cidr"`
+	NetworkAllocationMode   string     `json:"network_allocation_mode"`
+	Nodes                   []PlanNode `json:"nodes"`
 	PlanLinks           []PlanLink `json:"plan_links"`
 	Metadata            any        `json:"metadata,omitempty"`
 }

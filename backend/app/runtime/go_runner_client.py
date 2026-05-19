@@ -114,6 +114,7 @@ class GoRunnerClient:
             body["requested_by_user_id"] = str(plan.requested_by_user_id)
         if plan.subnet_cidr:
             body["subnet_cidr"] = plan.subnet_cidr
+        body["network_allocation_mode"] = plan.network_allocation_mode
         return body
 
     def post_deployment(

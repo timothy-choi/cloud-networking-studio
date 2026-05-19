@@ -1,10 +1,23 @@
 import { apiFetch } from './client';
+import type { NetworkAllocationMode } from '../lib/networkAllocation';
 import type { DeploymentEventResponse, DeploymentResponse } from '../types/deployment';
 import type { HealingResponse, ReconciliationResponse } from '../types/runtime';
 
-export async function deployTopology(topologyId: string): Promise<DeploymentResponse> {
+export type DeployTopologyOptions = {
+  network_allocation_mode?: NetworkAllocationMode;
+};
+
+export async function deployTopology(
+  topologyId: string,
+  options?: DeployTopologyOptions,
+): Promise<DeploymentResponse> {
+  const body =
+    options?.network_allocation_mode != null
+      ? { network_allocation_mode: options.network_allocation_mode }
+      : undefined;
   return apiFetch<DeploymentResponse>(`/topologies/${topologyId}/deploy`, {
     method: 'POST',
+    body: body ? JSON.stringify(body) : undefined,
   });
 }
 

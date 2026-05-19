@@ -207,7 +207,10 @@ def test_ip_outside_subnet_rejected(client):
             "config": None,
         },
     )
-    r = client.post(f"/topologies/{tid}/deploy")
+    r = client.post(
+        f"/topologies/{tid}/deploy",
+        json={"network_allocation_mode": "intent"},
+    )
     assert r.status_code == 400
     assert "not within any link subnet" in r.text
 

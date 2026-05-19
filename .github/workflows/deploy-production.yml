@@ -206,11 +206,15 @@ jobs:
           RDS_USERNAME: ${{ steps.tf.outputs.rds_username }}
           RDS_PASSWORD: ${{ secrets.RDS_PASSWORD }}
           CNS_LEGACY_SSLIP_HTTP: ${{ steps.tf.outputs.stack_base_url_sslip_http }}
+          # Production stack: FastAPI -> Go runner -> Docker (not local kind/kubernetes).
+          RUNTIME_EXECUTOR: "go"
+          RUNTIME_PROVIDER: "docker"
+          GO_RUNNER_URL: "http://runner:8090"
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: POSTGRES_PASSWORD,RDS_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_CADDY,RDS_ENDPOINT,RDS_PORT,RDS_DATABASE_NAME,RDS_USERNAME,CNS_LEGACY_SSLIP_HTTP
+          envs: POSTGRES_PASSWORD,RDS_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_CADDY,RDS_ENDPOINT,RDS_PORT,RDS_DATABASE_NAME,RDS_USERNAME,CNS_LEGACY_SSLIP_HTTP,RUNTIME_EXECUTOR,RUNTIME_PROVIDER,GO_RUNNER_URL
           script_stop: true
           script: |
             #!/usr/bin/env bash
@@ -293,6 +297,11 @@ jobs:
             CNS_CADDY_AUTO_HTTPS="${CNS_CADDY_AUTO_HTTPS:-on}"
             CADDYFILE_CADDY="${CADDYFILE_CADDY:-./deploy/Caddyfile.public-https}"
 
+            # Production default: control plane delegates to cns-runner; runner uses Docker only.
+            RUNTIME_EXECUTOR="${RUNTIME_EXECUTOR:-go}"
+            RUNTIME_PROVIDER="${RUNTIME_PROVIDER:-docker}"
+            GO_RUNNER_URL="${GO_RUNNER_URL:-http://runner:8090}"
+
             RDS_EP="$(printf '%s' "${RDS_ENDPOINT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
             RDS_P="$(printf '%s' "${RDS_PORT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
             if [[ -z "${RDS_P}" ]]; then RDS_P="5432"; fi
@@ -372,10 +381,15 @@ jobs:
                 "SSLIP_HOST=${PUB_HOST}" \
                 "CNS_SSLIP_HOST=${PUB_HOST}" \
                 "CADDYFILE_CADDY=${CADDYFILE_CADDY}" \
-                "AUTH_REQUIRE_LOGIN=true"
+                "AUTH_REQUIRE_LOGIN=true" \
+                "RUNTIME_EXECUTOR=${RUNTIME_EXECUTOR}" \
+                "RUNTIME_PROVIDER=${RUNTIME_PROVIDER}" \
+                "GO_RUNNER_URL=${GO_RUNNER_URL}"
             } > .env
             echo "=== .env written ==="
             cut -d= -f1 .env
+            echo "=== runtime vars in .env ==="
+            grep -E '^(RUNTIME_EXECUTOR|RUNTIME_PROVIDER|GO_RUNNER_URL)=' .env || true
 
             unset TOKEN CLONE_URL POSTGRES_PASSWORD RDS_PASSWORD CNS_CORS_ORIGINS CNS_LEGACY_SSLIP_HTTP DATABASE_URL RDS_ENDPOINT RDS_PORT RDS_DATABASE_NAME RDS_USERNAME || true
             set -x
@@ -407,6 +421,12 @@ jobs:
 
             echo "=== docker compose ps ==="
             run_compose "${C_ARGS[@]}" ps
+
+            echo "=== runner RUNTIME_PROVIDER (container env) ==="
+            run_compose "${C_ARGS[@]}" exec -T runner env | grep RUNTIME_PROVIDER || true
+
+            echo "=== backend runtime executor (container env) ==="
+            run_compose "${C_ARGS[@]}" exec -T backend env | grep -E 'RUNTIME_EXECUTOR|GO_RUNNER_URL' || true
 
             echo "=== docker compose logs caddy (tail=80) ==="
             run_compose "${C_ARGS[@]}" logs caddy --tail=80 || true

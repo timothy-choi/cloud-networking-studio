@@ -28,6 +28,7 @@ from app.models.deployment import (
 )
 from app.models.deployment_runtime_resource import DeploymentRuntimeResource
 from app.models.deployment_runtime_exec_result import DeploymentRuntimeExecResult
+from app.models.deployment_runtime_terminal_session import DeploymentRuntimeTerminalSession
 from app.models.deployment_service_exposure import DeploymentServiceExposure
 from app.models.traffic_test import TrafficTest, TrafficTestResult, TrafficTestStatus, TrafficTestType
 from app.models.failure_injection import (
@@ -41,6 +42,7 @@ __all__ = [
     "ApiToken",
     "Deployment",
     "DeploymentRuntimeExecResult",
+    "DeploymentRuntimeTerminalSession",
     "DeploymentRuntimeResource",
     "DeploymentServiceExposure",
     "DeploymentEvent",

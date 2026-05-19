@@ -74,6 +74,24 @@ class Settings(BaseSettings):
         le=3600.0,
         validation_alias="GO_RUNNER_TIMEOUT_SECONDS",
     )
+    terminal_idle_timeout_seconds: int = Field(
+        default=300,
+        ge=60,
+        le=7200,
+        validation_alias="TERMINAL_IDLE_TIMEOUT_SECONDS",
+    )
+    terminal_max_duration_seconds: int = Field(
+        default=3600,
+        ge=120,
+        le=14400,
+        validation_alias="TERMINAL_MAX_DURATION_SECONDS",
+    )
+    terminal_max_sessions_per_user: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        validation_alias="TERMINAL_MAX_SESSIONS_PER_USER",
+    )
 
 
 settings = Settings()

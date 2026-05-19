@@ -14,6 +14,7 @@ from app.api.metrics import router as metrics_router
 from app.api.onboarding import router as onboarding_router
 from app.api.projects import router as projects_router
 from app.api.runtime import router as runtime_router
+from app.api.terminal import router as terminal_router
 from app.api.templates import router as templates_router
 from app.api.topologies import router as topologies_router
 from app.api.traffic_tests import router as traffic_tests_router
@@ -108,6 +109,7 @@ app.include_router(projects_router)
 app.include_router(topologies_router)
 app.include_router(templates_router)
 app.include_router(deployments_router)
+app.include_router(terminal_router)
 app.include_router(runtime_router)
 app.include_router(controller_router)
 app.include_router(traffic_tests_router)

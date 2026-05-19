@@ -69,15 +69,6 @@ need_cmd() {
 need_cmd curl
 need_cmd jq
 
-# TODO: Remove LE HTTP smoke fallback after Let's Encrypt cert is available and persistent Caddy volumes are verified.
-# Temporary: production workflow/env can still surface https://api.cloudnetstudio.com while ACME is rate-limited (curl 000).
-_cns_smoke_base="${CNS_BASE_URL:-}"
-_cns_smoke_base="${_cns_smoke_base%/}"
-if [[ -z "${_cns_smoke_base}" || "${_cns_smoke_base}" == "https://api.cloudnetstudio.com" ]]; then
-  export CNS_BASE_URL="http://api.cloudnetstudio.com"
-  export CNS_SMOKE_API_ONLY="1"
-fi
-
 BASE="${CNS_BASE_URL:-http://127.0.0.1}"
 BASE="${BASE%/}"
 

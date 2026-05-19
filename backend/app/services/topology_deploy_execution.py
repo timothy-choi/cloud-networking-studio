@@ -232,7 +232,9 @@ def execute_topology_deploy(
     deployment.status = DeploymentStatus.SUCCEEDED
     deployment.finished_at = datetime.now(UTC)
     if outcome.runtime_access:
-        replace_runtime_resources_from_payload(db, deployment.id, outcome.runtime_access)
+        replace_runtime_resources_from_payload(
+            db, deployment.id, outcome.runtime_access
+        )
     prior_stopped = db.scalar(
         select(func.count())
         .select_from(Deployment)

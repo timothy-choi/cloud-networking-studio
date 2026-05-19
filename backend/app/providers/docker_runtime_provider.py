@@ -25,6 +25,10 @@ from app.providers.runtime_types import (
     RuntimeNetworkRecord,
 )
 from app.services.deployment_planner import DeploymentPlan
+from app.services.runtime_access_payload import (
+    build_docker_runtime_access_from_plan,
+    build_fake_runtime_access_from_plan,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -499,7 +503,8 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
                 (DeploymentEventLevel.INFO, "Deployment simulation completed"),
             ]
         )
-        return DeployOutcome(events=events, runtime_access=None)
+        ra = build_fake_runtime_access_from_plan(plan)
+        return DeployOutcome(events=events, runtime_access=ra or None)
 
     def destroy(
         self,
@@ -699,7 +704,8 @@ class DockerRuntimeProvider(RuntimeProvider):
                 "Deployment completed successfully",
             )
         )
-        return DeployOutcome(events=events, runtime_access=None)
+        ra = build_docker_runtime_access_from_plan(self._client, plan)
+        return DeployOutcome(events=events, runtime_access=ra or None)
 
     def _deploy_segmented_multinet(self, plan: DeploymentPlan) -> list[ProviderEvent]:
         """One Docker bridge per logical ``network_name``; routers attach to multiple segments."""

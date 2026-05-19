@@ -74,6 +74,39 @@ func resolveImage(img *string) string {
 	return s
 }
 
+func enrichContainerNetworkMeta(
+	ctx context.Context,
+	cli *docker.Client,
+	containerID string,
+	netName string,
+	intendedIP string,
+	meta map[string]string,
+) {
+	if meta == nil {
+		return
+	}
+	if s := strings.TrimSpace(intendedIP); s != "" {
+		meta["intended_ip"] = s
+	}
+	ins, err := cli.InspectContainerWithOptions(docker.InspectContainerOptions{Context: ctx, ID: containerID})
+	if err != nil || ins.NetworkSettings == nil {
+		return
+	}
+	nets := ins.NetworkSettings.Networks
+	if ent, ok := nets[netName]; ok {
+		if ip := strings.TrimSpace(ent.IPAddress); ip != "" {
+			meta["actual_runtime_ip"] = ip
+			return
+		}
+	}
+	for _, ent := range nets {
+		if ip := strings.TrimSpace(ent.IPAddress); ip != "" {
+			meta["actual_runtime_ip"] = ip
+			return
+		}
+	}
+}
+
 func defaultCommand(image string) []string {
 	il := strings.ToLower(image)
 	if strings.Contains(il, "busybox") {
@@ -311,6 +344,11 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 		} else {
 			metaBase["external_access"] = "manual_port_forward_required"
 		}
+		intendedMeta := ""
+		if pn.IPAddress != nil {
+			intendedMeta = strings.TrimSpace(*pn.IPAddress)
+		}
+		enrichContainerNetworkMeta(ctx, cli, ctr.ID, netName, intendedMeta, metaBase)
 		accessResources = append(accessResources, model.RuntimeAccessResource{
 			Type:               "node",
 			NodeID:             nid,

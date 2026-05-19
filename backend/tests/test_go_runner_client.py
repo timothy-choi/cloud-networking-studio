@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import uuid
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -93,6 +95,55 @@ def test_post_deployment_success_maps_events():
     rows, ra = c.post_deployment(plan)
     assert rows == [(DeploymentEventLevel.INFO, "from runner")]
     assert ra is None
+
+
+def test_post_deployment_managed_mode_resources_without_static_binding():
+    plan = _minimal_plan()
+    plan = DeploymentPlan(
+        **{
+            **plan.__dict__,
+            "network_allocation_mode": "managed",
+        }
+    )
+    nid = str(plan.nodes[0].id)
+    ra_payload = {
+        "deployment_id": str(plan.deployment_id),
+        "topology_id": str(plan.topology_id),
+        "status": "running",
+        "runtime_provider": "docker",
+        "namespace_or_network": "cns-topology-abc",
+        "resources": [
+            {
+                "type": "service",
+                "service_id": nid,
+                "name": "n1",
+                "runtime_name": "cns-node-abc-n1",
+                "internal_url": "http://cns-node-abc-n1:80",
+                "metadata": {
+                    "intended_ip": "10.0.0.2",
+                    "actual_runtime_ip": "172.28.0.3",
+                },
+            }
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body.get("network_allocation_mode") == "managed"
+        return httpx.Response(
+            200,
+            json={
+                "status": "succeeded",
+                "runtime_provider": "docker",
+                "events": [],
+                "runtime_access": ra_payload,
+            },
+        )
+
+    c = GoRunnerClient("http://runner:8090", transport=httpx.MockTransport(handler))
+    _rows, ra = c.post_deployment(plan)
+    assert ra is not None
+    assert len(ra["resources"]) == 1
 
 
 def test_post_deployment_success_maps_runtime_access():

@@ -343,6 +343,25 @@ def _events_from_runner_payload(raw: Any) -> list[tuple[DeploymentEventLevel, st
     return out
 
 
+def _extract_runtime_access_from_response(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize runner deploy JSON into a persistence-ready ``runtime_access`` dict."""
+    ra = data.get("runtime_access")
+    if ra is None:
+        legacy = data.get("runtime_resources")
+        if isinstance(legacy, dict):
+            ra = legacy
+    if not isinstance(ra, dict):
+        return None
+    out: dict[str, Any] = dict(ra)
+    if not str(out.get("runtime_provider") or "").strip():
+        rp = data.get("runtime_provider")
+        if rp is not None and str(rp).strip():
+            out["runtime_provider"] = str(rp).strip()
+    if out.get("resources") is None:
+        out["resources"] = []
+    return out
+
+
 def _deployment_response_to_outcome(
     r: httpx.Response,
 ) -> tuple[list[tuple[DeploymentEventLevel, str]], dict[str, Any] | None]:
@@ -352,11 +371,8 @@ def _deployment_response_to_outcome(
     err = data.get("error")
     err_s = str(err).strip() if err else ""
 
-    if r.is_success and status == "succeeded" and not err_s:
-        ra = data.get("runtime_access")
-        if isinstance(ra, dict):
-            return events, ra
-        return events, None
+    if r.is_success and status in ("succeeded", "success") and not err_s:
+        return events, _extract_runtime_access_from_response(data)
 
     if not err_s:
         err_s = f"runner returned status={status or 'unknown'} (http {r.status_code})"

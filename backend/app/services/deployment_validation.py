@@ -7,6 +7,10 @@ from collections import Counter, defaultdict
 from typing import Iterable
 
 from app.models.topology import NodeType, Topology, TopologyLink
+from app.services.network_allocation import (
+    is_intent_mode,
+    resolve_network_allocation_mode,
+)
 from app.services.segmented_topology import topology_is_segmented_multinet
 
 
@@ -128,7 +132,58 @@ def _validate_multinet_extra(topology: Topology) -> list[str]:
     return errs
 
 
-def validate_topology_for_deploy(topology: Topology) -> list[str]:
+def _validate_multinet_managed(topology: Topology) -> list[str]:
+    """Segmented checks without requiring static endpoint IPs (managed allocation)."""
+    errs: list[str] = []
+    node_by_id = {n.id: n for n in topology.nodes}
+    degrees: dict = {}
+    for link in topology.links:
+        degrees[link.source_node_id] = degrees.get(link.source_node_id, 0) + 1
+        degrees[link.target_node_id] = degrees.get(link.target_node_id, 0) + 1
+
+    parsed: list[tuple[object, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
+    for link in topology.links:
+        raw = (link.cidr or "").strip()
+        if not raw:
+            errs.append(
+                f"Segmented multi-network mode: link {link.network_name!r} (id={link.id}) must declare a CIDR."
+            )
+            continue
+        try:
+            parsed.append((link.id, ipaddress.ip_network(raw, strict=False)))
+        except ValueError:
+            errs.append(f"Link id={link.id} has invalid CIDR {raw!r}.")
+
+    for i, (id_a, na) in enumerate(parsed):
+        for id_b, nb in parsed[i + 1 :]:
+            if na.overlaps(nb):
+                if na == nb:
+                    errs.append(
+                        f"Duplicate subnet {na} on multiple links (link ids {id_a}, {id_b})."
+                    )
+                else:
+                    errs.append(
+                        f"Overlapping link subnets: {na} and {nb} (link ids {id_a}, {id_b})."
+                    )
+
+    for nid, deg in degrees.items():
+        node = node_by_id.get(nid)
+        if node is None:
+            continue
+        if node.node_type == NodeType.ROUTER and deg < 2:
+            errs.append(
+                f"Router node {node.name!r} must participate in at least two links "
+                "in segmented multi-network mode."
+            )
+
+    return errs
+
+
+def validate_topology_for_deploy(
+    topology: Topology,
+    *,
+    network_allocation_mode: str | None = None,
+) -> list[str]:
     """
     Return a list of human-readable validation errors (empty if OK).
 
@@ -143,6 +198,8 @@ def validate_topology_for_deploy(topology: Topology) -> list[str]:
     - Multi-node graphs must be simply connected via links (no isolated islands).
     """
     errors: list[str] = []
+    mode = resolve_network_allocation_mode(topology, network_allocation_mode)
+    use_intent = is_intent_mode(mode)
     nodes = list(topology.nodes)
     node_ids = {n.id for n in nodes}
 
@@ -218,14 +275,17 @@ def validate_topology_for_deploy(topology: Topology) -> list[str]:
             except ValueError:
                 errors.append(f"Node {n.name!r} has invalid IP address {ip_s!r}.")
                 continue
-            if not any(addr in net for net in parsed_nets):
+            if use_intent and not any(addr in net for net in parsed_nets):
                 nets_s = ", ".join(str(net) for net in parsed_nets)
                 errors.append(
                     f"Node {n.name!r} IP {ip_s} is not within any link subnet ({nets_s})."
                 )
 
     if topology_is_segmented_multinet(topology):
-        errors.extend(_validate_multinet_extra(topology))
+        if use_intent:
+            errors.extend(_validate_multinet_extra(topology))
+        else:
+            errors.extend(_validate_multinet_managed(topology))
 
     if len(nodes) > 1 and topology.links and not _graph_is_fully_connected(node_ids, topology.links):
         errors.append(

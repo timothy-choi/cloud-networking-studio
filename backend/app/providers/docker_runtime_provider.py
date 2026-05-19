@@ -307,6 +307,52 @@ DOCKER_SUBNET_OVERLAP_USER_MESSAGE = (
 )
 
 
+def _plan_use_intent_ips(plan: DeploymentPlan) -> bool:
+    from app.services.network_allocation import is_intent_mode
+
+    return is_intent_mode(plan.network_allocation_mode)
+
+
+def _static_ipv4_for_plan(plan: DeploymentPlan, ip: str | None) -> str | None:
+    """Return static IPv4 for Docker endpoint config only in intent mode."""
+    if not _plan_use_intent_ips(plan):
+        return None
+    if ip is None:
+        return None
+    s = str(ip).strip()
+    return s or None
+
+
+def _resolve_bridge_subnet_for_plan(
+    plan: DeploymentPlan,
+    preferred: str,
+    used: list[ipaddress.IPv4Network],
+) -> tuple[str | None, str | None, str | None]:
+    """
+    Pick Docker bridge subnet for deploy.
+
+    Returns ``(cidr, info_note, fatal_error)``. When ``fatal_error`` is set, abort deploy.
+    """
+    from app.services.network_allocation import INTENT_SUBNET_OVERLAP_USER_MESSAGE
+
+    pref_s = preferred.strip()
+    if _plan_use_intent_ips(plan):
+        try:
+            pref_net = ipaddress.ip_network(pref_s, strict=False)
+        except ValueError:
+            return pref_s, None, None
+        if isinstance(pref_net, ipaddress.IPv4Network) and _subnet_overlaps_used(
+            pref_net, used
+        ):
+            return None, None, INTENT_SUBNET_OVERLAP_USER_MESSAGE
+        return str(pref_net.with_prefixlen), None, None
+
+    chosen, overlap_note = _allocate_non_overlapping_ipv4_subnet(pref_s, used)
+    if chosen is None:
+        return None, None, DOCKER_SUBNET_OVERLAP_USER_MESSAGE
+    return chosen, overlap_note, None
+
+
 def _ipam_from_cidr(subnet_cidr: str | None):
     """Return docker.types.IPAMConfig or None."""
     if not subnet_cidr:
@@ -569,9 +615,13 @@ class DockerRuntimeProvider(RuntimeProvider):
         used_nets = _collect_ipv4_networks_from_engine_ipam(self._client)
         chosen_subnet = plan.subnet_cidr
         if plan.subnet_cidr:
-            chosen, overlap_note = _allocate_non_overlapping_ipv4_subnet(
-                plan.subnet_cidr, used_nets
+            chosen, overlap_note, fatal = _resolve_bridge_subnet_for_plan(
+                plan, plan.subnet_cidr, used_nets
             )
+            if fatal:
+                events.append((DeploymentEventLevel.ERROR, fatal))
+                _rollback_topology_deploy(self._client, plan.topology_id)
+                raise RuntimeError(fatal) from None
             if chosen is None:
                 events.append(
                     (DeploymentEventLevel.ERROR, DOCKER_SUBNET_OVERLAP_USER_MESSAGE)
@@ -581,6 +631,13 @@ class DockerRuntimeProvider(RuntimeProvider):
             if overlap_note:
                 events.append((DeploymentEventLevel.INFO, overlap_note))
             chosen_subnet = chosen
+
+        events.append(
+            (
+                DeploymentEventLevel.INFO,
+                f"Network allocation mode: {plan.network_allocation_mode}",
+            )
+        )
 
         ipam = _ipam_from_cidr(chosen_subnet)
         res_labels = _cns_resource_labels(
@@ -652,6 +709,12 @@ class DockerRuntimeProvider(RuntimeProvider):
         events.append(
             (DeploymentEventLevel.INFO, "Docker provider selected (real engine, segmented networks)")
         )
+        events.append(
+            (
+                DeploymentEventLevel.INFO,
+                f"Network allocation mode: {plan.network_allocation_mode}",
+            )
+        )
 
         logical_to_docker: dict[str, str] = {}
         links_by_logical: dict[str, list] = defaultdict(list)
@@ -672,9 +735,13 @@ class DockerRuntimeProvider(RuntimeProvider):
             reserved = _segment_reserved_endpoint_ips(lst)
             cidr_effective = cidr
             if cidr:
-                chosen, overlap_note = _allocate_non_overlapping_ipv4_subnet(
-                    cidr, used_tracker
+                chosen, overlap_note, fatal = _resolve_bridge_subnet_for_plan(
+                    plan, cidr, used_tracker
                 )
+                if fatal:
+                    events.append((DeploymentEventLevel.ERROR, fatal))
+                    _rollback_topology_deploy(self._client, tid)
+                    raise RuntimeError(fatal) from None
                 if chosen is None:
                     events.append(
                         (DeploymentEventLevel.ERROR, DOCKER_SUBNET_OVERLAP_USER_MESSAGE)
@@ -738,14 +805,26 @@ class DockerRuntimeProvider(RuntimeProvider):
                 )
             except APIError as exc:
                 blob = f"{getattr(exc, 'explanation', None) or ''} {exc}".lower()
+                overlap_err = (
+                    _resolve_bridge_subnet_for_plan(plan, cidr or "", used_tracker)[2]
+                    if cidr and _plan_use_intent_ips(plan)
+                    else None
+                )
                 if (
                     "overlap" in blob
                     or "pool overlaps" in blob
                     or "pool overlap" in blob
                 ) and cidr:
-                    events.append(
-                        (DeploymentEventLevel.ERROR, DOCKER_SUBNET_OVERLAP_USER_MESSAGE)
+                    from app.services.network_allocation import (
+                        INTENT_SUBNET_OVERLAP_USER_MESSAGE,
                     )
+
+                    msg = overlap_err or (
+                        INTENT_SUBNET_OVERLAP_USER_MESSAGE
+                        if _plan_use_intent_ips(plan)
+                        else DOCKER_SUBNET_OVERLAP_USER_MESSAGE
+                    )
+                    events.append((DeploymentEventLevel.ERROR, msg))
                 else:
                     events.append(
                         (
@@ -759,19 +838,30 @@ class DockerRuntimeProvider(RuntimeProvider):
                     or "pool overlaps" in blob
                     or "pool overlap" in blob
                 ) and cidr:
-                    raise RuntimeError(DOCKER_SUBNET_OVERLAP_USER_MESSAGE) from exc
+                    from app.services.network_allocation import (
+                        INTENT_SUBNET_OVERLAP_USER_MESSAGE,
+                    )
+
+                    msg = overlap_err or (
+                        INTENT_SUBNET_OVERLAP_USER_MESSAGE
+                        if _plan_use_intent_ips(plan)
+                        else DOCKER_SUBNET_OVERLAP_USER_MESSAGE
+                    )
+                    raise RuntimeError(msg) from exc
                 raise
 
         attach: dict[UUID, list[tuple[str, str]]] = defaultdict(list)
 
         def _add_attach(nid: UUID, docker_net: str, ip: str | None) -> None:
-            if not ip or not str(ip).strip():
-                return
-            ip_s = str(ip).strip()
             cur = attach[nid]
             if any(x[0] == docker_net for x in cur):
                 return
-            cur.append((docker_net, ip_s))
+            if _plan_use_intent_ips(plan):
+                if not ip or not str(ip).strip():
+                    return
+                cur.append((docker_net, str(ip).strip()))
+            else:
+                cur.append((docker_net, None))
 
         for pl in plan.plan_links:
             key = pl.network_name.strip().lower()
@@ -823,14 +913,15 @@ class DockerRuntimeProvider(RuntimeProvider):
                 )
 
             first_net, first_ip = atts[0]
+            first_ip_cfg = _static_ipv4_for_plan(plan, first_ip)
             events.append(
                 (
                     DeploymentEventLevel.INFO,
                     f"Segment container op=create container={cname} docker_network={first_net} "
-                    f"requested_ipv4={first_ip} existing_attachments_before_create=[]",
+                    f"requested_ipv4={first_ip_cfg or 'auto'} existing_attachments_before_create=[]",
                 )
             )
-            net_cfg = self._make_cns_networking_config(first_net, first_ip)
+            net_cfg = self._make_cns_networking_config(first_net, first_ip_cfg)
             labels = _container_labels(
                 tid,
                 pn.id,
@@ -928,15 +1019,19 @@ class DockerRuntimeProvider(RuntimeProvider):
             for extra_net, extra_ip in atts[1:]:
                 try:
                     before_nets = ",".join(_attached_net_names(ctr))
+                    extra_ip_cfg = _static_ipv4_for_plan(plan, extra_ip)
                     events.append(
                         (
                             DeploymentEventLevel.INFO,
                             f"Segment container op=connect container={cname} docker_network={extra_net} "
-                            f"requested_ipv4={extra_ip} existing_attachments=[{before_nets}]",
+                            f"requested_ipv4={extra_ip_cfg or 'auto'} existing_attachments=[{before_nets}]",
                         )
                     )
                     nw = self._client.networks.get(extra_net)
-                    nw.connect(ctr.id, ipv4_address=extra_ip)
+                    if extra_ip_cfg:
+                        nw.connect(ctr.id, ipv4_address=extra_ip_cfg)
+                    else:
+                        nw.connect(ctr.id)
                     events.append(
                         (
                             DeploymentEventLevel.INFO,
@@ -1034,12 +1129,8 @@ class DockerRuntimeProvider(RuntimeProvider):
                     )
                 )
 
-            try_static = bool(pn.ip_address and str(pn.ip_address).strip())
-            expect_exact_ip = (
-                pn.ip_address.strip() if try_static else None
-            )
-
-            ipv4_for_cfg = pn.ip_address.strip() if try_static else None
+            ipv4_for_cfg = _static_ipv4_for_plan(plan, pn.ip_address)
+            expect_exact_ip = ipv4_for_cfg
 
             try:
                 events.append(
@@ -1093,7 +1184,7 @@ class DockerRuntimeProvider(RuntimeProvider):
                 verified_ip = _verify_cns_network_attachment(
                     nets_post,
                     net_name,
-                    expect_exact_ip if try_static else None,
+                    expect_exact_ip,
                 )
             except DockerProviderAttachmentError as exc:
                 events.append(

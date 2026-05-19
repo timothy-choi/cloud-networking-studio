@@ -1,3 +1,4 @@
+import type { NetworkAllocationMode } from './networkAllocation';
 import type { TopologyLinkResponse, TopologyNodeResponse } from '../types/topology';
 
 export interface DeployReadiness {
@@ -51,6 +52,7 @@ function isSegmentedMultinet(links: TopologyLinkResponse[]): boolean {
 export function computeDeployReadiness(
   nodes: TopologyNodeResponse[],
   links: TopologyLinkResponse[],
+  networkAllocationMode: NetworkAllocationMode = 'managed',
 ): DeployReadiness {
   const blockingReasons: string[] = [];
   const warnings: string[] = [];
@@ -96,7 +98,9 @@ export function computeDeployReadiness(
         blockingReasons.push('Segmented multi-network mode requires a CIDR on every link.');
       } else {
         warnings.push(
-          'One or more links have no subnet CIDR — add CIDRs so intent IPs can be validated against a lab subnet.',
+          networkAllocationMode === 'intent'
+            ? 'One or more links have no subnet CIDR — required for intent networking.'
+            : 'One or more links have no subnet CIDR — optional in managed mode; add CIDRs to document your lab design.',
         );
       }
     }

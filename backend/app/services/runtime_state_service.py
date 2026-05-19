@@ -59,9 +59,29 @@ def _snapshot_to_networks(snap: ProviderRuntimeSnapshot) -> list[RuntimeNetworkR
     return out
 
 
-def _snapshot_to_containers(snap: ProviderRuntimeSnapshot) -> list[RuntimeContainerResponse]:
+def _primary_runtime_ipv4(c) -> str | None:
+    if c.actual_runtime_ip:
+        return c.actual_runtime_ip
+    if c.network_interfaces:
+        for iface in c.network_interfaces:
+            if iface.ipv4:
+                return iface.ipv4
+    if c.ipv4_by_network:
+        return next(iter(c.ipv4_by_network.values()), None)
+    return None
+
+
+def _snapshot_to_containers(
+    snap: ProviderRuntimeSnapshot,
+    intent_by_node: dict[UUID, str | None] | None = None,
+) -> list[RuntimeContainerResponse]:
     out: list[RuntimeContainerResponse] = []
+    intent_by_node = intent_by_node or {}
     for c in snap.containers:
+        intended = c.intended_ip
+        if intended is None and c.node_id is not None:
+            intended = intent_by_node.get(c.node_id)
+        actual = _primary_runtime_ipv4(c)
         out.append(
             RuntimeContainerResponse(
                 container_id=c.container_id,
@@ -73,6 +93,8 @@ def _snapshot_to_containers(snap: ProviderRuntimeSnapshot) -> list[RuntimeContai
                 running=c.running,
                 labels=dict(c.labels),
                 node_id=c.node_id,
+                intended_ip=intended,
+                actual_runtime_ip=actual,
                 ipv4_by_network=dict(c.ipv4_by_network),
                 network_interfaces=[
                     RuntimeNetworkInterfaceResponse(
@@ -191,7 +213,10 @@ def build_topology_runtime(
         latest_deployment_id=latest.id if latest else None,
         runtime_provider=topo.runtime_target,
         networks=_snapshot_to_networks(snap),
-        containers=_snapshot_to_containers(snap),
+        containers=_snapshot_to_containers(
+            snap,
+            {n.id: (n.ip_address or None) for n in nodes},
+        ),
         node_runtime_mapping=mapping,
         container_states=states,
     )
@@ -251,7 +276,10 @@ def build_deployment_runtime(
         runtime_provider=dep.runtime_target,
         deployment_status=dep.status,
         networks=_snapshot_to_networks(snap),
-        containers=_snapshot_to_containers(snap),
+        containers=_snapshot_to_containers(
+            snap,
+            {n.id: (n.ip_address or None) for n in nodes},
+        ),
         node_runtime_mapping=mapping,
         container_states=states,
         status=deployment_access_status_label(dep),

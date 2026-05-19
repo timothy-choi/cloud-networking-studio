@@ -227,7 +227,7 @@ def test_multinet_endpoint_outside_subnet():
             config=None,
         )
     )
-    errs = validate_topology_for_deploy(topo)
+    errs = validate_topology_for_deploy(topo, network_allocation_mode="intent")
     assert any("outside this link's CIDR" in e for e in errs)
 
 

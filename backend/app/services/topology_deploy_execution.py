@@ -21,6 +21,12 @@ from app.services.deployment_queries import active_deployment_blocking_new_deplo
 from app.services.deployment_runtime_resource_service import (
     replace_runtime_resources_from_payload,
 )
+from app.services.network_allocation import (
+    INTENT_UNSUPPORTED_RUNTIME_MESSAGE,
+    is_intent_mode,
+    merge_allocation_mode_into_config,
+    resolve_network_allocation_mode,
+)
 from app.services.deployment_validation import validate_topology_for_deploy
 
 
@@ -61,9 +67,20 @@ def _topology_for_deploy(db: Session, user: User, topology_id: UUID) -> Topology
     return db.execute(stmt).scalar_one()
 
 
-def execute_topology_deploy(db: Session, user: User, topology_id: UUID) -> Deployment | JSONResponse:
+def execute_topology_deploy(
+    db: Session,
+    user: User,
+    topology_id: UUID,
+    *,
+    network_allocation_mode: str | None = None,
+) -> Deployment | JSONResponse:
     """Create and run a deployment for ``topology_id``; same semantics as ``POST /topologies/{id}/deploy``."""
     topo = _topology_for_deploy(db, user, topology_id)
+    alloc_mode = resolve_network_allocation_mode(topo, network_allocation_mode)
+    if network_allocation_mode is not None:
+        topo.config = merge_allocation_mode_into_config(topo.config, alloc_mode)
+        db.flush()
+
     provider = runtime_provider_for_topology(topo.runtime_target)
 
     blocker = active_deployment_blocking_new_deploy(db, topology_id)
@@ -98,7 +115,10 @@ def execute_topology_deploy(db: Session, user: User, topology_id: UUID) -> Deplo
     deployment.started_at = datetime.now(UTC)
     _append_event(db, deployment.id, "Deployment pending — record created.")
 
-    val_errors = validate_topology_for_deploy(topo)
+    val_errors = validate_topology_for_deploy(topo, network_allocation_mode=alloc_mode)
+    rt = (topo.runtime_target or "").lower().strip()
+    if is_intent_mode(alloc_mode) and rt != "docker":
+        val_errors.append(INTENT_UNSUPPORTED_RUNTIME_MESSAGE)
     if val_errors:
         joined = "; ".join(val_errors)
         _append_event(
@@ -132,6 +152,7 @@ def execute_topology_deploy(db: Session, user: User, topology_id: UUID) -> Deplo
         topo,
         deployment_id=deployment.id,
         requested_by_user_id=user.id,
+        network_allocation_mode=alloc_mode,
     )
 
     try:

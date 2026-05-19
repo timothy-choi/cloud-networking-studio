@@ -53,6 +53,14 @@ class RuntimeContainerResponse(BaseModel):
     running: bool
     labels: dict[str, str] = Field(default_factory=dict)
     node_id: UUID | None = None
+    intended_ip: str | None = Field(
+        default=None,
+        description="Topology intent IP from node ip_address (design-time).",
+    )
+    actual_runtime_ip: str | None = Field(
+        default=None,
+        description="Primary IPv4 assigned by the runtime provider on the lab network.",
+    )
     ipv4_by_network: dict[str, str] = Field(default_factory=dict)
     network_interfaces: list[RuntimeNetworkInterfaceResponse] = Field(
         default_factory=list,

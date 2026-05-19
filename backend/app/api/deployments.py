@@ -21,6 +21,7 @@ from app.models.user import User
 from app.services.access_control import get_deployment_for_user, require_deployment_editor
 from app.services import topology_deploy_execution as topology_deploy_execution
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
+from app.schemas.deploy import TopologyDeployRequest
 from app.schemas.deployment import DeploymentEventResponse, DeploymentResponse
 from app.schemas.runtime import (
     RuntimeDeploymentResponse,
@@ -86,11 +87,15 @@ def _append_event(
 )
 def deploy_topology(
     topology_id: UUID,
+    body: TopologyDeployRequest | None = Body(default=None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Deployment | JSONResponse:
     """Run deployment against the topology's runtime target (real Docker when target is docker)."""
-    out = topology_deploy_execution.execute_topology_deploy(db, user, topology_id)
+    mode = body.network_allocation_mode if body else None
+    out = topology_deploy_execution.execute_topology_deploy(
+        db, user, topology_id, network_allocation_mode=mode
+    )
     if isinstance(out, JSONResponse):
         return out
     return out

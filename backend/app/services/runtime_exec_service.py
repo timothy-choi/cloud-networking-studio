@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -13,6 +14,8 @@ from app.models.deployment import Deployment
 from app.models.deployment_runtime_exec_result import DeploymentRuntimeExecResult
 from app.models.topology import Topology
 from app.runtime import go_runner_client as grc
+
+_log = logging.getLogger(__name__)
 from app.schemas.runtime_exec import (
     RuntimeExecResultListResponse,
     RuntimeExecResultResponse,
@@ -105,14 +108,23 @@ def run_safe_exec(
         db.refresh(row)
         return _row_to_response(row)
 
-    if not _use_go():
+    if not grc.should_delegate_runtime_ops_to_go_runner():
+        _log.info(
+            "effective_runtime_executor=%s exec unsupported (control-plane fallback) deployment_id=%s service_id=%s",
+            grc.effective_runtime_executor(),
+            deployment_id,
+            runtime_resource_id,
+        )
         row.status = "unsupported"
-        row.message = "Remote exec requires RUNTIME_EXECUTOR=go."
+        row.message = (
+            "Remote exec requires RUNTIME_EXECUTOR=go so commands run inside the workload via the Go runner."
+        )
         row.finished_at = datetime.now(UTC)
         db.commit()
         db.refresh(row)
         return _row_to_response(row)
 
+    grc.log_runtime_op_delegation("exec", deployment_id, service_id=runtime_resource_id)
     body = {"command": cmd_s, "timeout_seconds": timeout_seconds}
     try:
         data = _runner().post_runtime_service_exec(
@@ -198,13 +210,22 @@ def run_restart(
         raise ValueError("runtime resource has no workload node id")
     prov = (dep.runtime_target or "docker").strip() or "docker"
 
-    if not _use_go():
+    if not grc.should_delegate_runtime_ops_to_go_runner():
+        _log.info(
+            "effective_runtime_executor=%s restart unsupported (control-plane fallback) deployment_id=%s service_id=%s",
+            grc.effective_runtime_executor(),
+            deployment_id,
+            runtime_resource_id,
+        )
         return RuntimeRestartResponse(
             status="unsupported",
-            message="Restart requires RUNTIME_EXECUTOR=go.",
+            message=(
+                "Restart requires RUNTIME_EXECUTOR=go so the Go runner can restart the workload in the runtime."
+            ),
             runtime_provider=prov,
         )
 
+    grc.log_runtime_op_delegation("restart", deployment_id, service_id=runtime_resource_id)
     try:
         data = _runner().post_runtime_service_restart(
             deployment_id,

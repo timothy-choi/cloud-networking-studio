@@ -11,7 +11,12 @@ import pytest
 
 from app.core import config
 from app.models.deployment import DeploymentEventLevel
-from app.runtime.go_runner_client import GoRunnerClient, GoRunnerDeployError, use_go_runner_for_docker
+from app.runtime.go_runner_client import (
+    GoRunnerClient,
+    GoRunnerDeployError,
+    should_delegate_runtime_ops_to_go_runner,
+    use_go_runner_for_docker,
+)
 from app.services.deployment_planner import (
     DeploymentPlan,
     PlanLinkDetail,
@@ -207,6 +212,7 @@ def test_use_go_runner_false_under_fake_docker(monkeypatch):
     monkeypatch.setenv("CNS_USE_FAKE_DOCKER", "1")
     monkeypatch.setattr(config.settings, "runtime_executor", "go")
     assert use_go_runner_for_docker() is False
+    assert should_delegate_runtime_ops_to_go_runner() is True
 
 
 def test_use_go_runner_true_when_executor_go(monkeypatch):

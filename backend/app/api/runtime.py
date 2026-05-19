@@ -82,9 +82,10 @@ def get_runtime_executor_status() -> dict[str, Any]:
     global _last_runtime_status_error
     from app.core.config import settings
 
+    executor = effective_runtime_executor()
     base: dict[str, Any] = {
         "backend_status": "ok",
-        "runtime_executor": settings.runtime_executor,
+        "runtime_executor": executor,
         "environment": settings.environment,
     }
     if effective_runtime_executor() == "go":
@@ -111,7 +112,7 @@ def get_runtime_executor_status() -> dict[str, Any]:
                 detail="Go runner returned invalid JSON for /runtime/status",
             ) from None
         merged: dict[str, Any] = {**base, **data, "runner_reachable": True}
-        merged.setdefault("runtime_executor", settings.runtime_executor)
+        merged["runtime_executor"] = executor
         if str(merged.get("status", "")).lower() != "ok":
             _last_runtime_status_error = str(merged.get("message") or merged.get("status"))
         else:

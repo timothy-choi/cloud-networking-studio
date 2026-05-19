@@ -153,6 +153,13 @@ func HealthCheckNode(ctx context.Context, cli *docker.Client, topologyID, nodeID
 		if msg == "" {
 			msg = fmt.Sprintf("wget exit %d", code)
 		}
+		if trafficutil.HTTPWgetMissing(stderr) || trafficutil.HTTPWgetMissing(msg) {
+			return model.RuntimeHealthResponse{
+				Status:  "unsupported",
+				Target:  target,
+				Message: "HTTP check tool is missing in runtime container.",
+			}
+		}
 		return model.RuntimeHealthResponse{Status: "failed", Target: target, Message: msg}
 	}
 	_ = stdout

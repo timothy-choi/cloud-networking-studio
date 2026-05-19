@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 import httpx
@@ -21,9 +22,7 @@ from app.schemas.runtime import (
 )
 from app.services.deployment_runtime_resource_service import list_runtime_resources
 
-def _use_go_runner_ops() -> bool:
-    return grc.effective_runtime_executor().strip().lower() == "go"
-
+_log = logging.getLogger(__name__)
 
 def _runner_client() -> grc.GoRunnerClient:
     return grc.GoRunnerClient.from_settings()
@@ -56,7 +55,8 @@ def fetch_runtime_deployment_logs(
     tail = max(1, min(int(tail or 100), 5000))
     prov_name = (dep.runtime_target or "docker").strip() or "docker"
 
-    if _use_go_runner_ops():
+    if grc.should_delegate_runtime_ops_to_go_runner():
+        grc.log_runtime_op_delegation("logs", deployment_id)
         data = _runner_client().get_runtime_deployment_logs(
             deployment_id,
             dep.topology_id,
@@ -129,7 +129,8 @@ def fetch_runtime_service_logs(
     tail = max(1, min(int(tail or 100), 5000))
     prov_name = (dep.runtime_target or "docker").strip() or "docker"
 
-    if _use_go_runner_ops():
+    if grc.should_delegate_runtime_ops_to_go_runner():
+        grc.log_runtime_op_delegation("service-logs", deployment_id, service_id=runtime_resource_id)
         data = _runner_client().get_runtime_service_logs(
             deployment_id,
             dep.topology_id,
@@ -190,7 +191,10 @@ def run_runtime_health_check(
             message="No workload node mapped to this runtime resource.",
         )
 
-    if _use_go_runner_ops():
+    prov_name = (dep.runtime_target or "docker").strip().lower() or "docker"
+
+    if grc.should_delegate_runtime_ops_to_go_runner():
+        grc.log_runtime_op_delegation("health-check", deployment_id, service_id=runtime_resource_id)
         data = _runner_client().post_runtime_service_health(
             deployment_id,
             dep.topology_id,
@@ -206,13 +210,20 @@ def run_runtime_health_check(
             message=str(data.get("message") or ""),
         )
 
-    # Python fallback: best-effort HTTP from control plane to internal_url (often fails for cluster DNS).
+    _log.info(
+        "effective_runtime_executor=%s using control-plane health-check fallback deployment_id=%s",
+        grc.effective_runtime_executor(),
+        deployment_id,
+    )
     url = (row.internal_url or "").strip()
     if not url:
         return RuntimeOperationsHealthResponse(
             status="unsupported",
             target="",
-            message="No internal URL recorded for this resource; use RUNTIME_EXECUTOR=go for in-cluster checks.",
+            message=(
+                "No internal URL recorded for this resource. "
+                "Set RUNTIME_EXECUTOR=go so health checks run inside the runtime via the Go runner."
+            ),
         )
     try:
         with httpx.Client(timeout=3.0) as client:
@@ -224,10 +235,20 @@ def run_runtime_health_check(
             message=f"HTTP {r.status_code} from control plane ({len(r.text)} bytes)",
         )
     except httpx.HTTPError as exc:
+        if prov_name == "kubernetes":
+            hint = (
+                "Control plane cannot reach cluster-internal DNS from outside the cluster. "
+                "Set RUNTIME_EXECUTOR=go for in-pod checks."
+            )
+        else:
+            hint = (
+                "Control plane cannot reach Docker bridge DNS from the API host. "
+                "Set RUNTIME_EXECUTOR=go for in-container checks."
+            )
         return RuntimeOperationsHealthResponse(
             status="unsupported",
             target=url,
-            message=f"Control plane cannot reach internal URL (expected for Kubernetes): {exc}",
+            message=f"{hint} ({exc})",
         )
 
 
@@ -274,7 +295,12 @@ def run_runtime_traffic_test(
 
     resolved_target = _resolve_traffic_target(db, deployment_id, dep.topology_id, payload.target)
 
-    if _use_go_runner_ops():
+    if grc.should_delegate_runtime_ops_to_go_runner():
+        grc.log_runtime_op_delegation(
+            "traffic-test",
+            deployment_id,
+            service_id=payload.source_runtime_resource_id,
+        )
         body = {
             "topology_id": str(dep.topology_id),
             "deployment_id": str(deployment_id),
@@ -300,5 +326,8 @@ def run_runtime_traffic_test(
         source=str(src_wid),
         target=resolved_target,
         protocol=payload.protocol,
-        output="Traffic tests from the control plane require RUNTIME_EXECUTOR=go (in-network exec).",
+        output=(
+            "Traffic tests require RUNTIME_EXECUTOR=go so probes run inside the deployment network "
+            "via the Go runner."
+        ),
     )

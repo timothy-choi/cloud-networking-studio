@@ -190,7 +190,7 @@ jobs:
           echo "::error::SSH did not become ready"
           exit 1
 
-      - name: Deploy Docker stack on EC2 (Caddy HTTPS on custom API domain; blocking API check runs on instance)
+      - name: Deploy Docker stack on EC2 (Caddy HTTPS on custom API domain)
         uses: appleboy/ssh-action@v1.1.0
         env:
           POSTGRES_PASSWORD: ${{ secrets.RDS_PASSWORD || secrets.POSTGRES_PASSWORD }}
@@ -335,8 +335,9 @@ jobs:
 
             C_ARGS=(-f docker-compose.prod.yml -f docker-compose.caddy-https.yml --env-file .env)
 
-            # When CNS_CADDY_AUTO_HTTPS=on, never run `docker compose down -v`: it removes caddy_data /
-            # caddy_config and forces fresh Let's Encrypt issuances (rate limits).
+            # Caddy certs are persisted via caddy_data/caddy_config volumes (docker-compose.caddy-https.yml).
+            # When CNS_CADDY_AUTO_HTTPS=on, never run `docker compose down -v`: it removes those volumes and
+            # forces fresh Let's Encrypt issuances (rate limits).
             run_compose() {
               if [[ "${CNS_CADDY_AUTO_HTTPS:-}" == "on" ]]; then
                 local saw_down=0 i arg
@@ -388,6 +389,7 @@ jobs:
               exit 1
             fi
 
+            # Caddy certs are persisted via caddy_data/caddy_config volumes — down without -v only.
             echo "=== docker compose down (no -v: keeps postgres_data, caddy_data, caddy_config) ==="
             run_compose "${C_ARGS[@]}" down || true
 
@@ -409,31 +411,28 @@ jobs:
             echo "=== docker compose logs caddy (tail=80) ==="
             run_compose "${C_ARGS[@]}" logs caddy --tail=80 || true
 
-            # TODO: Re-enable GitHub-runner public prod_smoke_test.sh (HTTPS) after Let's Encrypt clears.
-            echo "Running EC2-local smoke because public HTTP redirects to HTTPS"
+            echo "=== EC2-local backend /health (debug fallback — blocking check is runner HTTPS prod_smoke_test.sh) ==="
             EC2_LOCAL_OK=0
-            for attempt in $(seq 1 60); do
+            for attempt in $(seq 1 30); do
               if run_compose "${C_ARGS[@]}" exec -T backend python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health').read()" >/dev/null 2>&1; then
                 echo "EC2-local backend /health OK (attempt ${attempt})"
                 EC2_LOCAL_OK=1
                 break
               fi
-              echo "Waiting for backend /health on EC2 (attempt ${attempt}/60)..."
+              echo "Waiting for backend /health on EC2 (attempt ${attempt}/30)..."
               sleep 2
             done
             if [[ "${EC2_LOCAL_OK}" -ne 1 ]]; then
-              echo "::error::EC2-local backend health failed after 60 attempts (blocking deploy)."
+              echo "::warning::EC2-local backend /health failed (non-blocking). GitHub runner prod_smoke_test.sh against HTTPS is authoritative."
               run_compose "${C_ARGS[@]}" ps -a || true
-              run_compose "${C_ARGS[@]}" logs backend --tail=120 || true
-              exit 1
+              run_compose "${C_ARGS[@]}" logs backend --tail=80 || true
             fi
 
-      # TODO: Re-enable public prod_smoke_test.sh against https_origin after Let's Encrypt clears (Caddy certs stable).
-      # Public http://<api>/api/health returns 308→HTTPS; runner cannot validate TLS while LE is rate-limited.
-      - name: Production smoke (public API skipped — EC2-local backend /health is blocking)
-        run: |
-          echo "Skipping scripts/prod_smoke_test.sh on GitHub runner: public HTTP to api host redirects to HTTPS (308) while Let's Encrypt is unavailable."
-          echo "Blocking production API check ran on EC2 over SSH (backend /health via docker compose exec)."
+      - name: Production smoke (HTTPS API)
+        env:
+          CNS_BASE_URL: https://api.cloudnetstudio.com
+          CNS_SMOKE_API_ONLY: "1"
+        run: bash scripts/prod_smoke_test.sh
 
       - name: Verify HTTP API (/api/health, best effort — public may 308 to HTTPS)
         continue-on-error: true
@@ -442,21 +441,15 @@ jobs:
           if curl -sfS --connect-timeout 20 --max-time 90 "${{ steps.prod_api.outputs.http_origin }}/api/health" | jq -e '.status' >/dev/null 2>&1; then
             echo "Public HTTP /api/health OK"
           else
-            echo "::warning::Public HTTP /api/health check failed (often 308→HTTPS during LE limits). EC2-local smoke is the blocking check."
+            echo "::warning::Public HTTP /api/health check failed (often 308→HTTPS). Blocking check is HTTPS prod_smoke_test.sh."
           fi
 
-      # TODO: Re-enable strict HTTPS verification after Let's Encrypt rate limit clears and Caddy cert persistence is confirmed.
-      - name: Verify HTTPS API (/api/health, best effort while LE rate-limited)
-        continue-on-error: true
+      - name: Verify HTTPS API (/api/health)
         run: |
           set -euo pipefail
           URL="${{ steps.prod_api.outputs.https_origin }}/api/health"
-          if curl -sfS --connect-timeout 25 --max-time 90 "$URL" | jq -e '.status' >/dev/null 2>&1; then
-            echo "HTTPS /api/health OK"
-          else
-            echo "::warning::HTTPS API check failed, likely due to temporary Let's Encrypt rate limit. EC2-local backend /health (SSH deploy step) is the blocking production check."
-            curl -vk --connect-timeout 25 --max-time 120 "$URL" || true
-          fi
+          curl -sfS --connect-timeout 25 --max-time 90 "$URL" | jq -e '.status'
+          echo "HTTPS /api/health OK"
 
       - name: Deploy to Vercel
         shell: bash

@@ -186,11 +186,19 @@ def test_deployment_runtime_instructions_shape_after_deploy(client):
 
     nodes_sec = client.get(f"/deployments/{did}/runtime/nodes").json()
     assert nodes_sec["deployment_id"] == did
-    assert nodes_sec["nodes"] == []
+    assert len(nodes_sec["nodes"]) >= 1
+    node_row = nodes_sec["nodes"][0]
+    assert node_row["type"] == "node"
+    assert node_row["name"] == "n1"
+    assert node_row.get("internal_url")
 
     svc_sec = client.get(f"/deployments/{did}/runtime/services").json()
     assert svc_sec["deployment_id"] == did
-    assert svc_sec["services"] == []
+    assert len(svc_sec["services"]) >= 1
+    svc_row = svc_sec["services"][0]
+    assert svc_row["type"] == "service"
+    assert svc_row["name"] == "n1"
+    assert svc_row.get("internal_url")
 
     inst_only = client.get(f"/deployments/{did}/runtime/instructions").json()
     assert inst_only["deployment_id"] == did

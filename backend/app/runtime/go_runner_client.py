@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 from uuid import UUID
@@ -9,6 +10,8 @@ from uuid import UUID
 import httpx
 
 from app.core.config import settings
+
+_log = logging.getLogger(__name__)
 from app.models.deployment import DeploymentEventLevel
 from app.services.deployment_planner import DeploymentPlan
 
@@ -381,13 +384,40 @@ def _deployment_response_to_outcome(
 
 def effective_runtime_executor() -> str:
     """
-    Executor mode: prefer ``RUNTIME_EXECUTOR`` from the process environment (Docker / Compose),
-    then fall back to ``settings`` so delegation matches what the container actually sees.
+    Canonical executor mode for ``GET /runtime/status`` and all runtime operations.
+
+    Prefer the process environment (Docker Compose ``environment:``), then Pydantic
+  ``settings`` (``.env`` + env at startup). Both must stay aligned for ops delegation.
     """
-    raw = os.environ.get("RUNTIME_EXECUTOR")
-    if raw is not None and str(raw).strip() != "":
-        return str(raw).strip().lower()
+    env_raw = os.environ.get("RUNTIME_EXECUTOR")
+    if env_raw is not None and str(env_raw).strip() != "":
+        return str(env_raw).strip().lower()
     return (settings.runtime_executor or "python").strip().lower()
+
+
+def should_delegate_runtime_ops_to_go_runner() -> bool:
+    """
+    True when exec/health/traffic/restart/logs should call ``GoRunnerClient``.
+
+    Matches ``GET /runtime/status`` (executor mode only). ``CNS_USE_FAKE_DOCKER`` does not
+    disable ops delegation — pytest mocks the runner HTTP client instead of the engine.
+    """
+    return effective_runtime_executor() == "go"
+
+
+def log_runtime_op_delegation(
+    operation: str,
+    deployment_id: UUID,
+    *,
+    service_id: UUID | str | None = None,
+) -> None:
+    _log.info(
+        "effective_runtime_executor=%s delegating operation=%s to Go runner deployment_id=%s service_id=%s",
+        effective_runtime_executor(),
+        operation,
+        deployment_id,
+        str(service_id) if service_id is not None else "",
+    )
 
 
 def use_go_runner_for_docker() -> bool:

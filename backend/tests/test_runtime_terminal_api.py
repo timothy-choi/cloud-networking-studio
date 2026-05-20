@@ -146,3 +146,29 @@ def test_member_can_create_terminal_session(client_strict):
     assert body["websocket_path"].startswith("/terminal-sessions/")
     close = client_strict.delete(f"/terminal-sessions/{body['session_id']}", headers=ha)
     assert close.status_code == 200
+
+
+def test_terminal_websocket_stays_open_under_fake_docker(client_strict):
+    """WebSocket should not close immediately in simulated (CI) mode."""
+    ha, _, did, rid = _lab_service_row(client_strict)
+    r = client_strict.post(
+        f"/deployments/{did}/runtime/services/{rid}/terminal",
+        headers=ha,
+    )
+    assert r.status_code == 201, r.text
+    sid = r.json()["session_id"]
+    token = ha["Authorization"].split(" ", 1)[1]
+    with client_strict.websocket_connect(
+        f"/terminal-sessions/{sid}/ws?token={token}"
+    ) as ws:
+        banner = ws.receive_text()
+        assert "Simulated" in banner
+        ws.send_text("hello")
+        reply = ws.receive_text()
+        assert "simulated" in reply.lower()
+        ws.send_text('{"type":"ping"}')
+        pong = ws.receive_text()
+        assert '"pong"' in pong
+        ws.send_text("exit")
+    close = client_strict.delete(f"/terminal-sessions/{sid}", headers=ha)
+    assert close.status_code == 200

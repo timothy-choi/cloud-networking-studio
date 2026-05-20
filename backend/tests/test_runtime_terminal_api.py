@@ -210,14 +210,12 @@ def test_bridge_docker_socket_startup_no_select_attribute_error(monkeypatch):
     ws.send_bytes = AsyncMock()
     ws.send_text = AsyncMock()
 
-    recv_calls = 0
+    # Block browser reads so runner->browser finishes first (avoids CI race where
+    # client_close wins before container output is forwarded).
+    browser_blocked = asyncio.Event()
 
     async def _receive():
-        nonlocal recv_calls
-        recv_calls += 1
-        if recv_calls == 1:
-            return {"type": "websocket.receive", "text": "ping"}
-        return {"type": "websocket.disconnect"}
+        await browser_blocked.wait()
 
     ws.receive = _receive
 
@@ -231,9 +229,9 @@ def test_bridge_docker_socket_startup_no_select_attribute_error(monkeypatch):
         )
     )
 
-    assert reason in ("client_close", "container_eof", "disconnect", "bridge_error")
-    ws.send_bytes.assert_called()
-    assert ws.send_bytes.call_args[0][0] == b"container-hello"
+    assert reason == "container_eof"
+    assert reason != "bridge_error"
+    ws.send_bytes.assert_called_once_with(b"container-hello")
 
 
 def test_terminal_websocket_stays_open_under_fake_docker(client_strict):

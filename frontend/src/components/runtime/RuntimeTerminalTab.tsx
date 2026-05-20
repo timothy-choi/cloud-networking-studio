@@ -8,6 +8,10 @@ import {
   createTerminalSession,
   terminalWebSocketUrl,
 } from '../../api/runtimeTerminal';
+import {
+  classifyTerminalWsMessage,
+  type TerminalControlFrame,
+} from '../../api/terminalWsProtocol';
 import type { RuntimeAccessResourceRow } from '../../types/runtime';
 
 type ConnState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'error';
@@ -156,24 +160,26 @@ export function RuntimeTerminalTab({
     };
   }, [teardown]);
 
-  function handleControlMessage(raw: string, ws: WebSocket): boolean {
-    if (!raw.startsWith('{')) return false;
-    try {
-      const ctrl = JSON.parse(raw) as { type?: string; message?: string };
-      if (ctrl.type === 'ping') {
+  function applyControlFrame(frame: TerminalControlFrame, ws: WebSocket): void {
+    switch (frame.type) {
+      case 'ping':
         ws.send(JSON.stringify({ type: 'pong' }));
-        return true;
-      }
-      if (ctrl.type === 'pong') return true;
-      if (ctrl.type === 'error') {
+        break;
+      case 'pong':
+        break;
+      case 'connected':
+        setConnState('connected');
+        if (frame.message) {
+          setErr(null);
+        }
+        break;
+      case 'error':
         setConnState('error');
-        if (ctrl.message) termRef.current?.writeln(`\r\n\x1b[31m${ctrl.message}\x1b[0m`);
-        return true;
-      }
-    } catch {
-      /* not JSON */
+        setErr(frame.message ?? 'Terminal error');
+        break;
+      default:
+        break;
     }
-    return false;
   }
 
   const connect = useCallback(
@@ -242,11 +248,17 @@ export function RuntimeTerminalTab({
         ws.onmessage = (ev) => {
           const t = termRef.current;
           if (!t) return;
-          if (typeof ev.data === 'string') {
-            if (handleControlMessage(ev.data, ws)) return;
-            t.write(ev.data);
-          } else if (ev.data instanceof ArrayBuffer) {
-            t.write(new Uint8Array(ev.data));
+          const payload = classifyTerminalWsMessage(
+            ev.data as string | ArrayBuffer,
+          );
+          if (payload.kind === 'control') {
+            applyControlFrame(payload.frame, ws);
+            return;
+          }
+          if (typeof payload.data === 'string') {
+            t.write(payload.data);
+          } else {
+            t.write(payload.data);
           }
         };
 

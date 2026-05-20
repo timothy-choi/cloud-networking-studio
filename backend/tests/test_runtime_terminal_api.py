@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import select as selectors
 import uuid
 from uuid import UUID
@@ -175,8 +176,7 @@ def test_readable_recv_uses_stdlib_select_not_sqlalchemy(monkeypatch):
     assert select_calls
 
 
-@pytest.mark.asyncio
-async def test_bridge_docker_socket_startup_no_select_attribute_error(monkeypatch):
+def test_bridge_docker_socket_startup_no_select_attribute_error(monkeypatch):
     """Bridge must start runner->browser and browser->runner without select.select crash."""
     from unittest.mock import AsyncMock
 
@@ -221,12 +221,14 @@ async def test_bridge_docker_socket_startup_no_select_attribute_error(monkeypatc
 
     ws.receive = _receive
 
-    reason = await _bridge_docker_socket(
-        ws,
-        sock,
-        idle_seconds=300,
-        max_duration_seconds=3600,
-        session_id=uuid.uuid4(),
+    reason = asyncio.run(
+        _bridge_docker_socket(
+            ws,
+            sock,
+            idle_seconds=300,
+            max_duration_seconds=3600,
+            session_id=uuid.uuid4(),
+        )
     )
 
     assert reason in ("client_close", "container_eof", "disconnect", "bridge_error")

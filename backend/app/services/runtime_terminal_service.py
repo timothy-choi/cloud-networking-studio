@@ -6,14 +6,14 @@ import asyncio
 import json
 import logging
 import os
-import select
+import select as selectors
 import socket
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import docker
 from fastapi import WebSocket, WebSocketDisconnect
-from sqlalchemy import func, select
+from sqlalchemy import func, select as sa_select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -61,7 +61,7 @@ def _append_audit_event(db: Session, deployment_id: UUID, message: str) -> None:
 def _count_active_sessions(db: Session, user_id: UUID) -> int:
     return int(
         db.scalar(
-            select(func.count())
+            sa_select(func.count())
             .select_from(DeploymentRuntimeTerminalSession)
             .where(
                 DeploymentRuntimeTerminalSession.user_id == user_id,
@@ -201,6 +201,57 @@ def _resolve_docker_container_id(
     return None
 
 
+def _unwrap_exec_stream(sock: object) -> object:
+    """Return the raw socket-like object from docker-py's exec_start(socket=True)."""
+    stream = sock
+    if hasattr(stream, "_sock"):
+        stream = stream._sock  # type: ignore[attr-defined]
+    return stream
+
+
+def _readable_recv(stream: object, bufsize: int, timeout: float) -> bytes | None:
+    """
+    Blocking read from a docker exec socket.
+
+    Returns None on timeout (no data ready), b'' on EOF, otherwise payload bytes.
+    Uses stdlib ``selectors`` (imported as ``selectors``, not SQLAlchemy ``select``).
+    """
+    wait_target: object | int = stream
+    fileno_fn = getattr(stream, "fileno", None)
+    if callable(fileno_fn):
+        try:
+            wait_target = fileno_fn()
+        except (OSError, TypeError, ValueError):
+            wait_target = stream
+    try:
+        ready, _, _ = selectors.select([wait_target], [], [], timeout)
+    except (TypeError, ValueError, OSError):
+        ready = [wait_target]
+    if not ready:
+        return None
+    set_timeout = getattr(stream, "settimeout", None)
+    get_timeout = getattr(stream, "gettimeout", None)
+    old_timeout = get_timeout() if callable(get_timeout) else None
+    if callable(set_timeout):
+        try:
+            set_timeout(timeout)
+        except (OSError, TypeError):
+            pass
+    try:
+        chunk = stream.recv(bufsize)  # type: ignore[attr-defined]
+    except socket.timeout:
+        return None
+    finally:
+        if callable(set_timeout) and old_timeout is not None:
+            try:
+                set_timeout(old_timeout)
+            except (OSError, TypeError):
+                pass
+    if chunk is None:
+        return b""
+    return chunk if isinstance(chunk, bytes) else bytes(chunk)
+
+
 def _docker_exec_socket(container_id: str, shell: str) -> tuple[docker.DockerClient, object, str]:
     client = docker.from_env()
     api = client.api
@@ -255,6 +306,15 @@ async def _handle_control_message(
     return False
 
 
+async def _notify_bridge_failure(websocket: WebSocket, reason: str) -> None:
+    msg = f"Terminal bridge failed: {reason}"
+    try:
+        await websocket.send_text(json.dumps({"type": "error", "message": msg}))
+        await websocket.send_text(f"\r\n{msg}\r\n")
+    except Exception:
+        pass
+
+
 async def _bridge_docker_socket(
     websocket: WebSocket,
     sock: object,
@@ -268,11 +328,9 @@ async def _bridge_docker_socket(
     row: DeploymentRuntimeTerminalSession | None = None,
     user_id: UUID | None = None,
 ) -> str:
-    """Bidirectional bridge between WebSocket and docker exec socket. Returns close reason."""
-    stream = sock
-    if hasattr(stream, "_sock"):
-        stream = stream._sock  # type: ignore[attr-defined]
-    if not hasattr(stream, "recv"):
+    """Bidirectional bridge between browser WebSocket and docker exec TTY socket."""
+    stream = _unwrap_exec_stream(sock)
+    if not hasattr(stream, "recv") or not hasattr(stream, "send"):
         await websocket.send_text("Terminal backend could not attach to container socket.\r\n")
         return "attach_failed"
 
@@ -281,34 +339,12 @@ async def _bridge_docker_socket(
     opened = last_activity
     close_reason = "disconnect"
 
-    async def pump_out() -> None:
-        nonlocal last_activity, close_reason
-        while True:
-            if (datetime.now(UTC) - opened).total_seconds() > max_duration_seconds:
-                await websocket.send_text("\r\n[max session duration]\r\n")
-                close_reason = "max_duration"
-                break
-            ready, _, _ = await loop.run_in_executor(
-                None, lambda: select.select([stream], [], [], 1.0)
-            )
-            if ready:
-                chunk = await loop.run_in_executor(None, stream.recv, 4096)
-                if not chunk:
-                    close_reason = "container_eof"
-                    break
-                last_activity = datetime.now(UTC)
-                if row is not None and db is not None:
-                    row.last_activity_at = last_activity
-                await websocket.send_bytes(
-                    chunk if isinstance(chunk, bytes) else bytes(chunk)
-                )
-            elif (datetime.now(UTC) - last_activity).total_seconds() > idle_seconds:
-                await websocket.send_text("\r\n[idle timeout]\r\n")
-                close_reason = "idle_timeout"
-                break
+    _log.info("terminal bridge started session_id=%s", session_id)
 
-    async def pump_in() -> None:
+    async def browser_to_runner() -> None:
+        """Read from browser WebSocket and write to container stdin."""
         nonlocal last_activity, close_reason
+        _log.info("terminal browser->runner loop started session_id=%s", session_id)
         while True:
             msg = await websocket.receive()
             if msg["type"] == "websocket.disconnect":
@@ -330,6 +366,32 @@ async def _bridge_docker_socket(
             if data:
                 await loop.run_in_executor(None, stream.send, data)
 
+    async def runner_to_browser() -> None:
+        """Read from container stdout/stderr and write to browser WebSocket."""
+        nonlocal last_activity, close_reason
+        _log.info("terminal runner->browser loop started session_id=%s", session_id)
+        while True:
+            if (datetime.now(UTC) - opened).total_seconds() > max_duration_seconds:
+                await websocket.send_text("\r\n[max session duration]\r\n")
+                close_reason = "max_duration"
+                break
+            chunk = await loop.run_in_executor(
+                None, _readable_recv, stream, 4096, 1.0
+            )
+            if chunk is None:
+                if (datetime.now(UTC) - last_activity).total_seconds() > idle_seconds:
+                    await websocket.send_text("\r\n[idle timeout]\r\n")
+                    close_reason = "idle_timeout"
+                    break
+                continue
+            if chunk == b"":
+                close_reason = "container_eof"
+                break
+            last_activity = datetime.now(UTC)
+            if row is not None and db is not None:
+                row.last_activity_at = last_activity
+            await websocket.send_bytes(chunk)
+
     async def pump_server_ping() -> None:
         while True:
             await asyncio.sleep(_PING_INTERVAL_SECONDS)
@@ -339,17 +401,40 @@ async def _bridge_docker_socket(
                 break
 
     tasks = [
-        asyncio.create_task(pump_out()),
-        asyncio.create_task(pump_in()),
-        asyncio.create_task(pump_server_ping()),
+        asyncio.create_task(browser_to_runner(), name="browser_to_runner"),
+        asyncio.create_task(runner_to_browser(), name="runner_to_browser"),
+        asyncio.create_task(pump_server_ping(), name="server_ping"),
     ]
-    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    for t in pending:
-        t.cancel()
-    for t in done:
-        exc = t.exception()
-        if exc and not isinstance(exc, WebSocketDisconnect):
-            _log.warning("terminal bridge task error session=%s: %s", session_id, exc)
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        for t in done:
+            exc = t.exception()
+            if exc is None:
+                continue
+            if isinstance(exc, WebSocketDisconnect):
+                close_reason = "client_close"
+                continue
+            close_reason = "bridge_error"
+            _log.warning(
+                "terminal bridge task error session=%s task=%s: %s",
+                session_id,
+                t.get_name(),
+                exc,
+            )
+            await _notify_bridge_failure(websocket, str(exc))
+    except Exception as exc:
+        close_reason = "bridge_error"
+        _log.exception("terminal bridge failed session_id=%s", session_id)
+        await _notify_bridge_failure(websocket, str(exc))
+    finally:
+        _log.info(
+            "terminal bridge closed session_id=%s reason=%s",
+            session_id,
+            close_reason,
+        )
     return close_reason
 
 

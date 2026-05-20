@@ -251,6 +251,12 @@ def test_terminal_websocket_stays_open_under_fake_docker(client_strict):
         assert "Simulated" in banner
         ws.send_text("hello")
         reply = ws.receive_text()
+        if reply.strip().startswith("{"):
+            import json
+
+            body = json.loads(reply)
+            if body.get("type") == "terminal_data":
+                reply = str(body.get("data") or "")
         assert "simulated" in reply.lower()
         ws.send_text('{"type":"ping"}')
         pong = ws.receive_text()

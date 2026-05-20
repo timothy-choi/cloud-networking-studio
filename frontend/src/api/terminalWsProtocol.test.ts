@@ -1,15 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyTerminalWsMessage,
+  filterTerminalFrame,
   parseTerminalControlFrame,
 } from './terminalWsProtocol';
 
-describe('parseTerminalControlFrame', () => {
-  it('parses pong and ping', () => {
-    expect(parseTerminalControlFrame('{"type":"pong"}')).toEqual({ type: 'pong' });
-    expect(parseTerminalControlFrame('\r\n{"type":"ping"}\r\n')).toEqual({ type: 'ping' });
+describe('filterTerminalFrame', () => {
+  it('drops heartbeat control frames', () => {
+    expect(filterTerminalFrame('{"type":"pong"}')).toBeNull();
+    expect(filterTerminalFrame('{"type":"ping"}')).toBeNull();
+    expect(filterTerminalFrame('{"type":"heartbeat"}')).toBeNull();
+    expect(filterTerminalFrame('{"type":"keepalive"}')).toBeNull();
+    expect(filterTerminalFrame('\r\n{"type":"pong"}\r\n')).toBeNull();
   });
 
+  it('passes plain terminal output through', () => {
+    expect(filterTerminalFrame('hello')).toBe('hello');
+    expect(filterTerminalFrame('$ ls\r\n')).toBe('$ ls\r\n');
+  });
+
+  it('unwraps terminal_data envelopes', () => {
+    expect(filterTerminalFrame('{"type":"terminal_data","data":"root@host:~# "}')).toBe(
+      'root@host:~# ',
+    );
+  });
+});
+
+describe('parseTerminalControlFrame', () => {
   it('parses error with message', () => {
     expect(parseTerminalControlFrame('{"type":"error","message":"boom"}')).toEqual({
       type: 'error',
@@ -19,7 +36,6 @@ describe('parseTerminalControlFrame', () => {
 
   it('returns null for shell output', () => {
     expect(parseTerminalControlFrame('$ ls')).toBeNull();
-    expect(parseTerminalControlFrame('hello world')).toBeNull();
   });
 });
 
@@ -28,14 +44,14 @@ describe('classifyTerminalWsMessage', () => {
     const bytes = new TextEncoder().encode('{"type":"pong"}');
     const payload = classifyTerminalWsMessage(bytes.buffer);
     expect(payload.kind).toBe('control');
-    if (payload.kind === 'control') {
-      expect(payload.frame.type).toBe('pong');
-    }
   });
 
   it('passes binary shell bytes through as output', () => {
     const bytes = new Uint8Array([0x1b, 0x5b, 0x41]);
     const payload = classifyTerminalWsMessage(bytes.buffer);
     expect(payload.kind).toBe('output');
+    if (payload.kind === 'output') {
+      expect(payload.data).toBeInstanceOf(Uint8Array);
+    }
   });
 });

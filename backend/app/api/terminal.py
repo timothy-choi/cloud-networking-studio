@@ -59,11 +59,15 @@ async def terminal_session_websocket(
     session_id: UUID,
     token: str | None = Query(None),
 ) -> None:
+    import logging
+
+    _log = logging.getLogger(__name__)
     db = SessionLocal()
     try:
         try:
             user = _user_from_ws_token(db, token)
         except HTTPException:
+            _log.info("terminal websocket rejected session_id=%s reason=auth", session_id)
             await websocket.close(code=4401)
             return
         await term_svc.handle_terminal_websocket(websocket, db, user.id, session_id)

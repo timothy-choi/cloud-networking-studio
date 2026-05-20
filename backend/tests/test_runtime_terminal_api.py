@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import select as selectors
 import uuid
 from uuid import UUID
 
@@ -146,6 +148,90 @@ def test_member_can_create_terminal_session(client_strict):
     assert body["websocket_path"].startswith("/terminal-sessions/")
     close = client_strict.delete(f"/terminal-sessions/{body['session_id']}", headers=ha)
     assert close.status_code == 200
+
+
+def test_readable_recv_uses_stdlib_select_not_sqlalchemy(monkeypatch):
+    """Regression: sqlalchemy.select must not shadow stdlib select in the bridge."""
+    from sqlalchemy import select as sa_select
+
+    from app.services import runtime_terminal_service as tsvc
+
+    assert sa_select is not selectors
+    select_calls: list[object] = []
+
+    def _fake_select(rlist, _wlist, _xlist, _timeout):
+        select_calls.extend(rlist)
+        return rlist, [], []
+
+    monkeypatch.setattr(
+        "app.services.runtime_terminal_service.selectors.select",
+        _fake_select,
+    )
+
+    class _Sock:
+        def recv(self, _n: int) -> bytes:
+            return b"ok"
+
+    assert tsvc._readable_recv(_Sock(), 4096, 1.0) == b"ok"
+    assert select_calls
+
+
+def test_bridge_docker_socket_startup_no_select_attribute_error(monkeypatch):
+    """Bridge must start runner->browser and browser->runner without select.select crash."""
+    from unittest.mock import AsyncMock
+
+    from app.services.runtime_terminal_service import _bridge_docker_socket
+
+    def _fake_select(rlist, _wlist, _xlist, _timeout):
+        return rlist, [], []
+
+    monkeypatch.setattr(
+        "app.services.runtime_terminal_service.selectors.select",
+        _fake_select,
+    )
+
+    class _Stream:
+        def __init__(self) -> None:
+            self._reads = 0
+
+        def recv(self, _n: int) -> bytes:
+            self._reads += 1
+            if self._reads == 1:
+                return b"container-hello"
+            return b""
+
+        def send(self, data: bytes) -> None:
+            self.last = data
+
+    stream = _Stream()
+    sock = type("ExecSocket", (), {"_sock": stream})()
+
+    ws = AsyncMock()
+    ws.send_bytes = AsyncMock()
+    ws.send_text = AsyncMock()
+
+    # Block browser reads so runner->browser finishes first (avoids CI race where
+    # client_close wins before container output is forwarded).
+    browser_blocked = asyncio.Event()
+
+    async def _receive():
+        await browser_blocked.wait()
+
+    ws.receive = _receive
+
+    reason = asyncio.run(
+        _bridge_docker_socket(
+            ws,
+            sock,
+            idle_seconds=300,
+            max_duration_seconds=3600,
+            session_id=uuid.uuid4(),
+        )
+    )
+
+    assert reason == "container_eof"
+    assert reason != "bridge_error"
+    ws.send_bytes.assert_called_once_with(b"container-hello")
 
 
 def test_terminal_websocket_stays_open_under_fake_docker(client_strict):

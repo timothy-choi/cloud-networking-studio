@@ -260,13 +260,28 @@ def _docker_exec_socket(container_id: str, shell: str) -> tuple[docker.DockerCli
     return client, sock, exec_id
 
 
+async def _send_control_frame(
+    websocket: WebSocket, frame_type: str, *, message: str | None = None
+) -> None:
+    """Heartbeat/control JSON — never mixed with TTY streams."""
+    body: dict[str, str] = {"type": frame_type}
+    if message:
+        body["message"] = message
+    await websocket.send_text(json.dumps(body))
+
+
+async def _send_terminal_data(websocket: WebSocket, data: str) -> None:
+    """Human-readable terminal output (envelope keeps control frames separate)."""
+    if not data:
+        return
+    await websocket.send_text(json.dumps({"type": "terminal_data", "data": data}))
+
+
 async def _send_error_and_close(
     websocket: WebSocket, message: str, *, code: int = 1011
 ) -> None:
-    payload = json.dumps({"type": "error", "message": message})
     try:
-        await websocket.send_text(payload)
-        await websocket.send_text(f"\r\n{message}\r\n")
+        await _send_control_frame(websocket, "error", message=message)
     except Exception:
         pass
     await websocket.close(code=code, reason=message[:120])
@@ -291,7 +306,7 @@ async def _handle_control_message(
         return False
     kind = str(ctrl.get("type") or "").lower()
     if kind == "ping":
-        await websocket.send_text(json.dumps({"type": "pong"}))
+        await _send_control_frame(websocket, "pong")
         return True
     if kind == "resize" and api is not None and exec_id:
         cols = int(ctrl.get("cols") or 80)
@@ -331,7 +346,9 @@ async def _bridge_docker_socket(
     """Bidirectional bridge between browser WebSocket and docker exec TTY socket."""
     stream = _unwrap_exec_stream(sock)
     if not hasattr(stream, "recv") or not hasattr(stream, "send"):
-        await websocket.send_text("Terminal backend could not attach to container socket.\r\n")
+        await _send_terminal_data(
+            websocket, "Terminal backend could not attach to container socket.\r\n"
+        )
         return "attach_failed"
 
     loop = asyncio.get_running_loop()
@@ -372,7 +389,7 @@ async def _bridge_docker_socket(
         _log.info("terminal runner->browser loop started session_id=%s", session_id)
         while True:
             if (datetime.now(UTC) - opened).total_seconds() > max_duration_seconds:
-                await websocket.send_text("\r\n[max session duration]\r\n")
+                await _send_terminal_data(websocket, "\r\n[max session duration]\r\n")
                 close_reason = "max_duration"
                 break
             chunk = await loop.run_in_executor(
@@ -380,7 +397,7 @@ async def _bridge_docker_socket(
             )
             if chunk is None:
                 if (datetime.now(UTC) - last_activity).total_seconds() > idle_seconds:
-                    await websocket.send_text("\r\n[idle timeout]\r\n")
+                    await _send_terminal_data(websocket, "\r\n[idle timeout]\r\n")
                     close_reason = "idle_timeout"
                     break
                 continue
@@ -396,7 +413,7 @@ async def _bridge_docker_socket(
         while True:
             await asyncio.sleep(_PING_INTERVAL_SECONDS)
             try:
-                await websocket.send_text(json.dumps({"type": "ping"}))
+                await _send_control_frame(websocket, "ping")
             except Exception:
                 break
 
@@ -446,7 +463,7 @@ async def _interactive_guidance_loop(
     max_duration_seconds: int,
 ) -> str:
     """Keep WebSocket open with guidance text (Kubernetes / unsupported paths)."""
-    await websocket.send_text(intro)
+    await _send_terminal_data(websocket, intro)
     opened = datetime.now(UTC)
     last_activity = opened
     close_reason = "disconnect"
@@ -561,16 +578,17 @@ async def handle_terminal_websocket(
 
         if os.environ.get("CNS_USE_FAKE_DOCKER", "").lower() in ("1", "true", "yes"):
             cname = container_name(wid, res.name)
-            await websocket.send_text(
+            await _send_terminal_data(
+                websocket,
                 f"Simulated terminal for {cname} (fake Docker — no socket).\r\n"
-                "Type 'help' or use Safe exec for diagnostics. Type exit to close.\r\n"
+                "Type 'help' or use Safe exec for diagnostics. Type exit to close.\r\n",
             )
             _log.info("terminal exec attached (simulated) session_id=%s", session_id)
             try:
                 opened = datetime.now(UTC)
                 while True:
                     if (datetime.now(UTC) - opened).total_seconds() > max_dur:
-                        await websocket.send_text("\r\n[max session duration]\r\n")
+                        await _send_terminal_data(websocket, "\r\n[max session duration]\r\n")
                         close_reason = "max_duration"
                         break
                     try:
@@ -578,7 +596,7 @@ async def handle_terminal_websocket(
                             websocket.receive(), timeout=float(_PING_INTERVAL_SECONDS)
                         )
                     except asyncio.TimeoutError:
-                        await websocket.send_text(json.dumps({"type": "ping"}))
+                        await _send_control_frame(websocket, "ping")
                         continue
                     if msg["type"] == "websocket.disconnect":
                         close_reason = "client_close"
@@ -593,7 +611,7 @@ async def handle_terminal_websocket(
                     if text.strip().lower() in ("exit", "quit"):
                         close_reason = "client_close"
                         break
-                    await websocket.send_text(f"simulated> echo {text}\r\n")
+                    await _send_terminal_data(websocket, f"simulated> echo {text}\r\n")
             except WebSocketDisconnect:
                 close_reason = "client_close"
             return
@@ -618,8 +636,10 @@ async def handle_terminal_websocket(
                 cid[:12],
                 exec_id,
             )
-            await websocket.send_text(
-                f"\r\nConnected to {res.runtime_name} ({cid[:12]}).\r\n"
+            await _send_control_frame(websocket, "connected")
+            await _send_terminal_data(
+                websocket,
+                f"\r\nConnected to {res.runtime_name} ({cid[:12]}).\r\n",
             )
             close_reason = await _bridge_docker_socket(
                 websocket,

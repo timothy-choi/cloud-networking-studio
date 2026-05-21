@@ -35,6 +35,13 @@ _log = logging.getLogger(__name__)
 
 _PING_INTERVAL_SECONDS = 25
 
+_CLIENT_CONTROL_TYPES = frozenset(
+    {"ping", "pong", "connected", "heartbeat", "keepalive", "resize"}
+)
+_SERVER_CONTROL_TYPES = frozenset(
+    {"ping", "pong", "connected", "error", "heartbeat", "keepalive"}
+)
+
 
 def _idle_seconds() -> int:
     return max(60, int(getattr(settings, "terminal_idle_timeout_seconds", 300)))
@@ -267,6 +274,7 @@ async def _send_control_frame(
     body: dict[str, str] = {"type": frame_type}
     if message:
         body["message"] = message
+    _log.debug("terminal control frame sent type=%s", frame_type)
     await websocket.send_text(json.dumps(body))
 
 
@@ -287,6 +295,29 @@ async def _send_error_and_close(
     await websocket.close(code=code, reason=message[:120])
 
 
+def _parse_json_control_type(raw: str) -> str | None:
+    stripped = raw.strip()
+    if not stripped.startswith("{"):
+        return None
+    try:
+        ctrl = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(ctrl, dict):
+        return None
+    kind = str(ctrl.get("type") or "").strip().lower()
+    return kind or None
+
+
+def _chunk_is_control_json(chunk: bytes) -> bool:
+    """Drop accidental control JSON echoed from a shell (e.g. client pong forwarded to stdin)."""
+    try:
+        kind = _parse_json_control_type(chunk.decode("utf-8"))
+    except UnicodeDecodeError:
+        return False
+    return kind in _SERVER_CONTROL_TYPES if kind else False
+
+
 async def _handle_control_message(
     websocket: WebSocket,
     raw: str,
@@ -294,38 +325,33 @@ async def _handle_control_message(
     api: object | None,
     exec_id: str | None,
 ) -> bool:
-    """Returns True if message was handled (caller should not forward to shell)."""
-    stripped = raw.strip()
-    if not stripped.startswith("{"):
+    """Returns True if message was handled (caller must not forward to shell)."""
+    kind = _parse_json_control_type(raw)
+    if kind is None or kind not in _CLIENT_CONTROL_TYPES:
         return False
-    try:
-        ctrl = json.loads(stripped)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(ctrl, dict):
-        return False
-    kind = str(ctrl.get("type") or "").lower()
     if kind == "ping":
         await _send_control_frame(websocket, "pong")
-        return True
-    if kind == "resize" and api is not None and exec_id:
-        cols = int(ctrl.get("cols") or 80)
-        rows = int(ctrl.get("rows") or 24)
-        cols = max(1, min(cols, 500))
-        rows = max(1, min(rows, 200))
+    elif kind == "pong":
+        _log.debug("terminal client pong consumed (not forwarded to shell)")
+    elif kind in {"heartbeat", "keepalive", "connected"}:
+        _log.debug("terminal client control frame consumed type=%s", kind)
+    elif kind == "resize" and api is not None and exec_id:
         try:
+            ctrl = json.loads(raw.strip())
+            cols = int(ctrl.get("cols") or 80)
+            rows = int(ctrl.get("rows") or 24)
+            cols = max(1, min(cols, 500))
+            rows = max(1, min(rows, 200))
             api.exec_resize(exec_id, height=rows, width=cols)  # type: ignore[attr-defined]
         except Exception as exc:
             _log.debug("terminal resize failed session exec_id=%s: %s", exec_id, exc)
-        return True
-    return False
+    return True
 
 
 async def _notify_bridge_failure(websocket: WebSocket, reason: str) -> None:
     msg = f"Terminal bridge failed: {reason}"
     try:
-        await websocket.send_text(json.dumps({"type": "error", "message": msg}))
-        await websocket.send_text(f"\r\n{msg}\r\n")
+        await _send_control_frame(websocket, "error", message=msg)
     except Exception:
         pass
 
@@ -372,7 +398,16 @@ async def _bridge_docker_socket(
                 row.last_activity_at = last_activity
                 db.commit()
             if msg.get("bytes"):
-                data = msg["bytes"]
+                blob = msg["bytes"]
+                try:
+                    as_text = blob.decode("utf-8")
+                    if await _handle_control_message(
+                        websocket, as_text, api=api, exec_id=exec_id
+                    ):
+                        continue
+                except UnicodeDecodeError:
+                    pass
+                data = blob
             else:
                 text = msg.get("text") or ""
                 if await _handle_control_message(
@@ -407,6 +442,12 @@ async def _bridge_docker_socket(
             last_activity = datetime.now(UTC)
             if row is not None and db is not None:
                 row.last_activity_at = last_activity
+            if _chunk_is_control_json(chunk):
+                _log.debug(
+                    "terminal dropping control echo from runner session_id=%s",
+                    session_id,
+                )
+                continue
             await websocket.send_bytes(chunk)
 
     async def pump_server_ping() -> None:
@@ -470,13 +511,13 @@ async def _interactive_guidance_loop(
     try:
         while True:
             if (datetime.now(UTC) - opened).total_seconds() > max_duration_seconds:
-                await websocket.send_text("\r\n[max session duration]\r\n")
+                await _send_terminal_data(websocket, "\r\n[max session duration]\r\n")
                 close_reason = "max_duration"
                 break
             try:
                 msg = await asyncio.wait_for(websocket.receive(), timeout=float(_PING_INTERVAL_SECONDS))
             except asyncio.TimeoutError:
-                await websocket.send_text(json.dumps({"type": "ping"}))
+                await _send_control_frame(websocket, "ping")
                 continue
             if msg["type"] == "websocket.disconnect":
                 close_reason = "client_close"
@@ -489,15 +530,18 @@ async def _interactive_guidance_loop(
                     continue
             elif msg.get("bytes"):
                 text = msg["bytes"].decode(errors="replace")
+                if await _handle_control_message(websocket, text, api=None, exec_id=None):
+                    continue
             if text.strip().lower() in ("exit", "quit"):
                 close_reason = "client_close"
                 break
             if text.strip():
-                await websocket.send_text(
-                    "\r\n[interactive shell unavailable — use Safe exec for allowlisted commands]\r\n"
+                await _send_terminal_data(
+                    websocket,
+                    "\r\n[interactive shell unavailable — use Safe exec for allowlisted commands]\r\n",
                 )
             if (datetime.now(UTC) - last_activity).total_seconds() > idle_seconds:
-                await websocket.send_text("\r\n[idle timeout]\r\n")
+                await _send_terminal_data(websocket, "\r\n[idle timeout]\r\n")
                 close_reason = "idle_timeout"
                 break
     except WebSocketDisconnect:

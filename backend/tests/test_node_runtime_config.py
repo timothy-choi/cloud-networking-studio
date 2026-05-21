@@ -56,6 +56,25 @@ def test_ports_default_when_missing():
     ]
 
 
+def test_validate_image_reference_rejects_unsafe():
+    import pytest
+
+    from app.services.node_runtime_config import NodeConfigValidationError, validate_image_reference
+
+    with pytest.raises(NodeConfigValidationError):
+        validate_image_reference("bad image name!!")
+
+
+def test_validate_and_normalize_ports():
+    from app.services.node_runtime_config import validate_and_normalize_node_config
+
+    out = validate_and_normalize_node_config(
+        {"ports": [{"port": 8080, "target_port": 8080, "protocol": "TCP"}]}
+    )
+    assert out is not None
+    assert out["ports"][0]["port"] == 8080
+
+
 def test_runtime_metadata_includes_image_and_command():
     rc = extract_node_runtime_config({"role_label": "web", "command": "nginx"})
     meta = runtime_metadata_from_node(image="nginx:alpine", ip_address="10.0.0.2", runtime=rc)
@@ -63,3 +82,11 @@ def test_runtime_metadata_includes_image_and_command():
     assert meta["image"] == "nginx:alpine"
     assert meta["command"] == "nginx"
     assert meta["intended_ip"] == "10.0.0.2"
+
+
+def test_runtime_metadata_includes_env():
+    from app.services.node_runtime_config import extract_node_runtime_config, runtime_metadata_from_node
+
+    rc = extract_node_runtime_config({"env": {"LAB": "1"}})
+    meta = runtime_metadata_from_node(image="alpine:latest", ip_address=None, runtime=rc)
+    assert '"LAB"' in meta.get("env", "")

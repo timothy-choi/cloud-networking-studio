@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -218,6 +219,11 @@ func planNodeRuntimeMeta(pn model.PlanNode, imageRef string, cmd []string) map[s
 	if pn.IPAddress != nil {
 		if s := strings.TrimSpace(*pn.IPAddress); s != "" {
 			meta["intended_ip"] = s
+		}
+	}
+	if len(pn.Env) > 0 {
+		if b, err := json.Marshal(pn.Env); err == nil {
+			meta["env"] = string(b)
 		}
 	}
 	return meta

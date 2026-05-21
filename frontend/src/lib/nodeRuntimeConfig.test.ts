@@ -7,6 +7,15 @@ import {
   validateNodeRuntimeFields,
 } from './nodeRuntimeConfig';
 
+import { metadataDisplay } from './nodeRuntimeConfig';
+
+describe('metadataDisplay', () => {
+  it('includes env from runtime metadata', () => {
+    const d = metadataDisplay({ env: '{"LAB":"1"}', role_label: 'api' });
+    expect(d.roleLabel).toBe('api');
+  });
+});
+
 describe('nodeRuntimeConfig', () => {
   it('reads and merges freeform fields', () => {
     const node = {

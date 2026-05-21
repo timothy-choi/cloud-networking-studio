@@ -29,6 +29,7 @@ from app.schemas.topology import (
     TopologyResponse,
     TopologyUpdate,
 )
+from app.services.node_runtime_config import NodeConfigValidationError, validate_node_payload
 from app.services.access_control import (
     default_project_for_user,
     get_project_for_member,
@@ -51,6 +52,21 @@ def _merge_json_dict(
     if base is None:
         return dict(patch)
     return {**base, **patch}
+
+
+def _validated_node_fields(
+    *,
+    image: str | None,
+    ip_address: str | None,
+    config: dict[str, Any] | None,
+) -> tuple[str | None, str | None, dict[str, Any] | None]:
+    try:
+        return validate_node_payload(image=image, ip_address=ip_address, config=config)
+    except NodeConfigValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
 
 def _counts_for_topology(db: Session, topology_id: UUID) -> tuple[int, int]:
@@ -189,13 +205,18 @@ def create_topology_node(
     user: User = Depends(get_current_user),
 ) -> TopologyNode:
     require_topology_editor(db, user, topology_id)
+    image, ip_address, config = _validated_node_fields(
+        image=body.image,
+        ip_address=body.ip_address,
+        config=body.config,
+    )
     node = TopologyNode(
         topology_id=topology_id,
         name=body.name,
         node_type=body.node_type,
-        image=body.image,
-        ip_address=body.ip_address,
-        config=body.config,
+        image=image,
+        ip_address=ip_address,
+        config=config,
     )
     db.add(node)
     db.commit()
@@ -324,8 +345,19 @@ def patch_topology_node(
             detail="Node not found",
         )
     data = body.model_dump(exclude_unset=True)
-    if "config" in data:
-        node.config = _merge_json_dict(node.config, data.pop("config"))
+    config_patch = data.pop("config", None)
+    next_image = data["image"] if "image" in data else node.image
+    next_ip = data["ip_address"] if "ip_address" in data else node.ip_address
+    next_config = _merge_json_dict(node.config, config_patch) if config_patch is not None else node.config
+    if config_patch is not None or "image" in data or "ip_address" in data:
+        next_image, next_ip, next_config = _validated_node_fields(
+            image=next_image,
+            ip_address=next_ip,
+            config=next_config,
+        )
+        data["image"] = next_image
+        data["ip_address"] = next_ip
+        data["config"] = next_config
     for key, val in data.items():
         setattr(node, key, val)
     db.commit()

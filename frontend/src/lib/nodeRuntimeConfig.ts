@@ -219,6 +219,7 @@ export function metadataDisplay(meta: Record<string, string> | undefined | null)
   intendedIp?: string;
   runtimeIp?: string;
   terminalEnabled?: boolean;
+  env?: string;
 } {
   if (!meta) return {};
   const te = meta.terminal_enabled;
@@ -229,6 +230,7 @@ export function metadataDisplay(meta: Record<string, string> | undefined | null)
     intendedIp: meta.intended_ip,
     runtimeIp: meta.actual_runtime_ip,
     terminalEnabled: te === undefined ? undefined : te !== 'false',
+    env: meta.env,
   };
 }
 

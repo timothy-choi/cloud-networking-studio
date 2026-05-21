@@ -64,6 +64,75 @@ def _two_node_topology(client, *, custom: bool = False):
     return tid
 
 
+def test_custom_node_config_persisted_and_returned(client):
+    tid = client.post("/topologies", json=TOPO_BODY).json()["id"]
+    body = {
+        "name": "api",
+        "node_type": NodeType.GENERIC.value,
+        "image": "busybox:latest",
+        "ip_address": "10.8.0.50",
+        "config": {
+            "role_label": "api",
+            "command": "sleep infinity",
+            "ports": [{"port": 9090, "target_port": 9090}],
+            "env": {"LAB": "yes"},
+            "terminal_enabled": False,
+            "health_check": "/healthz",
+        },
+    }
+    created = client.post(f"/topologies/{tid}/nodes", json=body)
+    assert created.status_code == 201, created.text
+    row = created.json()
+    assert row["image"] == "busybox:latest"
+    assert row["ip_address"] == "10.8.0.50"
+    cfg = row["config"]
+    assert cfg["role_label"] == "api"
+    assert cfg["env"] == {"LAB": "yes"}
+    assert cfg["ports"][0]["port"] == 9090
+    assert cfg["terminal_enabled"] is False
+
+    listed = client.get(f"/topologies/{tid}/nodes").json()
+    assert any(n["name"] == "api" and n["config"]["role_label"] == "api" for n in listed)
+
+
+def test_invalid_node_image_rejected(client):
+    tid = client.post("/topologies", json=TOPO_BODY).json()["id"]
+    r = client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "bad",
+            "node_type": NodeType.HOST.value,
+            "image": "not valid image!!!",
+            "config": None,
+        },
+    )
+    assert r.status_code == 422
+
+
+def test_invalid_ports_rejected(client):
+    tid = client.post("/topologies", json=TOPO_BODY).json()["id"]
+    r = client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "bad",
+            "node_type": NodeType.HOST.value,
+            "config": {"ports": [{"port": 99999}]},
+        },
+    )
+    assert r.status_code == 422
+
+
+def test_runtime_access_shows_env_and_health(client):
+    tid = _two_node_topology(client, custom=True)
+    did = client.post(f"/topologies/{tid}/deploy").json()["id"]
+    nodes = client.get(f"/deployments/{did}/runtime/nodes").json()["nodes"]
+    custom = next(n for n in nodes if n.get("name") == "custom-api")
+    meta = custom.get("metadata") or {}
+    assert meta.get("env")
+    assert meta.get("health_check_path") == "/"
+    assert meta.get("intended_ip") == "10.8.0.12"
+
+
 def test_legacy_topology_still_deploys(client):
     tid = _two_node_topology(client, custom=False)
     r = client.post(f"/topologies/{tid}/deploy")

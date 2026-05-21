@@ -159,6 +159,7 @@ function ResourceTable({ rows }: { rows: RuntimeAccessResourceRow[] }) {
             <th className="py-2 pr-3 font-medium">Ports</th>
             <th className="py-2 pr-3 font-medium">Intent IP</th>
             <th className="py-2 pr-3 font-medium">Runtime IP</th>
+            <th className="py-2 pr-3 font-medium">Env</th>
             <th className="py-2 pr-3 font-medium">Terminal</th>
             <th className="py-2 pr-3 font-medium">Internal URL</th>
             <th className="py-2 font-medium">External URL</th>
@@ -179,6 +180,9 @@ function ResourceTable({ rows }: { rows: RuntimeAccessResourceRow[] }) {
                 <td className="py-2 pr-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400">{formatPorts(r.ports)}</td>
                 <td className="py-2 pr-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400">{meta.intendedIp ?? '—'}</td>
                 <td className="py-2 pr-3 font-mono text-[11px] text-emerald-800 dark:text-emerald-300">{meta.runtimeIp ?? '—'}</td>
+                <td className="max-w-[8rem] truncate py-2 pr-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400" title={meta.env}>
+                  {meta.env ?? '—'}
+                </td>
                 <td className="py-2 pr-3 text-xs">{terminalOk ? 'yes' : 'no'}</td>
                 <td className="py-2 pr-3 break-all font-mono text-[11px] text-emerald-800 dark:text-emerald-300">
                   {r.internal_url ?? '—'}

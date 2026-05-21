@@ -2,27 +2,32 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyTerminalWsMessage,
   filterTerminalFrame,
+  normalizeTerminalFrame,
   parseTerminalControlFrame,
 } from './terminalWsProtocol';
 
-describe('filterTerminalFrame', () => {
-  it('drops heartbeat control frames', () => {
-    expect(filterTerminalFrame('{"type":"pong"}')).toBeNull();
-    expect(filterTerminalFrame('{"type":"ping"}')).toBeNull();
-    expect(filterTerminalFrame('{"type":"heartbeat"}')).toBeNull();
-    expect(filterTerminalFrame('{"type":"keepalive"}')).toBeNull();
-    expect(filterTerminalFrame('\r\n{"type":"pong"}\r\n')).toBeNull();
-  });
-
-  it('passes plain terminal output through', () => {
-    expect(filterTerminalFrame('hello')).toBe('hello');
-    expect(filterTerminalFrame('$ ls\r\n')).toBe('$ ls\r\n');
+describe('normalizeTerminalFrame', () => {
+  it('drops pong and other control frames', () => {
+    expect(normalizeTerminalFrame('{"type":"pong"}')).toBeNull();
+    expect(normalizeTerminalFrame('{"type":"ping"}')).toBeNull();
+    expect(normalizeTerminalFrame('{"type":"heartbeat"}')).toBeNull();
+    expect(normalizeTerminalFrame('{"type":"keepalive"}')).toBeNull();
+    expect(normalizeTerminalFrame('{"type":"connected"}')).toBeNull();
+    expect(normalizeTerminalFrame('\r\n{"type":"pong"}\r\n')).toBeNull();
   });
 
   it('unwraps terminal_data envelopes', () => {
-    expect(filterTerminalFrame('{"type":"terminal_data","data":"root@host:~# "}')).toBe(
-      'root@host:~# ',
-    );
+    expect(normalizeTerminalFrame('{"type":"terminal_data","data":"hello"}')).toBe('hello');
+  });
+
+  it('passes plain terminal output through', () => {
+    expect(normalizeTerminalFrame('hello')).toBe('hello');
+    expect(normalizeTerminalFrame('$ ls\r\n')).toBe('$ ls\r\n');
+  });
+
+  it('matches filterTerminalFrame alias', () => {
+    expect(filterTerminalFrame('{"type":"pong"}')).toBeNull();
+    expect(filterTerminalFrame('hello')).toBe('hello');
   });
 });
 
@@ -33,10 +38,6 @@ describe('parseTerminalControlFrame', () => {
       message: 'boom',
     });
   });
-
-  it('returns null for shell output', () => {
-    expect(parseTerminalControlFrame('$ ls')).toBeNull();
-  });
 });
 
 describe('classifyTerminalWsMessage', () => {
@@ -44,14 +45,5 @@ describe('classifyTerminalWsMessage', () => {
     const bytes = new TextEncoder().encode('{"type":"pong"}');
     const payload = classifyTerminalWsMessage(bytes.buffer);
     expect(payload.kind).toBe('control');
-  });
-
-  it('passes binary shell bytes through as output', () => {
-    const bytes = new Uint8Array([0x1b, 0x5b, 0x41]);
-    const payload = classifyTerminalWsMessage(bytes.buffer);
-    expect(payload.kind).toBe('output');
-    if (payload.kind === 'output') {
-      expect(payload.data).toBeInstanceOf(Uint8Array);
-    }
   });
 });

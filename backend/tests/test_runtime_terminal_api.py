@@ -176,6 +176,31 @@ def test_readable_recv_uses_stdlib_select_not_sqlalchemy(monkeypatch):
     assert select_calls
 
 
+def test_handle_control_message_ping_returns_pong():
+    from unittest.mock import AsyncMock
+
+    from app.services.runtime_terminal_service import _handle_control_message
+
+    ws = AsyncMock()
+    assert asyncio.run(_handle_control_message(ws, '{"type":"ping"}', api=None, exec_id=None))
+    ws.send_text.assert_called_once()
+    assert "pong" in ws.send_text.call_args[0][0]
+
+
+def test_handle_control_message_pong_not_forwarded():
+    from unittest.mock import AsyncMock
+
+    from app.services.runtime_terminal_service import (
+        _chunk_is_control_json,
+        _handle_control_message,
+    )
+
+    ws = AsyncMock()
+    assert asyncio.run(_handle_control_message(ws, '{"type":"pong"}', api=None, exec_id=None))
+    ws.send_text.assert_not_called()
+    assert _chunk_is_control_json(b'{"type":"pong"}')
+
+
 def test_bridge_docker_socket_startup_no_select_attribute_error(monkeypatch):
     """Bridge must start runner->browser and browser->runner without select.select crash."""
     from unittest.mock import AsyncMock

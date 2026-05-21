@@ -9,8 +9,7 @@ import {
   terminalWebSocketUrl,
 } from '../../api/runtimeTerminal';
 import {
-  filterTerminalFrame,
-  parseTerminalControlFrame,
+  writeTerminalWsPayload,
   type TerminalControlFrame,
 } from '../../api/terminalWsProtocol';
 import type { RuntimeAccessResourceRow } from '../../types/runtime';
@@ -249,34 +248,9 @@ export function RuntimeTerminalTab({
         ws.onmessage = (ev) => {
           const t = termRef.current;
           if (!t) return;
-
-          if (ev.data instanceof ArrayBuffer) {
-            const bytes = new Uint8Array(ev.data);
-            const text = new TextDecoder().decode(bytes);
-            const frame = parseTerminalControlFrame(text);
-            if (frame) {
-              applyControlFrame(frame, ws);
-              return;
-            }
-            const filtered = filterTerminalFrame(text);
-            if (filtered === null) return;
-            if (filtered !== text) {
-              t.write(filtered);
-              return;
-            }
-            t.write(bytes);
-            return;
-          }
-
-          const text = String(ev.data);
-          const frame = parseTerminalControlFrame(text);
-          if (frame) {
-            applyControlFrame(frame, ws);
-            return;
-          }
-          const out = filterTerminalFrame(text);
-          if (out === null) return;
-          t.write(out);
+          writeTerminalWsPayload(t, ev.data as string | ArrayBuffer, {
+            onControl: (frame) => applyControlFrame(frame, ws),
+          });
         };
 
         ws.onclose = (ev) => {

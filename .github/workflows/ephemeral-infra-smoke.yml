@@ -1,10 +1,13 @@
 # Ephemeral EC2 + Terraform apply → deploy → smoke → terraform destroy (always).
-# PR / manual only — not production `main`. See docs/EPHEMERAL_CI_ENVIRONMENTS.md and docs/CICD_DEPLOYMENT.md (Step 31).
+# PR / manual only — not production. Expensive AWS path; not run on every branch push.
+# See docs/EPHEMERAL_CI_ENVIRONMENTS.md and docs/CICD_DEPLOYMENT.md (Step 31).
 
 name: Ephemeral infra smoke
 
 on:
   pull_request:
+    branches:
+      - "**"
   workflow_dispatch:
 
 permissions:

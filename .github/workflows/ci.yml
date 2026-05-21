@@ -1,9 +1,14 @@
 name: CI
 
+# CI runs on every branch push and on all pull requests so feature branches are
+# validated before merge. Production deploy is separate (manual workflow_dispatch).
 on:
   push:
-    branches: [main]
+    branches:
+      - "**"
   pull_request:
+    branches:
+      - "**"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

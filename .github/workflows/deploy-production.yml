@@ -1,11 +1,12 @@
-# Production: push to main → Terraform (S3, persistent EC2) → EC2 Compose (Caddy HTTPS on custom API domain + HTTP smoke) → Vercel.
+# Production: manual deploy only (workflow_dispatch). Checks out the branch you select
+# in the Actions UI (feature branches OK for pre-merge testing). Does not auto-run on
+# push — use CI for every branch; merge to main when ready, then deploy manually.
+# Terraform (S3, persistent EC2) → EC2 Compose (Caddy HTTPS) → smoke → Vercel.
 # Does not destroy infra. See docs/CICD_DEPLOYMENT.md (Step 31: main vs PR workflows).
 
 name: Deploy production
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

@@ -24,7 +24,7 @@ from app.providers.runtime_types import (
     RuntimeNetworkInterfaceRecord,
     RuntimeNetworkRecord,
 )
-from app.services.deployment_planner import DeploymentPlan
+from app.services.deployment_planner import DeploymentPlan, PlanNode
 from app.services.runtime_access_payload import (
     build_docker_runtime_access_from_plan,
     build_fake_runtime_access_from_plan,
@@ -134,6 +134,31 @@ def _default_command(image_ref: str) -> list[str] | None:
 
 def _resolve_image(plan_node_image: str | None) -> str:
     return (plan_node_image or "").strip() or "alpine:latest"
+
+
+def _resolve_forwarding_role(pn: PlanNode) -> str:
+    rc = pn.runtime_config
+    if rc and rc.role_label:
+        return rc.role_label
+    if pn.node_type == "router":
+        return "segment_router"
+    return "leaf"
+
+
+def _resolve_container_command(pn: PlanNode, image_ref: str) -> list[str] | None:
+    rc = pn.runtime_config
+    if rc and rc.command:
+        return list(rc.command)
+    if pn.node_type == "router":
+        return ["sleep", "infinity"]
+    return _default_command(image_ref)
+
+
+def _resolve_container_env(pn: PlanNode) -> dict[str, str] | None:
+    rc = pn.runtime_config
+    if rc and rc.env:
+        return dict(rc.env)
+    return None
 
 
 def _default_bridge_network_name() -> str:
@@ -906,10 +931,9 @@ class DockerRuntimeProvider(RuntimeProvider):
             events.append((DeploymentEventLevel.INFO, f"Pulling/using image: {image_ref} ({cname})"))
             _remove_container_if_exists(self._client, cname)
 
-            if is_router:
-                cmd = ["sleep", "infinity"]
-            else:
-                cmd = _default_command(image_ref)
+            cmd = _resolve_container_command(pn, image_ref)
+            env = _resolve_container_env(pn)
+            forwarding_role = _resolve_forwarding_role(pn)
 
             try:
                 self._client.images.pull(image_ref)
@@ -933,7 +957,7 @@ class DockerRuntimeProvider(RuntimeProvider):
                 pn.id,
                 project_id=plan.project_id,
                 deployment_id=plan.deployment_id,
-                forwarding_role="segment_router" if is_router else "leaf",
+                forwarding_role=forwarding_role,
             )
             if is_router:
                 host_conf = api.create_host_config(
@@ -962,6 +986,7 @@ class DockerRuntimeProvider(RuntimeProvider):
                     labels=labels,
                     networking_config=net_cfg,
                     host_config=hc,
+                    environment=env,
                     detach=True,
                 )
                 return r["Id"]
@@ -1087,6 +1112,8 @@ class DockerRuntimeProvider(RuntimeProvider):
         labels: dict[str, str],
         net_name: str,
         ipv4: str | None,
+        *,
+        environment: dict[str, str] | None = None,
     ):
         """Create on the CNS bridge using only ``networking_config`` (low-level API).
 
@@ -1102,6 +1129,7 @@ class DockerRuntimeProvider(RuntimeProvider):
             name=cname,
             labels=labels,
             networking_config=net_cfg,
+            environment=environment,
             detach=True,
         )
         cid = resp["Id"]
@@ -1124,7 +1152,9 @@ class DockerRuntimeProvider(RuntimeProvider):
 
             _remove_container_if_exists(self._client, cname)
 
-            cmd = _default_command(image_ref)
+            cmd = _resolve_container_command(pn, image_ref)
+            env = _resolve_container_env(pn)
+            forwarding_role = _resolve_forwarding_role(pn)
             try:
                 self._client.images.pull(image_ref)
             except (APIError, ImageNotFound) as exc:
@@ -1154,12 +1184,11 @@ class DockerRuntimeProvider(RuntimeProvider):
                         pn.id,
                         project_id=plan.project_id,
                         deployment_id=plan.deployment_id,
-                        forwarding_role=(
-                            "segment_router" if pn.node_type == "router" else "leaf"
-                        ),
+                        forwarding_role=forwarding_role,
                     ),
                     net_name,
                     ipv4_for_cfg,
+                    environment=env,
                 )
                 events.append(
                     (DeploymentEventLevel.INFO, f"Container started: {cname}"),

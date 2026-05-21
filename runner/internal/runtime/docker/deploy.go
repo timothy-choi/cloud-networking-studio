@@ -118,6 +118,111 @@ func defaultCommand(image string) []string {
 	return []string{"sleep", "infinity"}
 }
 
+func resolveForwardingRole(pn model.PlanNode) string {
+	if pn.RoleLabel != nil {
+		if s := strings.TrimSpace(*pn.RoleLabel); s != "" {
+			return s
+		}
+	}
+	if strings.EqualFold(pn.NodeType, "router") {
+		return "segment_router"
+	}
+	return "leaf"
+}
+
+func resolveContainerCommand(pn model.PlanNode, imageRef string) []string {
+	if len(pn.Command) > 0 {
+		return pn.Command
+	}
+	if strings.EqualFold(pn.NodeType, "router") {
+		return []string{"sleep", "infinity"}
+	}
+	return defaultCommand(imageRef)
+}
+
+func effectivePorts(pn model.PlanNode) []model.RuntimePort {
+	if len(pn.Ports) > 0 {
+		out := make([]model.RuntimePort, 0, len(pn.Ports))
+		for _, p := range pn.Ports {
+			tp := p.TargetPort
+			if tp == 0 {
+				tp = p.Port
+			}
+			proto := strings.TrimSpace(p.Protocol)
+			if proto == "" {
+				proto = "TCP"
+			}
+			out = append(out, model.RuntimePort{Port: p.Port, TargetPort: tp, Protocol: strings.ToUpper(proto)})
+		}
+		return out
+	}
+	return []model.RuntimePort{{Port: 80, TargetPort: 80, Protocol: "TCP"}}
+}
+
+func primaryPort(pn model.PlanNode) int {
+	ports := effectivePorts(pn)
+	if len(ports) == 0 {
+		return 80
+	}
+	return ports[0].Port
+}
+
+func envSliceFromPlanNode(pn model.PlanNode) []string {
+	if len(pn.Env) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(pn.Env))
+	for k, v := range pn.Env {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s=%s", k, v))
+	}
+	return out
+}
+
+func planNodeRuntimeMeta(pn model.PlanNode, imageRef string, cmd []string) map[string]string {
+	meta := map[string]string{}
+	if pn.RoleLabel != nil {
+		if s := strings.TrimSpace(*pn.RoleLabel); s != "" {
+			meta["role_label"] = s
+		}
+	}
+	if s := strings.TrimSpace(imageRef); s != "" {
+		meta["image"] = s
+	}
+	if len(cmd) > 0 {
+		meta["command"] = strings.Join(cmd, " ")
+	}
+	if pn.Description != nil {
+		if s := strings.TrimSpace(*pn.Description); s != "" {
+			meta["description"] = s
+		}
+	}
+	if pn.TerminalEnabled != nil {
+		if *pn.TerminalEnabled {
+			meta["terminal_enabled"] = "true"
+		} else {
+			meta["terminal_enabled"] = "false"
+		}
+	}
+	if pn.HealthCheck != nil {
+		if path, ok := pn.HealthCheck["path"]; ok {
+			meta["health_check_path"] = fmt.Sprint(path)
+		}
+		if port, ok := pn.HealthCheck["port"]; ok {
+			meta["health_check_port"] = fmt.Sprint(port)
+		}
+	}
+	if pn.IPAddress != nil {
+		if s := strings.TrimSpace(*pn.IPAddress); s != "" {
+			meta["intended_ip"] = s
+		}
+	}
+	return meta
+}
+
 func ipamFromSubnet(cidr *string) *docker.IPAMOptions {
 	if cidr == nil {
 		return nil
@@ -267,15 +372,15 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 	for _, pn := range req.Nodes {
 		cname := ContainerName(pn.ID, pn.Name)
 		imageRef := resolveImage(pn.Image)
-		role := "leaf"
-		if strings.EqualFold(pn.NodeType, "router") {
-			role = "segment_router"
-		}
+		role := resolveForwardingRole(pn)
 		labels := nodeLabels(req, pn.ID, role)
 
 		removeContainerIfExists(cli, cname)
 
-		cmd := defaultCommand(imageRef)
+		cmd := resolveContainerCommand(pn, imageRef)
+		ports := effectivePorts(pn)
+		portNum := primaryPort(pn)
+		env := envSliceFromPlanNode(pn)
 		repo, tag := docker.ParseRepositoryTag(imageRef)
 		if tag == "" {
 			tag = "latest"
@@ -299,6 +404,7 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 				Image:  imageRef,
 				Labels: labels,
 				Cmd:    cmd,
+				Env:    env,
 			},
 			HostConfig: host,
 			NetworkingConfig: &docker.NetworkingConfig{
@@ -321,8 +427,9 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 		}
 		events = append(events, ev("info", fmt.Sprintf("Container started: %s", cname)))
 		nid := strings.TrimSpace(pn.ID)
-		internal := fmt.Sprintf("http://%s:80", cname)
-		metaBase := map[string]string{"container_id": ctr.ID}
+		internal := fmt.Sprintf("http://%s:%d", cname, portNum)
+		metaBase := planNodeRuntimeMeta(pn, imageRef, cmd)
+		metaBase["container_id"] = ctr.ID
 		if ins, err := cli.InspectContainerWithOptions(docker.InspectContainerOptions{Context: ctx, ID: ctr.ID}); err == nil && ins.NetworkSettings != nil && ins.NetworkSettings.Ports != nil {
 			var parts []string
 			for port, bindings := range ins.NetworkSettings.Ports {
@@ -356,6 +463,7 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 			RuntimeName:        cname,
 			Status:             "running",
 			NamespaceOrNetwork: netName,
+			Ports:              ports,
 			InternalURL:        internal,
 			Metadata:           metaBase,
 		})
@@ -366,7 +474,7 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 			RuntimeName:        cname,
 			Status:             "running",
 			NamespaceOrNetwork: netName,
-			Ports:              []model.RuntimePort{{Port: 80, TargetPort: 80, Protocol: "TCP"}},
+			Ports:              ports,
 			InternalURL:        internal,
 			Metadata:           metaBase,
 		})

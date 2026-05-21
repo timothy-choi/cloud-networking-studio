@@ -8,6 +8,13 @@ type PlanNode struct {
 	Image      *string `json:"image"`
 	IPAddress  *string `json:"ip_address"`
 	NodeType   string  `json:"node_type"`
+	RoleLabel  *string                `json:"role_label,omitempty"`
+	Command    []string               `json:"command,omitempty"`
+	Ports      []RuntimePort          `json:"ports,omitempty"`
+	Env        map[string]string      `json:"env,omitempty"`
+	TerminalEnabled *bool               `json:"terminal_enabled,omitempty"`
+	HealthCheck map[string]interface{} `json:"health_check,omitempty"`
+	Description *string                `json:"description,omitempty"`
 }
 
 type PlanLink struct {

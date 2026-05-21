@@ -42,6 +42,7 @@ import type {
 } from '../../types/topology';
 import { EDITOR_POSITION_KEY } from '../../types/topology';
 import { DeploymentPlanningPanel } from './DeploymentPlanningPanel';
+import { AddNodeModal } from './AddNodeModal';
 import { TopologyInspector } from './TopologyInspector';
 import { TopologyToolbar } from './TopologyToolbar';
 import { applyTopologyTemplate, resetTopologyToDemoLab } from './templates';
@@ -190,6 +191,7 @@ function TopologyWorkspaceInner({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [linkMode, setLinkMode] = useState(false);
   const [linkDraftSourceId, setLinkDraftSourceId] = useState<string | null>(null);
+  const [addNodeType, setAddNodeType] = useState<TopologyNodeResponse['node_type'] | null>(null);
   const { selectedNodeId, selectedEdgeId, setSelectedNodeId, setSelectedEdgeId, onSelectionChange } =
     useTopologyEditor();
 
@@ -394,26 +396,13 @@ function TopologyWorkspaceInner({
     if (linkMode) setLinkDraftSourceId(null);
   }, [linkMode]);
 
-  const addNodeOfType = async (nodeType: TopologyNodeResponse['node_type']) => {
-    const defaults: Record<string, { image: string | null }> = {
-      host: { image: 'alpine:latest' },
-      generic: { image: 'nginx:alpine' },
-      router: { image: 'alpine:latest' },
-      switch: { image: 'alpine:latest' },
-      gateway: { image: 'alpine:latest' },
-    };
-    const namePrefix = nodeType === 'generic' ? 'service' : nodeType;
-    await run('add-node', async () => {
-      await topoApi.createNode(topologyId, {
-        name: `${namePrefix}-${Math.random().toString(36).slice(2, 6)}`,
-        node_type: nodeType,
-        image: defaults[nodeType]?.image ?? null,
-        ip_address: null,
-        config: {
-          [EDITOR_POSITION_KEY]: { x: 320 + Math.random() * 80, y: 220 + Math.random() * 80 },
-        },
-      });
-    });
+  const openAddNode = (nodeType: TopologyNodeResponse['node_type']) => {
+    if (readOnlyTopology || globalBusy || busy) return;
+    setAddNodeType(nodeType);
+  };
+
+  const addNodeOfType = (nodeType: TopologyNodeResponse['node_type']) => {
+    openAddNode(nodeType);
   };
 
   const autoLayout = async () => {
@@ -538,6 +527,16 @@ function TopologyWorkspaceInner({
 
   return (
     <div className="flex flex-col gap-3">
+      <AddNodeModal
+        open={addNodeType != null}
+        initialNodeType={addNodeType ?? 'host'}
+        onClose={() => setAddNodeType(null)}
+        onSubmit={async (body) => {
+          await run('add-node', async () => {
+            await topoApi.createNode(topologyId, body);
+          });
+        }}
+      />
       {note && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-950 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100">
           {note}

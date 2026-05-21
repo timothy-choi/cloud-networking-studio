@@ -13,6 +13,7 @@ import {
   type TerminalControlFrame,
 } from '../../api/terminalWsProtocol';
 import type { RuntimeAccessResourceRow } from '../../types/runtime';
+import { isTerminalEnabledForResource } from '../../lib/nodeRuntimeConfig';
 
 type ConnState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'error';
 
@@ -77,7 +78,7 @@ export function RuntimeTerminalTab({
   const intentionalCloseRef = useRef(false);
   const onDataDisposeRef = useRef<(() => void) | null>(null);
 
-  const selectable = services.filter((s) => s.id);
+  const selectable = services.filter((s) => s.id && isTerminalEnabledForResource(s.metadata ?? undefined));
 
   useEffect(() => {
     serviceIdRef.current = serviceId;

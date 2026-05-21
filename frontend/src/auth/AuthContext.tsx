@@ -2,8 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useNavigate } from 'react-router-dom';
 import type { UserPublic } from '../types/auth';
 import { fetchMe, loginUser, logoutApi, registerUser } from '../api/auth';
-import { getStoredAccessToken, setStoredAccessToken } from '../api/client';
-import { clearAuthSessionStorage } from './storage';
+import { clearAuthSessionStorage, getStoredAccessToken, setStoredAccessToken } from './storage';
 import { resolveUserFromSession } from './sessionResolve';
 
 interface AuthState {
@@ -29,6 +28,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { user: u, clearStorage } = await resolveUserFromSession(getStoredAccessToken, fetchMe);
     if (clearStorage) {
       clearAuthSessionStorage();
+      setStoredAccessToken(null);
     }
     setUser(u);
   }, []);
@@ -40,6 +40,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { user: u, clearStorage } = await resolveUserFromSession(getStoredAccessToken, fetchMe);
       if (clearStorage) {
         clearAuthSessionStorage();
+        setStoredAccessToken(null);
       }
       if (!cancelled) {
         setUser(u);
@@ -65,6 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearSession = useCallback(() => {
     clearAuthSessionStorage();
+    setStoredAccessToken(null);
     setUser(null);
     navigate('/login', { replace: true });
   }, [navigate]);
@@ -74,6 +76,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await logoutApi();
     } catch {
       clearAuthSessionStorage();
+      setStoredAccessToken(null);
     }
     setUser(null);
     navigate('/login', { replace: true });

@@ -79,15 +79,37 @@ class GoRunnerClient:
     def deployment_request_body(self, plan: DeploymentPlan) -> dict[str, Any]:
         nodes: list[dict[str, Any]] = []
         for n in plan.nodes:
-            nodes.append(
-                {
-                    "id": str(n.id),
-                    "name": n.name,
-                    "image": n.image,
-                    "ip_address": n.ip_address,
-                    "node_type": n.node_type,
-                }
-            )
+            row: dict[str, Any] = {
+                "id": str(n.id),
+                "name": n.name,
+                "image": n.image,
+                "ip_address": n.ip_address,
+                "node_type": n.node_type,
+            }
+            rc = n.runtime_config
+            if rc:
+                if rc.role_label:
+                    row["role_label"] = rc.role_label
+                if rc.command:
+                    row["command"] = rc.command
+                if rc.ports:
+                    row["ports"] = [
+                        {
+                            "port": p.port,
+                            "target_port": p.target_port or p.port,
+                            "protocol": p.protocol,
+                        }
+                        for p in rc.ports
+                    ]
+                if rc.env:
+                    row["env"] = rc.env
+                if rc.terminal_enabled is not None:
+                    row["terminal_enabled"] = rc.terminal_enabled
+                if rc.health_check:
+                    row["health_check"] = rc.health_check
+                if rc.description:
+                    row["description"] = rc.description
+            nodes.append(row)
         plan_links: list[dict[str, Any]] = []
         for pl in plan.plan_links:
             plan_links.append(

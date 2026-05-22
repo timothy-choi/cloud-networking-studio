@@ -10,6 +10,12 @@ import docker
 from docker.errors import NotFound
 
 from app.services.deployment_planner import DeploymentPlan
+from app.services.node_runtime_config import (
+    NodeRuntimeConfig,
+    primary_port,
+    runtime_access_ports_payload,
+    runtime_metadata_from_node,
+)
 
 
 def topology_network_name(topology_id: UUID) -> str:
@@ -22,6 +28,48 @@ def segment_docker_network_name(topology_id: UUID, logical_network_name: str) ->
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", logical_network_name.strip().lower()).strip("-")[:22]
     slug = slug or "seg"
     return f"cns-sg-{short}-{slug}"[:63]
+
+
+def _plan_node_runtime(pn) -> NodeRuntimeConfig:
+    rc = getattr(pn, "runtime_config", None)
+    if isinstance(rc, NodeRuntimeConfig):
+        return rc
+    return NodeRuntimeConfig()
+
+
+def _resource_row_for_plan_node(
+    pn,
+    *,
+    net: str,
+    meta: dict[str, str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build node + service runtime_access rows for one plan node."""
+    runtime = _plan_node_runtime(pn)
+    port = primary_port(runtime)
+    cname = container_name(pn.id, pn.name)
+    internal = f"http://{cname}:{port}"
+    ports = runtime_access_ports_payload(runtime)
+    row_meta = {
+        **runtime_metadata_from_node(
+            image=pn.image,
+            ip_address=pn.ip_address,
+            runtime=runtime,
+        ),
+        **meta,
+    }
+    nid = str(pn.id)
+    row_base: dict[str, Any] = {
+        "name": pn.name,
+        "runtime_name": cname,
+        "status": "running",
+        "namespace_or_network": net,
+        "internal_url": internal,
+        "ports": ports,
+        "metadata": row_meta,
+    }
+    node_row = {"type": "node", "node_id": nid, **row_base}
+    service_row = {"type": "service", "service_id": nid, **row_base}
+    return node_row, service_row
 
 
 def container_name(node_id: UUID, node_name: str) -> str:
@@ -101,10 +149,10 @@ def build_docker_runtime_access_from_plan(
             node_net[pn.id] = primary_net
 
     for pn in plan.nodes:
-        cname = container_name(pn.id, pn.name)
         net = node_net.get(pn.id, primary_net)
         meta: dict[str, str] = {"topology_id": str(topo_id)}
         try:
+            cname = container_name(pn.id, pn.name)
             ctr = client.containers.get(cname)
             ctr.reload()
             meta["container_id"] = (ctr.id or "")[:64]
@@ -113,23 +161,9 @@ def build_docker_runtime_access_from_plan(
                 meta["actual_runtime_ip"] = actual
         except NotFound:
             pass
-        if pn.ip_address and str(pn.ip_address).strip():
-            meta["intended_ip"] = str(pn.ip_address).strip()
-
-        internal = f"http://{cname}:80"
-        ports = [{"port": 80, "target_port": 80, "protocol": "TCP"}]
-        nid = str(pn.id)
-        row_base: dict[str, Any] = {
-            "name": pn.name,
-            "runtime_name": cname,
-            "status": "running",
-            "namespace_or_network": net,
-            "internal_url": internal,
-            "ports": ports,
-            "metadata": meta,
-        }
-        resources.append({"type": "node", "node_id": nid, **row_base})
-        resources.append({"type": "service", "service_id": nid, **row_base})
+        node_row, service_row = _resource_row_for_plan_node(pn, net=net, meta=meta)
+        resources.append(node_row)
+        resources.append(service_row)
 
     ns_net = primary_net
     if plan.segmented_networks and plan.nodes:
@@ -163,24 +197,12 @@ def build_fake_runtime_access_from_plan(plan: DeploymentPlan) -> dict[str, Any]:
         }
     ]
     for pn in plan.nodes:
-        cname = container_name(pn.id, pn.name)
         meta: dict[str, str] = {"topology_id": str(topo_id), "simulated": "true"}
         if pn.ip_address and str(pn.ip_address).strip():
-            meta["intended_ip"] = str(pn.ip_address).strip()
             meta["actual_runtime_ip"] = str(pn.ip_address).strip()
-        internal = f"http://{cname}:80"
-        nid = str(pn.id)
-        row: dict[str, Any] = {
-            "name": pn.name,
-            "runtime_name": cname,
-            "status": "running",
-            "namespace_or_network": net,
-            "internal_url": internal,
-            "ports": [{"port": 80, "target_port": 80, "protocol": "TCP"}],
-            "metadata": meta,
-        }
-        resources.append({"type": "node", "node_id": nid, **row})
-        resources.append({"type": "service", "service_id": nid, **row})
+        node_row, service_row = _resource_row_for_plan_node(pn, net=net, meta=meta)
+        resources.append(node_row)
+        resources.append(service_row)
     return {
         "deployment_id": str(dep_id),
         "topology_id": str(topo_id),

@@ -69,6 +69,70 @@ func TestDeploy_MinimalCreatesNamespace(t *testing.T) {
 	}
 }
 
+func TestDeploy_CustomNodeConfig(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	pid := "11111111-1111-1111-1111-111111111111"
+	top := "22222222-2222-2222-2222-222222222222"
+	dep := "33333333-3333-3333-3333-333333333333"
+	img := "busybox:latest"
+	role := "api"
+	term := false
+	desc := "custom"
+	req := &model.DeploymentRequest{
+		DeploymentID:      dep,
+		ProjectID:         &pid,
+		TopologyID:        top,
+		RuntimeTarget:     "kubernetes",
+		NetworkingMode:    "bridge",
+		SegmentedNetworks: false,
+		Nodes: []model.PlanNode{
+			{
+				ID:              "node-1",
+				Name:            "api",
+				NodeType:        "generic",
+				Image:           &img,
+				RoleLabel:       &role,
+				Command:         []string{"sleep", "infinity"},
+				Ports:           []model.RuntimePort{{Port: 8080, TargetPort: 8080, Protocol: "TCP"}},
+				Env:             map[string]string{"LAB": "1"},
+				TerminalEnabled: &term,
+				Description:     &desc,
+				HealthCheck:     map[string]interface{}{"path": "/healthz", "port": 8080},
+			},
+		},
+	}
+	resp := Deploy(ctx, client, req)
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %v", *resp.Error)
+	}
+	if resp.Status != "succeeded" {
+		t.Fatalf("status %q", resp.Status)
+	}
+	var svcRes *model.RuntimeAccessResource
+	for i := range resp.RuntimeAccess.Resources {
+		if resp.RuntimeAccess.Resources[i].Type == "service" {
+			svcRes = &resp.RuntimeAccess.Resources[i]
+			break
+		}
+	}
+	if svcRes == nil {
+		t.Fatal("missing service resource")
+	}
+	if len(svcRes.Ports) != 1 || svcRes.Ports[0].Port != 8080 {
+		t.Fatalf("ports %+v", svcRes.Ports)
+	}
+	if svcRes.Metadata["role_label"] != "api" {
+		t.Fatalf("metadata %+v", svcRes.Metadata)
+	}
+	if svcRes.Metadata["env"] == "" {
+		t.Fatalf("expected env metadata")
+	}
+	if !strings.Contains(svcRes.InternalURL, ":8080") {
+		t.Fatalf("internal url %q", svcRes.InternalURL)
+	}
+}
+
 func TestDeploy_SegmentedRejected(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()

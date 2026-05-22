@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
 
+import {
+  mergeNodeRuntimeIntoConfig,
+  readNodeRuntimeFields,
+  validateNodeRuntimeFields,
+  type NodeRuntimeFields,
+} from '../../lib/nodeRuntimeConfig';
 import type {
   TopologyLinkResponse,
   TopologyLinkUpdate,
@@ -7,6 +13,7 @@ import type {
   TopologyNodeUpdate,
   TopologyResponse,
 } from '../../types/topology';
+import { EDITOR_POSITION_KEY } from '../../types/topology';
 
 export interface TopologyInspectorProps {
   topology: TopologyResponse | null;
@@ -89,21 +96,15 @@ function NodeEditForm({
   const [nodeType, setNodeType] = useState<(typeof NODE_TYPES)[number]>(node.node_type);
   const [image, setImage] = useState(node.image ?? '');
   const [ip, setIp] = useState(node.ip_address ?? '');
-  const [metaJson, setMetaJson] = useState(
-    node.config && Object.keys(node.config).length ? JSON.stringify(node.config, null, 2) : '{}',
-  );
+  const [runtime, setRuntime] = useState<NodeRuntimeFields>(() => readNodeRuntimeFields(node));
   const [saving, setSaving] = useState(false);
 
-  // Only re-hydrate from the server when switching nodes — not on every poll (new object identity),
-  // which was resetting the IP field while the user typed.
   useEffect(() => {
     setNodeName(node.name);
     setNodeType(node.node_type);
     setImage(node.image ?? '');
     setIp(node.ip_address ?? '');
-    setMetaJson(
-      node.config && Object.keys(node.config).length ? JSON.stringify(node.config, null, 2) : '{}',
-    );
+    setRuntime(readNodeRuntimeFields(node));
   }, [node.id]);
 
   return (
@@ -111,15 +112,17 @@ function NodeEditForm({
       className="mt-2 space-y-2"
       onSubmit={async (e) => {
         e.preventDefault();
-        let extra: Record<string, unknown>;
-        try {
-          const parsed: unknown = JSON.parse(metaJson || '{}');
-          extra = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
-        } catch {
-          alert('Node metadata must be valid JSON.');
+        const validation = validateNodeRuntimeFields(runtime);
+        if (validation) {
+          alert(validation);
           return;
         }
-        const mergedConfig = { ...(node.config ?? {}), ...extra };
+        const base = { ...(node.config ?? {}) };
+        const pos = base[EDITOR_POSITION_KEY];
+        const mergedConfig = mergeNodeRuntimeIntoConfig(base, runtime);
+        if (pos != null) {
+          mergedConfig[EDITOR_POSITION_KEY] = pos;
+        }
         setSaving(true);
         try {
           await onPatchNode({
@@ -136,6 +139,9 @@ function NodeEditForm({
         }
       }}
     >
+      <p className="text-[10px] leading-snug text-zinc-500">
+        Start from preset or create custom node — presets are editable defaults. Override any field below.
+      </p>
       <label className="block text-[11px] text-cns-field-label">
         Name
         <input
@@ -159,12 +165,29 @@ function NodeEditForm({
         </select>
       </label>
       <label className="block text-[11px] text-cns-field-label">
+        Role label
+        <input
+          className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+          value={runtime.role_label}
+          onChange={(ev) => setRuntime((r) => ({ ...r, role_label: ev.target.value }))}
+        />
+      </label>
+      <label className="block text-[11px] text-cns-field-label">
         Image
         <input
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
           value={image}
           onChange={(ev) => setImage(ev.target.value)}
           placeholder="nginx:alpine"
+        />
+      </label>
+      <label className="block text-[11px] text-cns-field-label">
+        Command
+        <input
+          className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+          value={runtime.command}
+          onChange={(ev) => setRuntime((r) => ({ ...r, command: ev.target.value }))}
+          placeholder="sleep infinity"
         />
       </label>
       <label className="block text-[11px] text-cns-field-label">
@@ -177,12 +200,48 @@ function NodeEditForm({
         />
       </label>
       <label className="block text-[11px] text-cns-field-label">
-        Config JSON (includes editor layout keys)
+        Ports JSON
         <textarea
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-[11px] leading-snug text-zinc-100"
-          rows={5}
-          value={metaJson}
-          onChange={(ev) => setMetaJson(ev.target.value)}
+          rows={2}
+          value={runtime.portsJson}
+          onChange={(ev) => setRuntime((r) => ({ ...r, portsJson: ev.target.value }))}
+          placeholder='[{"port":80,"target_port":80}]'
+        />
+      </label>
+      <label className="block text-[11px] text-cns-field-label">
+        Env JSON
+        <textarea
+          className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-[11px] leading-snug text-zinc-100"
+          rows={2}
+          value={runtime.envJson}
+          onChange={(ev) => setRuntime((r) => ({ ...r, envJson: ev.target.value }))}
+        />
+      </label>
+      <label className="flex items-center gap-2 text-[11px] text-cns-field-label">
+        <input
+          type="checkbox"
+          checked={runtime.terminal_enabled}
+          onChange={(ev) => setRuntime((r) => ({ ...r, terminal_enabled: ev.target.checked }))}
+        />
+        Terminal enabled
+      </label>
+      <label className="block text-[11px] text-cns-field-label">
+        Health check
+        <input
+          className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+          value={runtime.health_check}
+          onChange={(ev) => setRuntime((r) => ({ ...r, health_check: ev.target.value }))}
+          placeholder="/health"
+        />
+      </label>
+      <label className="block text-[11px] text-cns-field-label">
+        Notes
+        <textarea
+          className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+          rows={2}
+          value={runtime.description}
+          onChange={(ev) => setRuntime((r) => ({ ...r, description: ev.target.value }))}
         />
       </label>
       <button

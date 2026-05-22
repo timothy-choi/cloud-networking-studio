@@ -15,6 +15,7 @@ import {
 } from '../../api/runtimeExec';
 import { exposeDeploymentService, unexposeDeploymentService } from '../../api/serviceExposure';
 import { pickDefaultHttpTrafficTarget } from '../../lib/runtimeTrafficDefaults';
+import { isTerminalEnabledForResource, metadataDisplay } from '../../lib/nodeRuntimeConfig';
 import { Spinner } from '../Spinner';
 import { CopyButton } from './CopyButton';
 import { RuntimeMappingTab } from './RuntimeMappingTab';
@@ -148,32 +149,50 @@ function ResourceTable({ rows }: { rows: RuntimeAccessResourceRow[] }) {
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+      <table className="w-full min-w-[960px] border-collapse text-left text-sm">
         <thead>
           <tr className="border-b border-zinc-200 text-xs uppercase tracking-wide text-cns-label dark:border-zinc-700">
             <th className="py-2 pr-3 font-medium">Name</th>
-            <th className="py-2 pr-3 font-medium">Runtime name</th>
-            <th className="py-2 pr-3 font-medium">Status</th>
+            <th className="py-2 pr-3 font-medium">Role</th>
+            <th className="py-2 pr-3 font-medium">Image</th>
+            <th className="py-2 pr-3 font-medium">Command</th>
             <th className="py-2 pr-3 font-medium">Ports</th>
+            <th className="py-2 pr-3 font-medium">Intent IP</th>
+            <th className="py-2 pr-3 font-medium">Runtime IP</th>
+            <th className="py-2 pr-3 font-medium">Env</th>
+            <th className="py-2 pr-3 font-medium">Terminal</th>
             <th className="py-2 pr-3 font-medium">Internal URL</th>
             <th className="py-2 font-medium">External URL</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
-            <tr key={`${r.runtime_name}-${i}`} className="border-b border-zinc-100 dark:border-zinc-800">
-              <td className="py-2 pr-3 font-medium text-zinc-900 dark:text-zinc-100">{r.name}</td>
-              <td className="py-2 pr-3 font-mono text-xs text-zinc-700 dark:text-zinc-300">{r.runtime_name}</td>
-              <td className="py-2 pr-3 text-xs">{r.status ?? '—'}</td>
-              <td className="py-2 pr-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400">{formatPorts(r.ports)}</td>
-              <td className="py-2 pr-3 break-all font-mono text-[11px] text-emerald-800 dark:text-emerald-300">
-                {r.internal_url ?? '—'}
-              </td>
-              <td className="py-2 break-all font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
-                {r.external_url ?? '—'}
-              </td>
-            </tr>
-          ))}
+          {rows.map((r, i) => {
+            const meta = metadataDisplay(r.metadata ?? undefined);
+            const terminalOk = isTerminalEnabledForResource(r.metadata ?? undefined);
+            return (
+              <tr key={`${r.runtime_name}-${i}`} className="border-b border-zinc-100 dark:border-zinc-800">
+                <td className="py-2 pr-3 font-medium text-zinc-900 dark:text-zinc-100">{r.name}</td>
+                <td className="py-2 pr-3 text-xs text-zinc-600 dark:text-zinc-400">{meta.roleLabel ?? '—'}</td>
+                <td className="py-2 pr-3 font-mono text-[11px] text-zinc-700 dark:text-zinc-300">{meta.image ?? '—'}</td>
+                <td className="max-w-[10rem] truncate py-2 pr-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400" title={meta.command}>
+                  {meta.command ?? '—'}
+                </td>
+                <td className="py-2 pr-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400">{formatPorts(r.ports)}</td>
+                <td className="py-2 pr-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400">{meta.intendedIp ?? '—'}</td>
+                <td className="py-2 pr-3 font-mono text-[11px] text-emerald-800 dark:text-emerald-300">{meta.runtimeIp ?? '—'}</td>
+                <td className="max-w-[8rem] truncate py-2 pr-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400" title={meta.env}>
+                  {meta.env ?? '—'}
+                </td>
+                <td className="py-2 pr-3 text-xs">{terminalOk ? 'yes' : 'no'}</td>
+                <td className="py-2 pr-3 break-all font-mono text-[11px] text-emerald-800 dark:text-emerald-300">
+                  {r.internal_url ?? '—'}
+                </td>
+                <td className="py-2 break-all font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
+                  {r.external_url ?? '—'}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

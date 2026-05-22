@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/runtime/nodeconfig"
 )
 
 const cnsContainerName = "node"
@@ -49,17 +50,6 @@ func resolveImage(img *string) string {
 		return "alpine:latest"
 	}
 	return s
-}
-
-func defaultCommand(image string) []string {
-	il := strings.ToLower(image)
-	if strings.Contains(il, "busybox") {
-		return []string{"sh", "-c", "mkdir -p /www && printf 'ok\\n' >/www/index.html && exec httpd -f -p 80 -h /www"}
-	}
-	if strings.Contains(il, "nginx") {
-		return nil
-	}
-	return []string{"sleep", "infinity"}
 }
 
 func deploymentNameForNode(pn model.PlanNode) string {
@@ -151,7 +141,10 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 	for _, pn := range req.Nodes {
 		dname := deploymentNameForNode(pn)
 		img := resolveImage(pn.Image)
-		cmd := defaultCommand(img)
+		cmd := nodeconfig.ResolveContainerCommand(pn, img)
+		ports := nodeconfig.EffectivePorts(pn)
+		portNum := nodeconfig.PrimaryPort(pn)
+		role := nodeconfig.ResolveForwardingRole(pn)
 		podLabels := map[string]string{
 			"app":                     "cloud-networking-studio",
 			"topology_id":             strings.TrimSpace(req.TopologyID),
@@ -159,6 +152,7 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 			"cns.io/node-id":          strings.TrimSpace(pn.ID),
 			"cns.io/managed-by":       "cns-runner",
 			"cns.io/runtime-provider": "kubernetes",
+			"cns.io/forwarding-role":  role,
 		}
 		if pid := derefStr(req.ProjectID); pid != "" {
 			podLabels["project_id"] = pid
@@ -167,6 +161,49 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 		var cmdSlice []string
 		if cmd != nil {
 			cmdSlice = append(cmdSlice, cmd...)
+		}
+		var containerPorts []corev1.ContainerPort
+		for i, p := range ports {
+			name := "p"
+			if i == 0 {
+				name = "http"
+			} else {
+				name = fmt.Sprintf("p%d", p.Port)
+			}
+			containerPorts = append(containerPorts, corev1.ContainerPort{
+				ContainerPort: int32(p.TargetPort),
+				Name:          name,
+				Protocol:      corev1.ProtocolTCP,
+			})
+		}
+		if len(containerPorts) == 0 {
+			containerPorts = []corev1.ContainerPort{{ContainerPort: 80, Name: "http", Protocol: corev1.ProtocolTCP}}
+		}
+		var envVars []corev1.EnvVar
+		for k, v := range pn.Env {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
+		}
+		container := corev1.Container{
+			Name:    cnsContainerName,
+			Image:   img,
+			Command: cmdSlice,
+			Ports:   containerPorts,
+			Env:     envVars,
+		}
+		if hcPath := nodeconfig.HealthCheckPath(pn); hcPath != "" {
+			hcPort := int32(nodeconfig.HealthCheckPort(pn, portNum))
+			container.LivenessProbe = &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path: hcPath,
+						Port: intstr.FromInt(int(hcPort)),
+					},
+				},
+			}
 		}
 		dep := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
@@ -180,12 +217,7 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{Labels: podLabels},
 					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{{
-							Name:    cnsContainerName,
-							Image:   img,
-							Command: cmdSlice,
-							Ports:   []corev1.ContainerPort{{ContainerPort: 80, Name: "http"}},
-						}},
+						Containers: []corev1.Container{container},
 					},
 				},
 			},
@@ -204,6 +236,27 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 		events = append(events, ev("info", fmt.Sprintf("Kubernetes Deployment applied: %s/%s", ns, dname)))
 
 		svcName := dname + "-svc"
+		var svcPorts []corev1.ServicePort
+		for i, p := range ports {
+			name := "http"
+			if i > 0 {
+				name = fmt.Sprintf("p%d", p.Port)
+			}
+			svcPorts = append(svcPorts, corev1.ServicePort{
+				Name:       name,
+				Port:       int32(p.Port),
+				TargetPort: intstr.FromInt(p.TargetPort),
+				Protocol:   corev1.ProtocolTCP,
+			})
+		}
+		if len(svcPorts) == 0 {
+			svcPorts = []corev1.ServicePort{{
+				Name:       "http",
+				Port:       80,
+				TargetPort: intstr.FromInt(80),
+				Protocol:   corev1.ProtocolTCP,
+			}}
+		}
 		svc := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      svcName,
@@ -212,13 +265,8 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 			},
 			Spec: corev1.ServiceSpec{
 				Selector: map[string]string{"cns.io/node-id": strings.TrimSpace(pn.ID)},
-				Ports: []corev1.ServicePort{{
-					Name:       "http",
-					Port:       80,
-					TargetPort: intstr.FromInt(80),
-					Protocol:   corev1.ProtocolTCP,
-				}},
-				Type: corev1.ServiceTypeClusterIP,
+				Ports:    svcPorts,
+				Type:     corev1.ServiceTypeClusterIP,
 			},
 		}
 		if _, err := client.CoreV1().Services(ns).Get(ctx, svcName, metav1.GetOptions{}); apierrors.IsNotFound(err) {
@@ -234,8 +282,14 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 		}
 		events = append(events, ev("info", fmt.Sprintf("Kubernetes Service applied: %s/%s", ns, svcName)))
 
-		internalURL := clusterInternalServiceURL(ns, svcName, 80)
+		internalURL := clusterInternalServiceURL(ns, svcName, portNum)
 		nid := strings.TrimSpace(pn.ID)
+		metaBase := nodeconfig.PlanNodeRuntimeMeta(pn, img, cmd)
+		metaBase["deployment"] = dname
+		metaBase["service"] = svcName
+		metaBase["cluster_service_type"] = "ClusterIP"
+		metaBase["public_access"] = "manual_port_forward_required"
+		metaBase["manual_port_forward_cmd"] = fmt.Sprintf("kubectl port-forward -n %s svc/%s 8080:%d", ns, svcName, portNum)
 		accessResources = append(accessResources, model.RuntimeAccessResource{
 			Type:               "node",
 			NodeID:             nid,
@@ -243,15 +297,19 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 			RuntimeName:        dname,
 			Status:             "running",
 			NamespaceOrNetwork: ns,
+			Ports:              ports,
 			InternalURL:        internalURL,
-			Metadata: map[string]string{
-				"deployment":              dname,
-				"service":                 svcName,
-				"cluster_service_type":    "ClusterIP",
-				"public_access":           "manual_port_forward_required",
-				"manual_port_forward_cmd": fmt.Sprintf("kubectl port-forward -n %s svc/%s 8080:80", ns, svcName),
-			},
+			Metadata:           metaBase,
 		})
+		svcMeta := map[string]string{
+			"dns":                     fmt.Sprintf("%s.%s.svc.cluster.local", svcName, ns),
+			"cluster_service_type":    "ClusterIP",
+			"public_access":           "manual_port_forward_required",
+			"manual_port_forward_cmd": fmt.Sprintf("kubectl port-forward -n %s svc/%s 8080:%d", ns, svcName, portNum),
+		}
+		for k, v := range metaBase {
+			svcMeta[k] = v
+		}
 		accessResources = append(accessResources, model.RuntimeAccessResource{
 			Type:               "service",
 			ServiceID:          nid,
@@ -259,14 +317,9 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 			RuntimeName:        svcName,
 			Status:             "running",
 			NamespaceOrNetwork: ns,
-			Ports:              []model.RuntimePort{{Port: 80, TargetPort: 80, Protocol: "TCP"}},
+			Ports:              ports,
 			InternalURL:        internalURL,
-			Metadata: map[string]string{
-				"dns":                     fmt.Sprintf("%s.%s.svc.cluster.local", svcName, ns),
-				"cluster_service_type":    "ClusterIP",
-				"public_access":           "manual_port_forward_required",
-				"manual_port_forward_cmd": fmt.Sprintf("kubectl port-forward -n %s svc/%s 8080:80", ns, svcName),
-			},
+			Metadata:           svcMeta,
 		})
 	}
 

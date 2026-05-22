@@ -5,11 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.models.topology import NodeType, Topology
+from app.models.topology import NodeType, Topology, TopologyNode
 from app.services.network_allocation import (
     DEFAULT_NETWORK_ALLOCATION_MODE,
     resolve_network_allocation_mode,
 )
+from app.services.node_runtime_config import NodeRuntimeConfig, extract_node_runtime_config
 from app.services.segmented_topology import topology_is_segmented_multinet
 
 # Ordered orchestration phases — providers map these to concrete actions later.
@@ -33,6 +34,7 @@ class PlanNode:
     image: str | None
     ip_address: str | None
     node_type: str
+    runtime_config: NodeRuntimeConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -167,16 +169,17 @@ def build_deployment_plan(
             )
         )
 
-    plan_nodes = tuple(
-        PlanNode(
+    def _plan_node(n: TopologyNode) -> PlanNode:
+        return PlanNode(
             id=n.id,
             name=n.name,
             image=n.image,
             ip_address=n.ip_address,
             node_type=n.node_type.value,
+            runtime_config=extract_node_runtime_config(n.config),
         )
-        for n in sorted(topology.nodes, key=lambda x: x.name)
-    )
+
+    plan_nodes = tuple(_plan_node(n) for n in sorted(topology.nodes, key=lambda x: x.name))
     node_names = tuple(n.name for n in plan_nodes)
 
     alloc_mode = resolve_network_allocation_mode(topology, network_allocation_mode)

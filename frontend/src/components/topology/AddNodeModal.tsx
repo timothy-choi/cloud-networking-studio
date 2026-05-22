@@ -7,6 +7,8 @@ import {
   validateNodeRuntimeFields,
   type NodeRuntimeFields,
 } from '../../lib/nodeRuntimeConfig';
+import { healthCheckToConfig, type HealthCheckFields } from '../../lib/healthCheckConfig';
+import { HealthCheckFieldsForm, healthCheckFieldsFromRaw } from './HealthCheckFieldsForm';
 import {
   applyPreset,
   defaultImageForNodeType,
@@ -32,6 +34,9 @@ export function AddNodeModal({ open, initialNodeType, onClose, onSubmit }: AddNo
   const [image, setImage] = useState('');
   const [intentIp, setIntentIp] = useState('');
   const [runtime, setRuntime] = useState<NodeRuntimeFields>(emptyNodeRuntimeFields());
+  const [healthCheck, setHealthCheck] = useState<HealthCheckFields>(() =>
+    healthCheckFieldsFromRaw(null, defaultImageForNodeType(initialNodeType) ?? ''),
+  );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -44,6 +49,7 @@ export function AddNodeModal({ open, initialNodeType, onClose, onSubmit }: AddNo
     setImage(defaultImageForNodeType(initialNodeType) ?? '');
     setIntentIp('');
     setRuntime(emptyNodeRuntimeFields());
+    setHealthCheck(healthCheckFieldsFromRaw(null, defaultImageForNodeType(initialNodeType) ?? ''));
     setErr(null);
   }, [open, initialNodeType]);
 
@@ -55,6 +61,7 @@ export function AddNodeModal({ open, initialNodeType, onClose, onSubmit }: AddNo
     setNodeType(applied.node_type);
     setImage(applied.image ?? '');
     setRuntime(applied.runtime);
+    setHealthCheck(applied.healthCheck);
   }, [mode, presetId]);
 
   if (!open) return null;
@@ -82,6 +89,7 @@ export function AddNodeModal({ open, initialNodeType, onClose, onSubmit }: AddNo
         ip_address: intentIp.trim() === '' ? null : intentIp.trim(),
         editorPosition: { x: 320 + Math.random() * 80, y: 220 + Math.random() * 80 },
         runtime,
+        healthCheck: healthCheckToConfig(healthCheck),
       });
       await onSubmit(body);
       onClose();
@@ -240,14 +248,21 @@ export function AddNodeModal({ open, initialNodeType, onClose, onSubmit }: AddNo
             Terminal enabled
           </label>
           <label className="block text-[11px] text-cns-field-label">
-            Health check (path or JSON)
+            Bootstrap command (optional)
             <input
               className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2 py-1.5 font-mono text-sm text-zinc-100"
-              value={runtime.health_check}
-              onChange={(e) => setRuntime((r) => ({ ...r, health_check: e.target.value }))}
-              placeholder="/health"
+              value={runtime.bootstrap_command}
+              onChange={(e) => setRuntime((r) => ({ ...r, bootstrap_command: e.target.value }))}
+              placeholder="apt-get update && apt-get install -y git curl"
             />
           </label>
+          <HealthCheckFieldsForm
+            image={image}
+            command={runtime.command}
+            healthCheckRaw={null}
+            value={healthCheck}
+            onChange={setHealthCheck}
+          />
           <label className="block text-[11px] text-cns-field-label">
             Notes
             <textarea

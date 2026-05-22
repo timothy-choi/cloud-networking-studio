@@ -180,8 +180,11 @@ class RuntimeOperationsHealthResponse(BaseModel):
 
 class RuntimeOperationsTrafficRequest(BaseModel):
     source_runtime_resource_id: UUID
-    target: str = Field(description="Runtime resource UUID, topology node UUID, or http(s) URL")
-    protocol: Literal["http", "ping"]
+    target: str = Field(description="Runtime resource UUID, topology node UUID, hostname, or http(s) URL")
+    protocol: Literal["http", "ping", "tcp", "dns", "command"] = "ping"
+    port: int | None = Field(default=None, ge=1, le=65535)
+    path: str | None = None
+    command: list[str] | None = None
 
 
 class RuntimeOperationsTrafficResponse(BaseModel):

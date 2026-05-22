@@ -53,9 +53,18 @@ export async function postRuntimeServiceHealth(
   );
 }
 
+export type TrafficProtocol = 'http' | 'ping' | 'tcp' | 'dns' | 'command';
+
 export async function postRuntimeTrafficTest(
   deploymentId: string,
-  body: { source_runtime_resource_id: string; target: string; protocol: 'http' | 'ping' },
+  body: {
+    source_runtime_resource_id: string;
+    target: string;
+    protocol: TrafficProtocol;
+    port?: number;
+    path?: string;
+    command?: string[];
+  },
 ): Promise<RuntimeOperationsTrafficPayload> {
   return apiFetch<RuntimeOperationsTrafficPayload>(
     `/deployments/${deploymentId}/runtime/traffic-tests`,

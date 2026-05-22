@@ -10,6 +10,7 @@ export const NODE_CONFIG_KEYS = {
   env: 'env',
   terminalEnabled: 'terminal_enabled',
   healthCheck: 'health_check',
+  bootstrapCommand: 'bootstrap_command',
   description: 'description',
 } as const;
 
@@ -25,7 +26,7 @@ export interface NodeRuntimeFields {
   portsJson: string;
   envJson: string;
   terminal_enabled: boolean;
-  health_check: string;
+  bootstrap_command: string;
   description: string;
 }
 
@@ -36,7 +37,7 @@ export function emptyNodeRuntimeFields(): NodeRuntimeFields {
     portsJson: '',
     envJson: '',
     terminal_enabled: true,
-    health_check: '',
+    bootstrap_command: '',
     description: '',
   };
 }
@@ -85,24 +86,16 @@ function parseEnvJson(raw: string): Record<string, string> | string[] | null {
   return null;
 }
 
-function parseHealthCheck(raw: string): Record<string, unknown> | string | null {
-  const s = raw.trim();
-  if (!s) return null;
-  if (s.startsWith('{')) {
-    const parsed: unknown = JSON.parse(s);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  }
-  return s;
+export function readHealthCheckFromNode(node: TopologyNodeResponse): unknown {
+  return (node.config ?? {})[NODE_CONFIG_KEYS.healthCheck] ?? null;
 }
 
 export function readNodeRuntimeFields(node: TopologyNodeResponse): NodeRuntimeFields {
   const cfg = node.config ?? {};
   const ports = cfg[NODE_CONFIG_KEYS.ports];
   const env = cfg[NODE_CONFIG_KEYS.env];
-  const hc = cfg[NODE_CONFIG_KEYS.healthCheck];
   const te = cfg[NODE_CONFIG_KEYS.terminalEnabled];
+  const bootstrapRaw = cfg[NODE_CONFIG_KEYS.bootstrapCommand];
   const roleRaw = cfg[NODE_CONFIG_KEYS.roleLabel];
   const cmdRaw = cfg[NODE_CONFIG_KEYS.command];
   const descRaw = cfg[NODE_CONFIG_KEYS.description];
@@ -116,12 +109,7 @@ export function readNodeRuntimeFields(node: TopologyNodeResponse): NodeRuntimeFi
     portsJson: ports != null ? JSON.stringify(ports, null, 2) : '',
     envJson: env != null ? JSON.stringify(env, null, 2) : '',
     terminal_enabled: te === false || te === 'false' ? false : true,
-    health_check:
-      hc != null
-        ? typeof hc === 'string'
-          ? hc
-          : JSON.stringify(hc, null, 2)
-        : '',
+    bootstrap_command: typeof bootstrapRaw === 'string' ? bootstrapRaw : '',
     description: typeof descRaw === 'string' ? descRaw : '',
   };
 }
@@ -129,6 +117,7 @@ export function readNodeRuntimeFields(node: TopologyNodeResponse): NodeRuntimeFi
 export function mergeNodeRuntimeIntoConfig(
   base: Record<string, unknown> | null | undefined,
   fields: NodeRuntimeFields,
+  healthCheck?: Record<string, unknown> | null,
 ): Record<string, unknown> {
   const cfg: Record<string, unknown> = { ...(base ?? {}) };
   const setOrDelete = (key: string, value: unknown) => {
@@ -155,11 +144,9 @@ export function mergeNodeRuntimeIntoConfig(
     /* caller validates */
   }
   setOrDelete(NODE_CONFIG_KEYS.terminalEnabled, fields.terminal_enabled ? null : false);
-  try {
-    const hc = parseHealthCheck(fields.health_check);
-    setOrDelete(NODE_CONFIG_KEYS.healthCheck, hc);
-  } catch {
-    /* caller validates */
+  setOrDelete(NODE_CONFIG_KEYS.bootstrapCommand, fields.bootstrap_command.trim() || null);
+  if (healthCheck !== undefined) {
+    setOrDelete(NODE_CONFIG_KEYS.healthCheck, healthCheck);
   }
   setOrDelete(NODE_CONFIG_KEYS.description, fields.description.trim() || null);
   return cfg;
@@ -180,13 +167,6 @@ export function validateNodeRuntimeFields(fields: NodeRuntimeFields): string | n
       return 'Env must be valid JSON (object or array of KEY=value strings).';
     }
   }
-  if (fields.health_check.trim() && fields.health_check.trim().startsWith('{')) {
-    try {
-      parseHealthCheck(fields.health_check);
-    } catch {
-      return 'Health check JSON must be valid.';
-    }
-  }
   return null;
 }
 
@@ -197,9 +177,10 @@ export function buildNodeCreatePayload(input: {
   ip_address: string | null;
   editorPosition?: { x: number; y: number };
   runtime: NodeRuntimeFields;
+  healthCheck?: Record<string, unknown> | null;
   extraConfig?: Record<string, unknown> | null;
 }): TopologyNodeCreate {
-  const cfg = mergeNodeRuntimeIntoConfig(input.extraConfig, input.runtime);
+  const cfg = mergeNodeRuntimeIntoConfig(input.extraConfig, input.runtime, input.healthCheck);
   if (input.editorPosition) {
     cfg[EDITOR_POSITION_KEY] = input.editorPosition;
   }
@@ -220,6 +201,9 @@ export function metadataDisplay(meta: Record<string, string> | undefined | null)
   runtimeIp?: string;
   terminalEnabled?: boolean;
   env?: string;
+  healthCheckType?: string;
+  healthCheckPort?: string;
+  healthCheckPath?: string;
 } {
   if (!meta) return {};
   const te = meta.terminal_enabled;
@@ -231,6 +215,9 @@ export function metadataDisplay(meta: Record<string, string> | undefined | null)
     runtimeIp: meta.actual_runtime_ip,
     terminalEnabled: te === undefined ? undefined : te !== 'false',
     env: meta.env,
+    healthCheckType: meta.health_check_type,
+    healthCheckPort: meta.health_check_port,
+    healthCheckPath: meta.health_check_path,
   };
 }
 

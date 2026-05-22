@@ -21,6 +21,10 @@ from app.schemas.runtime import (
     RuntimeOperationsTrafficResponse,
 )
 from app.services.deployment_runtime_resource_service import list_runtime_resources
+from app.services.node_runtime_config import (
+    extract_node_runtime_config,
+    health_probe_payload_for_node,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -195,12 +199,17 @@ def run_runtime_health_check(
 
     if grc.should_delegate_runtime_ops_to_go_runner():
         grc.log_runtime_op_delegation("health-check", deployment_id, service_id=runtime_resource_id)
+        node = db.get(TopologyNode, wid)
+        probe_body: dict[str, Any] | None = None
+        if node is not None:
+            runtime_cfg = extract_node_runtime_config(node.config)
+            probe_body = health_probe_payload_for_node(image=node.image, runtime=runtime_cfg)
         data = _runner_client().post_runtime_service_health(
             deployment_id,
             dep.topology_id,
             str(wid),
             project_id=topo.project_id,
-            body=None,
+            body=probe_body,
         )
         lat = data.get("latency_ms")
         return RuntimeOperationsHealthResponse(
@@ -308,6 +317,12 @@ def run_runtime_traffic_test(
             "target": resolved_target,
             "protocol": payload.protocol,
         }
+        if payload.port is not None:
+            body["port"] = payload.port
+        if payload.path:
+            body["path"] = payload.path
+        if payload.command:
+            body["command"] = payload.command
         if topo.project_id is not None:
             body["project_id"] = str(topo.project_id)
         data = _runner_client().post_runtime_traffic_test(deployment_id, body)

@@ -59,6 +59,11 @@ from app.services import runtime_operations_service as runtime_ops
 from app.services import runtime_state_service as runtime_svc
 from app.services import runtime_terminal_service as terminal_svc
 from app.models.deployment_runtime_resource import DeploymentRuntimeResource
+from app.models.deployment_timeline import TimelineEventType
+from app.schemas.deployment_timeline import DeploymentTimelineResponse, TimelineEventRead
+from app.services.audit_service import record_audit
+from app.services.deployment_timeline_helpers import record_exposed_timeline
+from app.services.deployment_timeline_service import list_timeline_events, record_timeline_event
 
 router = APIRouter(tags=["deployments"])
 
@@ -132,6 +137,23 @@ def destroy_deployment(
 
     provider = runtime_provider_for_topology(dep.runtime_target)
 
+    record_timeline_event(
+        db,
+        deployment_id=dep.id,
+        event_type=TimelineEventType.DESTROY_REQUESTED,
+        message="Destroy requested.",
+        status="info",
+    )
+    record_audit(
+        db,
+        action="deployment.destroy",
+        resource_type="deployment",
+        resource_id=dep.id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="pending",
+    )
+
     already_stopped = dep.status == DeploymentStatus.STOPPED
     if already_stopped:
         _append_event(
@@ -142,6 +164,13 @@ def destroy_deployment(
         )
     else:
         dep.status = DeploymentStatus.STOPPING
+        record_timeline_event(
+            db,
+            deployment_id=dep.id,
+            event_type=TimelineEventType.DESTROY_STARTED,
+            message="Destroy started — tearing down runtime resources.",
+            status="running",
+        )
         _append_event(db, dep.id, "Deployment stopping — tearing down runtime resources.")
         db.flush()
 
@@ -178,6 +207,22 @@ def destroy_deployment(
             "Deployment stopped — runtime resources destroyed (best-effort).",
             DeploymentEventLevel.INFO,
         )
+    record_timeline_event(
+        db,
+        deployment_id=dep.id,
+        event_type=TimelineEventType.DESTROY_SUCCEEDED,
+        message="Destroy succeeded.",
+        status="succeeded",
+    )
+    record_audit(
+        db,
+        action="deployment.destroy",
+        resource_type="deployment",
+        resource_id=dep.id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="success",
+    )
     db.commit()
 
     return _load_deployment_full(db, deployment_id)
@@ -420,6 +465,18 @@ def post_deployment_runtime_service_exec(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc) or "Not found",
         ) from exc
+    dep = db.get(Deployment, deployment_id)
+    topo = db.get(Topology, dep.topology_id) if dep else None
+    record_audit(
+        db,
+        action="runtime.safe_exec",
+        resource_type="deployment",
+        resource_id=deployment_id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"service_id": str(service_id), "command": payload.command},
+    )
     db.commit()
     return out
 
@@ -582,6 +639,23 @@ def expose_runtime_service(
             status_code=status.HTTP_409_CONFLICT,
             detail="An active exposure already exists for this service resource.",
         ) from exc
+    topo = db.get(Topology, dep.topology_id)
+    record_exposed_timeline(
+        db,
+        deployment_id=dep.id,
+        message=f"Service {service_id} exposed.",
+        metadata={"service_id": str(service_id)},
+    )
+    record_audit(
+        db,
+        action="service.expose",
+        resource_type="deployment",
+        resource_id=dep.id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"service_id": str(service_id)},
+    )
     db.commit()
     db.refresh(row)
     return row
@@ -655,6 +729,17 @@ def get_deployment_integration_outputs(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Deployment not found",
         ) from None
+    dep = db.get(Deployment, deployment_id)
+    topo = db.get(Topology, dep.topology_id) if dep else None
+    record_audit(
+        db,
+        action="integration_outputs.view",
+        resource_type="deployment",
+        resource_id=deployment_id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="success",
+    )
     db.commit()
     return body
 
@@ -696,6 +781,18 @@ def download_deployment_integration_output_file(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found") from None
     except LookupError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found") from None
+    dep = db.get(Deployment, deployment_id)
+    topo = db.get(Topology, dep.topology_id) if dep else None
+    record_audit(
+        db,
+        action="integration_outputs.download",
+        resource_type="deployment",
+        resource_id=deployment_id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"file_name": file_name},
+    )
     db.commit()
     return Response(
         content=content.encode("utf-8"),
@@ -718,6 +815,18 @@ def download_deployment_integration_outputs_archive(
         payload = integration_outputs_svc.build_integration_outputs_archive(db, deployment_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found") from None
+    dep = db.get(Deployment, deployment_id)
+    topo = db.get(Topology, dep.topology_id) if dep else None
+    record_audit(
+        db,
+        action="integration_outputs.download",
+        resource_type="deployment",
+        resource_id=deployment_id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"archive": True},
+    )
     db.commit()
     return Response(
         content=payload,
@@ -775,6 +884,18 @@ def post_deployment_runtime_service_terminal(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    dep = db.get(Deployment, deployment_id)
+    topo = db.get(Topology, dep.topology_id) if dep else None
+    record_audit(
+        db,
+        action="terminal.open",
+        resource_type="deployment",
+        resource_id=deployment_id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"service_id": str(service_id), "session_id": str(body.session_id)},
+    )
     db.commit()
     return body
 
@@ -853,6 +974,25 @@ def list_deployment_events(
     else:
         stmt = stmt.order_by(DeploymentEvent.created_at.asc())
     return list(db.scalars(stmt).all())
+
+
+@router.get(
+    "/deployments/{deployment_id}/timeline",
+    response_model=DeploymentTimelineResponse,
+    summary="Deployment operation timeline",
+    response_description="Structured deploy/destroy lifecycle events with request correlation.",
+)
+def get_deployment_timeline(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DeploymentTimelineResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    events = list_timeline_events(db, deployment_id)
+    return DeploymentTimelineResponse(
+        deployment_id=deployment_id,
+        events=[TimelineEventRead.model_validate(e) for e in events],
+    )
 
 
 @router.get(

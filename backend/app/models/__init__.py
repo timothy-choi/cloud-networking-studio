@@ -20,6 +20,8 @@ from app.models.topology import (
     TopologyStatus,
 )
 from app.models.api_token import ApiToken
+from app.models.audit_log import AuditLog
+from app.models.deployment_timeline import DeploymentTimelineEvent, TimelineEventType
 from app.models.deployment import (
     Deployment,
     DeploymentEvent,
@@ -40,6 +42,9 @@ from app.models.runtime_template import RuntimeTemplate, TemplateVisibility
 
 __all__ = [
     "ApiToken",
+    "AuditLog",
+    "DeploymentTimelineEvent",
+    "TimelineEventType",
     "Deployment",
     "DeploymentRuntimeExecResult",
     "DeploymentRuntimeTerminalSession",

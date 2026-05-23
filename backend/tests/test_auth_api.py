@@ -168,6 +168,30 @@ def _login_fail_body() -> dict:
     return {"detail": "Invalid email or password"}
 
 
+def _login_fail_comparable(body: dict) -> dict:
+    """Stable subset of structured login failures (ignores per-request IDs)."""
+    assert body["detail"] == "Invalid email or password"
+    err = body.get("error") or {}
+    assert err.get("code") == "AUTH_REQUIRED"
+    assert err.get("message") == "Invalid email or password"
+    assert body.get("request_id")
+    assert err.get("request_id")
+    return {
+        "detail": body["detail"],
+        "status": body.get("status"),
+        "error": {
+            "code": err.get("code"),
+            "message": err.get("message"),
+            "details": err.get("details") or {},
+        },
+    }
+
+
+def _assert_login_fail_response(r) -> None:
+    assert r.status_code == 401
+    _login_fail_comparable(r.json())
+
+
 def test_login_unknown_email_returns_401_not_500(client):
     """Regression: unknown email must not surface ORM/lookup bugs as HTTP 500."""
     email = f"ghost-{uuid.uuid4().hex}@example.com"
@@ -177,7 +201,7 @@ def test_login_unknown_email_returns_401_not_500(client):
     )
     assert r.status_code != 500
     assert r.status_code == 401
-    assert r.json() == _login_fail_body()
+    _assert_login_fail_response(r)
 
 
 def test_login_invalid_json_body_not_500(client):
@@ -216,7 +240,7 @@ def test_login_corrupt_password_hash_returns_401(client):
         db.commit()
     r = client.post("/auth/login", json={"email": email, "password": "password123"})
     assert r.status_code == 401
-    assert r.json() == _login_fail_body()
+    _assert_login_fail_response(r)
 
 
 def test_login_wrong_password_returns_401(client):
@@ -230,7 +254,7 @@ def test_login_wrong_password_returns_401(client):
     )
     r = client.post("/auth/login", json={"email": email, "password": "wrong-pass-9"})
     assert r.status_code == 401
-    assert r.json() == _login_fail_body()
+    _assert_login_fail_response(r)
 
 
 def test_login_unknown_vs_wrong_password_same_response(client):
@@ -253,7 +277,7 @@ def test_login_unknown_vs_wrong_password_same_response(client):
     )
     assert unknown.status_code == 401
     assert wrong_pw.status_code == 401
-    assert unknown.json() == wrong_pw.json()
+    assert _login_fail_comparable(unknown.json()) == _login_fail_comparable(wrong_pw.json())
 
 
 def test_login_success_returns_token_and_user(client):

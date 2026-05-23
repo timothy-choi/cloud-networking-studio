@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.models.topology import Topology
 from app.models.user import User
 from app.services.access_control import get_topology_for_user
+from app.services.audit_service import record_audit
 from app.services import topology_iac_export_service as iac_svc
 from app.schemas.topology_iac_export import TopologyIacExportPreviewResponse
 
@@ -24,6 +26,26 @@ def _bundle(db: Session, user: User, topology_id: UUID):
         return iac_svc.load_topology_export_bundle(db, topology_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topology not found") from None
+
+
+def _audit_iac_download(
+    db: Session,
+    user: User,
+    topology_id: UUID,
+    export_format: str,
+) -> None:
+    topo = db.get(Topology, topology_id)
+    record_audit(
+        db,
+        action="iac_export.download",
+        resource_type="topology",
+        resource_id=topology_id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"format": export_format},
+    )
+    db.commit()
 
 
 @router.get(
@@ -55,6 +77,7 @@ def export_topology_docker_compose(
 ) -> Response:
     bundle = _bundle(db, user, topology_id)
     content = iac_svc.generate_docker_compose(bundle)
+    _audit_iac_download(db, user, topology_id, "docker-compose")
     return Response(
         content=content.encode("utf-8"),
         media_type="application/yaml; charset=utf-8",
@@ -73,6 +96,7 @@ def export_topology_kubernetes(
 ) -> Response:
     bundle = _bundle(db, user, topology_id)
     content = iac_svc.generate_kubernetes_yaml(bundle)
+    _audit_iac_download(db, user, topology_id, "kubernetes")
     return Response(
         content=content.encode("utf-8"),
         media_type="application/yaml; charset=utf-8",
@@ -91,6 +115,7 @@ def export_topology_terraform(
 ) -> Response:
     bundle = _bundle(db, user, topology_id)
     payload = iac_svc.build_terraform_zip(bundle)
+    _audit_iac_download(db, user, topology_id, "terraform")
     return Response(
         content=payload,
         media_type="application/zip",
@@ -109,6 +134,7 @@ def export_topology_ansible(
 ) -> Response:
     bundle = _bundle(db, user, topology_id)
     payload = iac_svc.build_ansible_zip(bundle)
+    _audit_iac_download(db, user, topology_id, "ansible")
     return Response(
         content=payload,
         media_type="application/zip",
@@ -127,6 +153,7 @@ def export_topology_iac_archive(
 ) -> Response:
     bundle = _bundle(db, user, topology_id)
     payload = iac_svc.build_iac_archive(bundle)
+    _audit_iac_download(db, user, topology_id, "archive")
     return Response(
         content=payload,
         media_type="application/zip",

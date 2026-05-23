@@ -10,6 +10,7 @@ from uuid import UUID
 import httpx
 
 from app.core.config import settings
+from app.core.request_context import get_request_id
 
 _log = logging.getLogger(__name__)
 from app.models.deployment import DeploymentEventLevel
@@ -67,10 +68,15 @@ class GoRunnerClient:
             raise ValueError("runner /runtime/status returned non-object JSON")
         return data
 
+    def _request_headers(self) -> dict[str, str]:
+        rid = get_request_id()
+        return {"X-Request-ID": rid} if rid else {}
+
     def _client(self) -> httpx.Client:
         kw: dict = {
             "base_url": self._base,
             "timeout": httpx.Timeout(self._timeout),
+            "headers": self._request_headers(),
         }
         if self._transport is not None:
             kw["transport"] = self._transport

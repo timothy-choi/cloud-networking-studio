@@ -38,6 +38,7 @@ from app.services.access_control import (
     require_project_editor,
     require_topology_editor,
 )
+from app.services.audit_service import record_audit
 
 router = APIRouter(prefix="/topologies", tags=["topologies"])
 
@@ -112,6 +113,17 @@ def create_topology(
         config=body.config,
     )
     db.add(topo)
+    db.flush()
+    record_audit(
+        db,
+        action="topology.create",
+        resource_type="topology",
+        resource_id=topo.id,
+        project_id=pid,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"name": topo.name},
+    )
     db.commit()
     db.refresh(topo)
     role = get_project_role_for_topology(db, user, topo.id)
@@ -187,6 +199,15 @@ def delete_topology(
     user: User = Depends(get_current_user),
 ) -> Response:
     topo = require_topology_editor(db, user, topology_id)
+    record_audit(
+        db,
+        action="topology.delete",
+        resource_type="topology",
+        resource_id=topology_id,
+        project_id=topo.project_id,
+        actor_user_id=user.id,
+        status="success",
+    )
     db.delete(topo)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -316,6 +337,15 @@ def patch_topology(
         topo.config = _merge_json_dict(topo.config, data.pop("config"))
     for key, val in data.items():
         setattr(topo, key, val)
+    record_audit(
+        db,
+        action="topology.update",
+        resource_type="topology",
+        resource_id=topology_id,
+        project_id=topo.project_id,
+        actor_user_id=user.id,
+        status="success",
+    )
     db.commit()
     db.refresh(topo)
     nc, lc = _counts_for_topology(db, topology_id)

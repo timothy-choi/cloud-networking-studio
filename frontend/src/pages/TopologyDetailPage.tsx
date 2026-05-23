@@ -17,6 +17,8 @@ import {
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { SectionEmptyState } from '../components/SectionEmptyState';
 import { DeploymentLifecycleTimeline } from '../components/deployment/DeploymentLifecycleTimeline';
+import { DeploymentOperationTimeline } from '../components/deployment/DeploymentOperationTimeline';
+import { ApiErrorDisplay } from '../components/errors/ApiErrorDisplay';
 import { DeploymentPhaseStrip } from '../components/deployment/DeploymentPhaseStrip';
 import { DeploymentProgressRail } from '../components/deployment/DeploymentProgressRail';
 import { DeploymentRecentEventsPanel } from '../components/deployment/DeploymentRecentEventsPanel';
@@ -1052,6 +1054,7 @@ export function TopologyDetailPage() {
       </div>
 
       <DeploymentLifecycleTimeline events={events} trafficTests={trafficTests} failures={failures} />
+      {deploymentId ? <DeploymentOperationTimeline deploymentId={deploymentId} /> : null}
 
       <div className="grid gap-6 md:grid-cols-2 md:items-start">
         <div className="min-w-0 space-y-2">
@@ -1063,11 +1066,7 @@ export function TopologyDetailPage() {
           <FailureHistory failures={failures} nodeNameById={nodeNameById} />
         </div>
         <div id="deployment-events" className="min-w-0 space-y-2">
-          {eventsPollErr && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-              Events poll: {eventsPollErr}
-            </div>
-          )}
+          {eventsPollErr && <ApiErrorDisplay error={eventsPollErr} />}
           <DeploymentEventStream
             events={events}
             loading={busy !== null}

@@ -9,9 +9,13 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
 from app.db.session import SessionLocal
+from app.models.deployment import Deployment
+from app.models.deployment_runtime_terminal_session import DeploymentRuntimeTerminalSession
+from app.models.topology import Topology
 from app.models.user import User
 from app.schemas.runtime_terminal import TerminalSessionCloseResponse
 from app.services import runtime_terminal_service as term_svc
+from app.services.audit_service import record_audit
 
 router = APIRouter(tags=["terminal"])
 
@@ -49,6 +53,20 @@ def delete_terminal_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    sess = db.get(DeploymentRuntimeTerminalSession, session_id)
+    if sess is not None:
+        dep = db.get(Deployment, sess.deployment_id)
+        topo = db.get(Topology, dep.topology_id) if dep else None
+        record_audit(
+            db,
+            action="terminal.close",
+            resource_type="deployment",
+            resource_id=sess.deployment_id,
+            project_id=topo.project_id if topo else None,
+            actor_user_id=user.id,
+            status="success",
+            metadata={"session_id": str(session_id)},
+        )
     db.commit()
     return out
 

@@ -213,11 +213,12 @@ jobs:
           RUNTIME_EXECUTOR: "go"
           RUNTIME_PROVIDER: "docker"
           GO_RUNNER_URL: "http://runner:8090"
+          AUTH_SECRET_KEY: ${{ secrets.AUTH_SECRET_KEY }}
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: POSTGRES_PASSWORD,RDS_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_CADDY,RDS_ENDPOINT,RDS_PORT,RDS_DATABASE_NAME,RDS_USERNAME,CNS_LEGACY_SSLIP_HTTP,RUNTIME_EXECUTOR,RUNTIME_PROVIDER,GO_RUNNER_URL
+          envs: POSTGRES_PASSWORD,RDS_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_CADDY,RDS_ENDPOINT,RDS_PORT,RDS_DATABASE_NAME,RDS_USERNAME,CNS_LEGACY_SSLIP_HTTP,RUNTIME_EXECUTOR,RUNTIME_PROVIDER,GO_RUNNER_URL,AUTH_SECRET_KEY
           script_stop: true
           script: |
             #!/usr/bin/env bash
@@ -279,6 +280,31 @@ jobs:
             echo "RDS_PASSWORD present? $([[ -n "${RDS_PASSWORD:-}" ]] && echo yes || echo no)"
             echo "RDS_ENDPOINT present? $([[ -n "${RDS_ENDPOINT:-}" ]] && echo yes || echo no)"
             echo "CNS_CORS_ORIGINS present? $([[ -n "${CNS_CORS_ORIGINS:-}" ]] && echo yes || echo no)"
+            echo "AUTH_SECRET_KEY present? $([[ -n "${AUTH_SECRET_KEY:-}" ]] && echo yes || echo no)"
+
+            gen_secret_hex() {
+              if command -v openssl >/dev/null 2>&1; then
+                openssl rand -hex 32
+              elif command -v python3 >/dev/null 2>&1; then
+                python3 -c 'import secrets; print(secrets.token_hex(32))'
+              else
+                ( set +o pipefail; LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c 64 )
+              fi
+            }
+
+            AUTH_SECRET_KEY="$(printf '%s' "${AUTH_SECRET_KEY:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [[ -z "${AUTH_SECRET_KEY}" ]] && [[ -f .env ]]; then
+              AUTH_SECRET_KEY="$(grep -E '^AUTH_SECRET_KEY=' .env | tail -n1 | cut -d= -f2- || true)"
+              AUTH_SECRET_KEY="$(printf '%s' "${AUTH_SECRET_KEY}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            fi
+            CNS_DEV_AUTH_DEFAULT="local-dev-only-change-AUTH_SECRET_KEY-in-production-min-32-chars"
+            if [[ -z "${AUTH_SECRET_KEY}" ]] || [[ "${AUTH_SECRET_KEY}" == "${CNS_DEV_AUTH_DEFAULT}" ]]; then
+              AUTH_SECRET_KEY="$(gen_secret_hex)"
+            fi
+            if [[ -z "${AUTH_SECRET_KEY}" ]] || [[ ${#AUTH_SECRET_KEY} -lt 32 ]]; then
+              echo "::error::SSH deploy: AUTH_SECRET_KEY material was empty or too short after resolution."
+              exit 1
+            fi
 
             PUB_HOST="$(printf '%s' "${CNS_CADDY_SITE_ADDRESS:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
             if [[ -z "${PUB_HOST}" ]]; then
@@ -385,6 +411,7 @@ jobs:
                 "CNS_SSLIP_HOST=${PUB_HOST}" \
                 "CADDYFILE_CADDY=${CADDYFILE_CADDY}" \
                 "AUTH_REQUIRE_LOGIN=true" \
+                "AUTH_SECRET_KEY=${AUTH_SECRET_KEY}" \
                 "RUNTIME_EXECUTOR=${RUNTIME_EXECUTOR}" \
                 "RUNTIME_PROVIDER=${RUNTIME_PROVIDER}" \
                 "GO_RUNNER_URL=${GO_RUNNER_URL}"
@@ -394,7 +421,7 @@ jobs:
             echo "=== runtime vars in .env ==="
             grep -E '^(RUNTIME_EXECUTOR|RUNTIME_PROVIDER|GO_RUNNER_URL)=' .env || true
 
-            unset TOKEN CLONE_URL POSTGRES_PASSWORD RDS_PASSWORD CNS_CORS_ORIGINS CNS_LEGACY_SSLIP_HTTP DATABASE_URL RDS_ENDPOINT RDS_PORT RDS_DATABASE_NAME RDS_USERNAME || true
+            unset TOKEN CLONE_URL POSTGRES_PASSWORD RDS_PASSWORD CNS_CORS_ORIGINS CNS_LEGACY_SSLIP_HTTP DATABASE_URL RDS_ENDPOINT RDS_PORT RDS_DATABASE_NAME RDS_USERNAME AUTH_SECRET_KEY || true
             set -x
 
             echo "=== docker compose config ==="

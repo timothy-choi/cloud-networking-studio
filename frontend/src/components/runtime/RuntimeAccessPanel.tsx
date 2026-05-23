@@ -1132,7 +1132,7 @@ export function RuntimeAccessPanel({
         ))}
       </div>
 
-      <div className="mt-4 min-h-[120px]">
+      <div className={tab === 'op_terminal' ? 'mt-4' : 'mt-4 min-h-[120px]'}>
         {loading && !data ? (
           <div className="flex items-center gap-2 text-sm text-cns-muted">
             <Spinner className="h-4 w-4" />
@@ -1265,6 +1265,7 @@ export function RuntimeAccessPanel({
             deploymentId={deploymentId!}
             services={data.services}
             readOnly={viewerMode}
+            active
           />
         ) : null}
       </div>

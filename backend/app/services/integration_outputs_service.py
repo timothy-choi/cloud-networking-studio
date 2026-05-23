@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import re
+import zipfile
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
@@ -13,6 +16,7 @@ from app.models.deployment import Deployment
 from app.models.topology import Topology
 from app.schemas.integration_outputs import (
     DeploymentIntegrationOutputsResponse,
+    IntegrationOutputFileItem,
     IntegrationOutputsBundle,
     IntegrationServiceOutput,
 )
@@ -46,6 +50,45 @@ OUTPUT_LANGUAGE_KEYS = (
     "docker_compose_env",
     "kubernetes_configmap",
 )
+
+
+@dataclass(frozen=True)
+class IntegrationOutputFileSpec:
+    name: str
+    type: str
+    output_key: str
+    media_type: str
+
+
+INTEGRATION_OUTPUT_FILE_SPECS: tuple[IntegrationOutputFileSpec, ...] = (
+    IntegrationOutputFileSpec("cns.env", "env", "env", "text/plain; charset=utf-8"),
+    IntegrationOutputFileSpec("cns-integration.sh", "bash", "bash", "application/x-sh; charset=utf-8"),
+    IntegrationOutputFileSpec("cns_integration.py", "python", "python", "text/x-python; charset=utf-8"),
+    IntegrationOutputFileSpec("cns-integration.js", "javascript", "javascript", "text/javascript; charset=utf-8"),
+    IntegrationOutputFileSpec("cns-integration.ts", "typescript", "typescript", "text/typescript; charset=utf-8"),
+    IntegrationOutputFileSpec("CnsIntegration.java", "java", "java", "text/x-java-source; charset=utf-8"),
+    IntegrationOutputFileSpec("cns_integration.go", "go", "go", "text/x-go; charset=utf-8"),
+    IntegrationOutputFileSpec("cns_integration.rb", "ruby", "ruby", "application/x-ruby; charset=utf-8"),
+    IntegrationOutputFileSpec("cns_integration.php", "php", "php", "application/x-httpd-php; charset=utf-8"),
+    IntegrationOutputFileSpec("CnsIntegration.cs", "csharp", "csharp", "text/x-csharp; charset=utf-8"),
+    IntegrationOutputFileSpec(
+        "github-actions-cns.yml", "github_actions", "github_actions", "application/yaml; charset=utf-8"
+    ),
+    IntegrationOutputFileSpec(
+        "docker-compose.env", "docker_compose_env", "docker_compose_env", "text/plain; charset=utf-8"
+    ),
+    IntegrationOutputFileSpec(
+        "kubernetes-configmap.yaml",
+        "kubernetes_configmap",
+        "kubernetes_configmap",
+        "application/yaml; charset=utf-8",
+    ),
+)
+
+ALLOWED_INTEGRATION_FILENAMES: frozenset[str] = frozenset(s.name for s in INTEGRATION_OUTPUT_FILE_SPECS)
+INTEGRATION_FILES_BY_NAME: dict[str, IntegrationOutputFileSpec] = {
+    s.name: s for s in INTEGRATION_OUTPUT_FILE_SPECS
+}
 
 
 def _safe_env_base(name: str) -> str:
@@ -563,3 +606,60 @@ def build_deployment_integration_outputs(
             "api_endpoint": f"{api_base}/deployments/{dep.id}/integration-outputs",
         },
     )
+
+
+def normalize_integration_filename(file_name: str) -> str:
+    """Return basename only; reject path traversal."""
+    raw = (file_name or "").strip()
+    if not raw or raw != file_name.strip():
+        raise ValueError("invalid file name")
+    if "/" in raw or "\\" in raw or ".." in raw:
+        raise ValueError("invalid file name")
+    return raw.split("/")[-1].split("\\")[-1]
+
+
+def resolve_integration_file_spec(file_name: str) -> IntegrationOutputFileSpec:
+    normalized = normalize_integration_filename(file_name)
+    spec = INTEGRATION_FILES_BY_NAME.get(normalized)
+    if spec is None:
+        raise LookupError("file not found")
+    return spec
+
+
+def _file_content(outputs: IntegrationOutputsBundle, spec: IntegrationOutputFileSpec) -> str:
+    data = outputs.model_dump()
+    content = data.get(spec.output_key, "")
+    return str(content) if content is not None else ""
+
+
+def build_integration_output_file_manifest(
+    deployment_id: UUID, *, api_base: str = "/api"
+) -> list[IntegrationOutputFileItem]:
+    base = f"{api_base}/deployments/{deployment_id}/integration-outputs/files"
+    return [
+        IntegrationOutputFileItem(
+            name=spec.name,
+            type=spec.type,
+            download_url=f"{base}/{spec.name}",
+        )
+        for spec in INTEGRATION_OUTPUT_FILE_SPECS
+    ]
+
+
+def get_integration_output_file(
+    session: Session, deployment_id: UUID, file_name: str, *, api_base: str = "/api"
+) -> tuple[IntegrationOutputFileSpec, str]:
+    spec = resolve_integration_file_spec(file_name)
+    body = build_deployment_integration_outputs(session, deployment_id, api_base=api_base)
+    return spec, _file_content(body.outputs, spec)
+
+
+def build_integration_outputs_archive(
+    session: Session, deployment_id: UUID, *, api_base: str = "/api"
+) -> bytes:
+    body = build_deployment_integration_outputs(session, deployment_id, api_base=api_base)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for spec in INTEGRATION_OUTPUT_FILE_SPECS:
+            zf.writestr(spec.name, _file_content(body.outputs, spec))
+    return buf.getvalue()

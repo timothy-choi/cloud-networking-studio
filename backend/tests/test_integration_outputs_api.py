@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import io
 import uuid
+import zipfile
 from uuid import UUID
 
 from app.db.session import SessionLocal
 from app.models.topology import NodeType
 from app.services.deployment_runtime_resource_service import replace_runtime_resources_from_payload
-from app.services.integration_outputs_service import OUTPUT_LANGUAGE_KEYS
+from app.services.integration_outputs_service import (
+    ALLOWED_INTEGRATION_FILENAMES,
+    OUTPUT_LANGUAGE_KEYS,
+)
 
 TOPO = {
     "name": "integration-outputs-lab",
@@ -147,3 +152,57 @@ def test_viewer_can_read_integration_outputs(client_strict):
     did = client_strict.post(f"/topologies/{tid}/deploy", headers=owner_h).json()["id"]
     r = client_strict.get(f"/deployments/{did}/integration-outputs", headers=viewer_h)
     assert r.status_code == 200
+
+
+def test_file_manifest_returns_known_files(client):
+    _, did, _ = _seed_service(client)
+    r = client.get(f"/deployments/{did}/integration-outputs/files")
+    assert r.status_code == 200
+    manifest = r.json()
+    names = {item["name"] for item in manifest}
+    assert names == set(ALLOWED_INTEGRATION_FILENAMES)
+    assert all(item.get("download_url") for item in manifest)
+    assert manifest[0]["type"] in OUTPUT_LANGUAGE_KEYS or manifest[0]["type"] == "env"
+
+
+def test_single_file_download_headers(client):
+    _, did, _ = _seed_service(client)
+    r = client.get(f"/deployments/{did}/integration-outputs/files/cns.env")
+    assert r.status_code == 200
+    assert "text/plain" in r.headers.get("content-type", "")
+    assert 'attachment; filename="cns.env"' in r.headers.get("content-disposition", "")
+    assert b"API_SERVICE_URL=" in r.content or b"CNS_DEPLOYMENT_ID=" in r.content
+
+
+def test_archive_contains_expected_files(client):
+    _, did, _ = _seed_service(client)
+    r = client.get(f"/deployments/{did}/integration-outputs/archive")
+    assert r.status_code == 200
+    assert r.headers.get("content-type", "").startswith("application/zip")
+    assert "attachment" in r.headers.get("content-disposition", "")
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        assert set(zf.namelist()) == set(ALLOWED_INTEGRATION_FILENAMES)
+
+
+def test_invalid_file_name_rejected(client):
+    _, did, _ = _seed_service(client)
+    r = client.get(f"/deployments/{did}/integration-outputs/files/not-a-real-file.txt")
+    assert r.status_code == 404
+    r2 = client.get(f"/deployments/{did}/integration-outputs/files/..%2F..%2Fetc%2Fpasswd")
+    assert r2.status_code in (400, 404)
+
+
+def test_file_download_unauthorized_user_blocked(client_strict):
+    _, owner_h = _reg(client_strict, "iof")
+    _, other_h = _reg(client_strict, "iog")
+    pid = client_strict.get("/projects", headers=owner_h).json()[0]["id"]
+    tid = client_strict.post(
+        "/topologies",
+        headers=owner_h,
+        json={**TOPO, "project_id": pid},
+    ).json()["id"]
+    did = client_strict.post(f"/topologies/{tid}/deploy", headers=owner_h).json()["id"]
+    r = client_strict.get(f"/deployments/{did}/integration-outputs/files/cns.env", headers=other_h)
+    assert r.status_code == 404
+    r2 = client_strict.get(f"/deployments/{did}/integration-outputs/archive", headers=other_h)
+    assert r2.status_code == 404

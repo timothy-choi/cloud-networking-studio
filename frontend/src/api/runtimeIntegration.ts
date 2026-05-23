@@ -118,3 +118,32 @@ export function fetchDeploymentIntegrationOutputs(deploymentId: string) {
     `/deployments/${deploymentId}/integration-outputs`,
   );
 }
+
+export type IntegrationOutputFileItem = {
+  name: string;
+  type: string;
+  download_url: string;
+};
+
+export function fetchIntegrationOutputFiles(deploymentId: string) {
+  return apiFetch<IntegrationOutputFileItem[]>(`/deployments/${deploymentId}/integration-outputs/files`);
+}
+
+/** Map app language snippet keys to downloadable filenames (curl has no file). */
+export const APP_LANGUAGE_FILENAME: Partial<Record<AppLanguageKey, string>> = {
+  python: 'cns_integration.py',
+  javascript: 'cns-integration.js',
+  typescript: 'cns-integration.ts',
+  java: 'CnsIntegration.java',
+  go: 'cns_integration.go',
+  ruby: 'cns_integration.rb',
+  php: 'cns_integration.php',
+  csharp: 'CnsIntegration.cs',
+};
+
+export const SECTION_OUTPUT_FILENAME: Record<string, string> = {
+  env: 'cns.env',
+  cicd: 'github-actions-cns.yml',
+  docker: 'docker-compose.env',
+  kubernetes: 'kubernetes-configmap.yaml',
+};

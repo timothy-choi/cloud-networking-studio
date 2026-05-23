@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 import httpx
 from starlette.responses import Response
 from sqlalchemy import delete, func, select
@@ -39,7 +39,7 @@ from app.schemas.runtime_exec import (
     RuntimeExecResultResponse,
     RuntimeRestartResponse,
 )
-from app.schemas.integration_outputs import DeploymentIntegrationOutputsResponse
+from app.schemas.integration_outputs import DeploymentIntegrationOutputsResponse, IntegrationOutputFileItem
 from app.schemas.runtime_integration import (
     DeploymentIntegrationResponse,
     DeploymentRuntimeMappingResponse,
@@ -657,6 +657,73 @@ def get_deployment_integration_outputs(
         ) from None
     db.commit()
     return body
+
+
+@router.get(
+    "/deployments/{deployment_id}/integration-outputs/files",
+    response_model=list[IntegrationOutputFileItem],
+    summary="Download manifest for integration output files",
+)
+def list_deployment_integration_output_files(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[IntegrationOutputFileItem]:
+    get_deployment_for_user(db, user, deployment_id)
+    dep = db.get(Deployment, deployment_id)
+    if dep is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+    db.commit()
+    return integration_outputs_svc.build_integration_output_file_manifest(deployment_id)
+
+
+@router.get(
+    "/deployments/{deployment_id}/integration-outputs/files/{file_name}",
+    summary="Download a single integration output file",
+)
+def download_deployment_integration_output_file(
+    deployment_id: UUID,
+    file_name: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        spec, content = integration_outputs_svc.get_integration_output_file(db, deployment_id, file_name)
+    except ValueError as exc:
+        if str(exc) == "invalid file name":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file name") from None
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found") from None
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found") from None
+    db.commit()
+    return Response(
+        content=content.encode("utf-8"),
+        media_type=spec.media_type,
+        headers={"Content-Disposition": f'attachment; filename="{spec.name}"'},
+    )
+
+
+@router.get(
+    "/deployments/{deployment_id}/integration-outputs/archive",
+    summary="Download all integration output files as a zip archive",
+)
+def download_deployment_integration_outputs_archive(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        payload = integration_outputs_svc.build_integration_outputs_archive(db, deployment_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found") from None
+    db.commit()
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="cns-integration-outputs.zip"'},
+    )
 
 
 @router.get(

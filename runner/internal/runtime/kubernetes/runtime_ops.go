@@ -16,6 +16,7 @@ import (
 	executil "k8s.io/client-go/util/exec"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/runtime/healthcheck"
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/trafficutil"
 )
 
@@ -110,22 +111,12 @@ func RuntimeDeploymentLogs(ctx context.Context, client kubernetes.Interface, top
 	return out
 }
 
-// HealthCheckNode runs wget inside the workload pod toward localhost (in-pod listener).
-func HealthCheckNode(ctx context.Context, cfg *rest.Config, client kubernetes.Interface, topologyID, deploymentID, projectID, nodeID string, port int, path string) model.RuntimeHealthResponse {
+// HealthCheckNode runs a protocol-aware check inside the workload pod.
+func HealthCheckNode(ctx context.Context, cfg *rest.Config, client kubernetes.Interface, topologyID, deploymentID, projectID, nodeID string, probe model.RuntimeHealthProbeRequest) model.RuntimeHealthResponse {
 	ns := NamespaceFor(strings.TrimSpace(projectID), topologyID, deploymentID)
-	if port <= 0 {
-		port = 80
-	}
-	if path == "" {
-		path = "/"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	target := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
 	nid := strings.TrimSpace(nodeID)
 	if nid == "" {
-		return model.RuntimeHealthResponse{Status: "failed", Target: target, Message: "node_id is required"}
+		return model.RuntimeHealthResponse{Status: "failed", Target: "", Message: "node_id is required"}
 	}
 	pod, err := podNameForNode(ctx, client, ns, nid)
 	if err != nil || pod == "" {
@@ -133,28 +124,32 @@ func HealthCheckNode(ctx context.Context, cfg *rest.Config, client kubernetes.In
 		if err != nil {
 			msg = err.Error()
 		}
-		return model.RuntimeHealthResponse{Status: "failed", Target: target, Message: msg}
+		return model.RuntimeHealthResponse{Status: "failed", Target: nid, Message: msg}
 	}
-	argv := []string{"wget", "-q", "-O-", "-T", "8", target}
-	stdout, stderr, code, execErr := podExec(ctx, cfg, client, ns, pod, argv)
-	if code != 0 {
-		msg := strings.TrimSpace(stderr)
-		if msg == "" && execErr != nil {
-			msg = execErr.Error()
+	pn := model.PlanNode{ID: nid}
+	if probe.Image != "" {
+		img := probe.Image
+		pn.Image = &img
+	}
+	if probe.PrimaryPort > 0 {
+		pn.Ports = []model.RuntimePort{{Port: probe.PrimaryPort, TargetPort: probe.PrimaryPort, Protocol: "TCP"}}
+	}
+	spec := healthcheck.ProbeSpecFromRequest(probe, &pn)
+	execFn := func(argv []string) (string, string, int, error) {
+		return podExec(ctx, cfg, client, ns, pod, argv)
+	}
+	stateFn := func() (bool, string, error) {
+		p, err := client.CoreV1().Pods(ns).Get(ctx, pod, metav1.GetOptions{})
+		if err != nil {
+			return false, "", err
 		}
-		if msg == "" {
-			msg = fmt.Sprintf("wget exit %d", code)
-		}
-		return model.RuntimeHealthResponse{Status: "failed", Target: target, Message: msg}
+		phase := string(p.Status.Phase)
+		return p.Status.Phase == corev1.PodRunning, phase, nil
 	}
-	if execErr != nil {
-		return model.RuntimeHealthResponse{Status: "failed", Target: target, Message: execErr.Error()}
-	}
-	_ = stdout
-	return model.RuntimeHealthResponse{Status: "passed", Target: target, Message: "HTTP check succeeded inside pod"}
+	return healthcheck.Run(spec, execFn, stateFn)
 }
 
-// RunRuntimeTrafficOp runs ping/http between pods or fetches a URL from the source pod via wget.
+// RunRuntimeTrafficOp runs protocol-aware traffic tests between pods or to an absolute URL.
 func RunRuntimeTrafficOp(ctx context.Context, cfg *rest.Config, client kubernetes.Interface, req model.RuntimeTrafficOpRequest) model.RuntimeTrafficOpResponse {
 	tid := strings.TrimSpace(req.TopologyID)
 	dep := strings.TrimSpace(req.DeploymentID)
@@ -180,7 +175,7 @@ func RunRuntimeTrafficOp(ctx context.Context, cfg *rest.Config, client kubernete
 		}
 		if proto != "http" {
 			base.Status = "unsupported"
-			base.Output = "protocol must be http or ping"
+			base.Output = "protocol must be http for URL targets"
 			return base
 		}
 		pod, err := podNameForNode(ctx, client, ns, src)
@@ -204,34 +199,34 @@ func RunRuntimeTrafficOp(ctx context.Context, cfg *rest.Config, client kubernete
 			return base
 		}
 		if code != 0 {
-			base.Status = "failed"
-			if trafficutil.HTTPWgetMissing(stderr) {
-				base.Output = strings.TrimSpace("HTTP test tool is missing in client image\n" + base.Output)
+			if trafficutil.HTTPWgetMissing(stderr) || trafficutil.HTTPCurlMissing(stderr) {
+				base.Status = "unsupported"
+				base.Output = trafficutil.ToolUnavailableMessage
+				return base
 			}
+			base.Status = "failed"
 			return base
 		}
 		base.Status = "passed"
 		return base
 	}
 
-	tt := "ping"
-	if proto == "http" {
-		tt = "http"
-	} else if proto != "ping" {
+	if proto != "ping" && proto != "http" && proto != "tcp" && proto != "dns" && proto != "command" {
 		base.Status = "unsupported"
-		base.Output = "protocol must be http or ping"
+		base.Output = "protocol must be ping, http, tcp, dns, or command"
 		return base
 	}
 	tr := model.TrafficRequest{
-		Type:           tt,
-		TopologyID:     tid,
-		SourceNodeID:   src,
-		TargetNodeID:   tgt,
-		Count:          req.Count,
-		Path:           req.Path,
-		Port:           req.Port,
-		DeploymentID:   dep,
-		ProjectID:      req.ProjectID,
+		Type:         proto,
+		TopologyID:   tid,
+		SourceNodeID: src,
+		TargetNodeID: tgt,
+		Count:        req.Count,
+		Path:         req.Path,
+		Port:         req.Port,
+		Command:      req.Command,
+		DeploymentID: dep,
+		ProjectID:    req.ProjectID,
 	}
 	resp := RunTrafficTest(ctx, cfg, client, &tr)
 	base.Output = strings.TrimSpace(resp.Stdout)
@@ -244,7 +239,11 @@ func RunRuntimeTrafficOp(ctx context.Context, cfg *rest.Config, client kubernete
 	if resp.Success {
 		base.Status = "passed"
 	} else {
-		base.Status = "failed"
+		if resp.Error != nil && *resp.Error == trafficutil.ToolUnavailableMessage {
+			base.Status = "unsupported"
+		} else {
+			base.Status = "failed"
+		}
 		if resp.Error != nil {
 			if base.Output != "" {
 				base.Output += "\n"

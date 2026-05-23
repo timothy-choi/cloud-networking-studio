@@ -125,15 +125,16 @@ type LogsResponse struct {
 }
 
 type TrafficRequest struct {
-	Type           string  `json:"type"` // ping | http
-	TopologyID     string  `json:"topology_id"`
-	SourceNodeID   string  `json:"source_node_id"`
-	TargetNodeID   string  `json:"target_node_id"`
-	Count          int     `json:"count,omitempty"`
-	Path           string  `json:"path,omitempty"`
-	Port           int     `json:"port,omitempty"`
-	DeploymentID   string  `json:"deployment_id,omitempty"`
-	ProjectID      *string `json:"project_id,omitempty"`
+	Type           string   `json:"type"` // ping | http | tcp | dns | command
+	TopologyID     string   `json:"topology_id"`
+	SourceNodeID   string   `json:"source_node_id"`
+	TargetNodeID   string   `json:"target_node_id"`
+	Count          int      `json:"count,omitempty"`
+	Path           string   `json:"path,omitempty"`
+	Port           int      `json:"port,omitempty"`
+	Command        []string `json:"command,omitempty"`
+	DeploymentID   string   `json:"deployment_id,omitempty"`
+	ProjectID      *string  `json:"project_id,omitempty"`
 }
 
 type TrafficResponse struct {
@@ -164,8 +165,14 @@ type RuntimeDeploymentLogsResponse struct {
 
 // RuntimeHealthProbeRequest optional POST body for health-check.
 type RuntimeHealthProbeRequest struct {
-	Port int    `json:"port,omitempty"`
-	Path string `json:"path,omitempty"`
+	CheckType      string   `json:"check_type,omitempty"`
+	Port           int      `json:"port,omitempty"`
+	Path           string   `json:"path,omitempty"`
+	Command        []string `json:"command,omitempty"`
+	ExpectedStatus int      `json:"expected_status,omitempty"`
+	TimeoutMs      int      `json:"timeout_ms,omitempty"`
+	Image          string   `json:"image,omitempty"`
+	PrimaryPort    int      `json:"primary_port,omitempty"`
 }
 
 // RuntimeHealthResponse is returned by POST .../health-check.
@@ -183,10 +190,11 @@ type RuntimeTrafficOpRequest struct {
 	ProjectID      *string `json:"project_id,omitempty"`
 	SourceNodeID   string  `json:"source_node_id"`
 	Target         string  `json:"target"` // topology node id or http(s):// URL
-	Protocol       string  `json:"protocol"` // http | ping
-	Path           string  `json:"path,omitempty"`
-	Port           int     `json:"port,omitempty"`
-	Count          int     `json:"count,omitempty"`
+	Protocol       string   `json:"protocol"` // http | ping | tcp | dns | command
+	Path           string   `json:"path,omitempty"`
+	Port           int      `json:"port,omitempty"`
+	Count          int      `json:"count,omitempty"`
+	Command        []string `json:"command,omitempty"`
 }
 
 // RuntimeTrafficOpResponse is returned by POST .../runtime/traffic-tests.

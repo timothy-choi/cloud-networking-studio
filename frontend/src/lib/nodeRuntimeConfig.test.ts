@@ -55,9 +55,10 @@ describe('nodeRuntimeConfig', () => {
         portsJson: '',
         envJson: '',
         terminal_enabled: true,
-        health_check: '',
+        bootstrap_command: '',
         description: '',
       },
+      healthCheck: { check_type: 'runtime' },
     });
     expect(body.config?.editor_position).toEqual({ x: 10, y: 20 });
   });
@@ -70,7 +71,7 @@ describe('nodeRuntimeConfig', () => {
         portsJson: 'not-json',
         envJson: '',
         terminal_enabled: true,
-        health_check: '',
+        bootstrap_command: '',
         description: '',
       }),
     ).toMatch(/Ports/);

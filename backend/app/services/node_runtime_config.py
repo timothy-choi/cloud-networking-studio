@@ -184,6 +184,127 @@ def runtime_access_ports_payload(runtime: NodeRuntimeConfig) -> list[dict[str, A
     ]
 
 
+class NodeConfigValidationError(ValueError):
+    """Raised when freeform node config fails API validation."""
+
+
+_HEALTH_CHECK_TYPES = frozenset({"runtime", "tcp", "http", "command", "none"})
+
+
+def _infer_default_check_type(
+    image: str | None,
+    primary_port: int,
+    *,
+    has_explicit_ports: bool = False,
+) -> str:
+    il = (image or "").lower()
+    if "nginx" in il or "httpd" in il:
+        return "http"
+    if "redis" in il:
+        return "tcp"
+    if "postgres" in il:
+        return "tcp"
+    if has_explicit_ports and primary_port in (80, 443, 8080):
+        return "http"
+    return "runtime"
+
+
+def normalize_health_check(
+    raw: dict[str, Any] | None,
+    *,
+    image: str | None = None,
+    primary_port: int = 80,
+    has_explicit_ports: bool = False,
+) -> dict[str, Any] | None:
+    """Resolve health_check dict with explicit or inferred check_type."""
+    if raw is None:
+        check_type = _infer_default_check_type(
+            image, primary_port, has_explicit_ports=has_explicit_ports
+        )
+        if check_type == "http":
+            return {
+                "check_type": "http",
+                "port": primary_port if primary_port > 0 else 80,
+                "path": "/",
+            }
+        if check_type == "tcp":
+            il = (image or "").lower()
+            port = 6379 if "redis" in il else 5432 if "postgres" in il else primary_port
+            return {"check_type": "tcp", "port": port}
+        return {"check_type": check_type}
+    hc = dict(raw)
+    if "path" in hc and isinstance(hc["path"], str) and hc["path"] and "check_type" not in hc:
+        hc.setdefault("check_type", "http")
+    check_type = str(hc.get("check_type") or "").strip().lower()
+    if not check_type:
+        if _parse_command(hc.get("command")):
+            check_type = "command"
+        elif hc.get("path"):
+            check_type = "http"
+        elif hc.get("port") is not None:
+            check_type = "tcp"
+        else:
+            check_type = _infer_default_check_type(
+                image, primary_port, has_explicit_ports=has_explicit_ports
+            )
+    if check_type not in _HEALTH_CHECK_TYPES:
+        raise NodeConfigValidationError(
+            f"health_check.check_type must be one of: {', '.join(sorted(_HEALTH_CHECK_TYPES))}"
+        )
+    hc["check_type"] = check_type
+    if check_type == "http":
+        hc.setdefault("path", "/")
+        if hc.get("port") is None:
+            hc["port"] = primary_port if primary_port > 0 else 80
+    if check_type == "tcp" and hc.get("port") is None:
+        il = (image or "").lower()
+        if "redis" in il:
+            hc["port"] = 6379
+        elif "postgres" in il:
+            hc["port"] = 5432
+        else:
+            hc["port"] = primary_port if primary_port > 0 else 80
+    if check_type == "command":
+        cmd = _parse_command(hc.get("command"))
+        if not cmd:
+            raise NodeConfigValidationError("health_check.command is required for command checks")
+        hc["command"] = cmd
+    return hc
+
+
+def health_probe_payload_for_node(
+    *,
+    image: str | None,
+    runtime: NodeRuntimeConfig,
+) -> dict[str, Any]:
+    """Build Go runner health-check request body from persisted node intent."""
+    primary = primary_port(runtime) if runtime.ports else 0
+    hc = normalize_health_check(
+        runtime.health_check,
+        image=image,
+        primary_port=primary if primary > 0 else 80,
+        has_explicit_ports=bool(runtime.ports),
+    )
+    if hc is None:
+        hc = {"check_type": "runtime"}
+    payload: dict[str, Any] = {
+        "check_type": hc.get("check_type", "runtime"),
+        "image": (image or "").strip(),
+        "primary_port": primary,
+    }
+    if hc.get("port") is not None:
+        payload["port"] = int(hc["port"])
+    if hc.get("path"):
+        payload["path"] = str(hc["path"])
+    if hc.get("command"):
+        payload["command"] = hc["command"]
+    if hc.get("expected_status") is not None:
+        payload["expected_status"] = int(hc["expected_status"])
+    if hc.get("timeout_ms") is not None:
+        payload["timeout_ms"] = int(hc["timeout_ms"])
+    return payload
+
+
 def runtime_metadata_from_node(
     *,
     image: str | None,
@@ -207,21 +328,25 @@ def runtime_metadata_from_node(
     if runtime.terminal_enabled is not None:
         meta["terminal_enabled"] = "true" if runtime.terminal_enabled else "false"
     if runtime.health_check:
-        path = runtime.health_check.get("path")
-        if path is not None:
-            meta["health_check_path"] = str(path)
-        port = runtime.health_check.get("port")
-        if port is not None:
-            meta["health_check_port"] = str(port)
+        hc = normalize_health_check(
+            runtime.health_check,
+            image=image,
+            primary_port=primary_port(runtime) if runtime.ports else 0,
+            has_explicit_ports=bool(runtime.ports),
+        )
+        if hc:
+            meta["health_check_type"] = str(hc.get("check_type", "runtime"))
+            path = hc.get("path")
+            if path is not None:
+                meta["health_check_path"] = str(path)
+            port = hc.get("port")
+            if port is not None:
+                meta["health_check_port"] = str(port)
     if ip_address and str(ip_address).strip():
         meta["intended_ip"] = str(ip_address).strip()
     if runtime.env:
         meta["env"] = json.dumps(runtime.env, sort_keys=True)
     return meta
-
-
-class NodeConfigValidationError(ValueError):
-    """Raised when freeform node config fails API validation."""
 
 
 def validate_image_reference(image: str | None) -> str | None:
@@ -363,8 +488,15 @@ def validate_node_payload(
     config: dict[str, Any] | None,
 ) -> tuple[str | None, str | None, dict[str, Any] | None]:
     """Validate node create/update fields; returns normalized values."""
-    return (
-        validate_image_reference(image),
-        validate_intent_ip(ip_address),
-        validate_and_normalize_node_config(config),
-    )
+    img = validate_image_reference(image)
+    ip = validate_intent_ip(ip_address)
+    cfg = validate_and_normalize_node_config(config)
+    if cfg is not None:
+        parsed = extract_node_runtime_config(cfg)
+        cfg["health_check"] = normalize_health_check(
+            parsed.health_check,
+            image=img,
+            primary_port=primary_port(parsed) if parsed.ports else 0,
+            has_explicit_ports=bool(parsed.ports),
+        )
+    return img, ip, cfg

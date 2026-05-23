@@ -2,10 +2,19 @@ import { useEffect, useState } from 'react';
 
 import {
   mergeNodeRuntimeIntoConfig,
+  readHealthCheckFromNode,
   readNodeRuntimeFields,
   validateNodeRuntimeFields,
   type NodeRuntimeFields,
 } from '../../lib/nodeRuntimeConfig';
+import {
+  healthCheckToConfig,
+  type HealthCheckFields,
+} from '../../lib/healthCheckConfig';
+import {
+  HealthCheckFieldsForm,
+  healthCheckFieldsFromRaw,
+} from './HealthCheckFieldsForm';
 import type {
   TopologyLinkResponse,
   TopologyLinkUpdate,
@@ -97,6 +106,9 @@ function NodeEditForm({
   const [image, setImage] = useState(node.image ?? '');
   const [ip, setIp] = useState(node.ip_address ?? '');
   const [runtime, setRuntime] = useState<NodeRuntimeFields>(() => readNodeRuntimeFields(node));
+  const [healthCheck, setHealthCheck] = useState<HealthCheckFields>(() =>
+    healthCheckFieldsFromRaw(readHealthCheckFromNode(node), node.image ?? ''),
+  );
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -105,6 +117,7 @@ function NodeEditForm({
     setImage(node.image ?? '');
     setIp(node.ip_address ?? '');
     setRuntime(readNodeRuntimeFields(node));
+    setHealthCheck(healthCheckFieldsFromRaw(readHealthCheckFromNode(node), node.image ?? ''));
   }, [node.id]);
 
   return (
@@ -119,7 +132,11 @@ function NodeEditForm({
         }
         const base = { ...(node.config ?? {}) };
         const pos = base[EDITOR_POSITION_KEY];
-        const mergedConfig = mergeNodeRuntimeIntoConfig(base, runtime);
+        const mergedConfig = mergeNodeRuntimeIntoConfig(
+          base,
+          runtime,
+          healthCheckToConfig(healthCheck),
+        );
         if (pos != null) {
           mergedConfig[EDITOR_POSITION_KEY] = pos;
         }
@@ -227,14 +244,21 @@ function NodeEditForm({
         Terminal enabled
       </label>
       <label className="block text-[11px] text-cns-field-label">
-        Health check
+        Bootstrap command (optional, user-run setup — not auto-installed)
         <input
           className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
-          value={runtime.health_check}
-          onChange={(ev) => setRuntime((r) => ({ ...r, health_check: ev.target.value }))}
-          placeholder="/health"
+          value={runtime.bootstrap_command}
+          onChange={(ev) => setRuntime((r) => ({ ...r, bootstrap_command: ev.target.value }))}
+          placeholder="apt-get update && apt-get install -y git curl"
         />
       </label>
+      <HealthCheckFieldsForm
+        image={image}
+        command={runtime.command}
+        healthCheckRaw={readHealthCheckFromNode(node)}
+        value={healthCheck}
+        onChange={setHealthCheck}
+      />
       <label className="block text-[11px] text-cns-field-label">
         Notes
         <textarea

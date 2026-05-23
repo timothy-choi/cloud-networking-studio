@@ -9,6 +9,7 @@ import (
 	docker "github.com/fsouza/go-dockerclient"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/runtime/healthcheck"
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/trafficutil"
 )
 
@@ -119,51 +120,41 @@ func RuntimeDeploymentLogs(ctx context.Context, cli *docker.Client, topologyID, 
 	return out
 }
 
-// HealthCheckNode runs an HTTP GET from inside the container via wget (busybox/alpine).
-func HealthCheckNode(ctx context.Context, cli *docker.Client, topologyID, nodeID string, port int, path string) model.RuntimeHealthResponse {
+// HealthCheckNode runs a protocol-aware health check inside the container.
+func HealthCheckNode(ctx context.Context, cli *docker.Client, topologyID, nodeID string, probe model.RuntimeHealthProbeRequest) model.RuntimeHealthResponse {
 	tid := strings.TrimSpace(topologyID)
 	nid := strings.TrimSpace(nodeID)
-	if port <= 0 {
-		port = 80
-	}
-	if path == "" {
-		path = "/"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	target := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
 	if tid == "" || nid == "" {
-		return model.RuntimeHealthResponse{Status: "failed", Target: target, Message: "topology_id and node_id are required"}
+		return model.RuntimeHealthResponse{Status: "failed", Target: "", Message: "topology_id and node_id are required"}
 	}
 	cid, err := findContainerID(ctx, cli, tid, nid)
 	if err != nil {
-		return model.RuntimeHealthResponse{Status: "failed", Target: target, Message: err.Error()}
+		return model.RuntimeHealthResponse{Status: "failed", Target: nid, Message: err.Error()}
 	}
 	if cid == "" {
-		return model.RuntimeHealthResponse{Status: "failed", Target: target, Message: "container not found for node"}
+		return model.RuntimeHealthResponse{Status: "failed", Target: nid, Message: "container not found for node"}
 	}
-	argv := []string{"wget", "-q", "-O-", "-T", "8", target}
-	stdout, stderr, code, err := execInContainer(ctx, cli, cid, argv)
-	if err != nil {
-		return model.RuntimeHealthResponse{Status: "failed", Target: target, Message: err.Error()}
+	pn := model.PlanNode{ID: nid}
+	if probe.Image != "" {
+		img := probe.Image
+		pn.Image = &img
 	}
-	if code != 0 {
-		msg := strings.TrimSpace(stderr)
-		if msg == "" {
-			msg = fmt.Sprintf("wget exit %d", code)
+	if probe.PrimaryPort > 0 {
+		pn.Ports = []model.RuntimePort{{Port: probe.PrimaryPort, TargetPort: probe.PrimaryPort, Protocol: "TCP"}}
+	}
+	spec := healthcheck.ProbeSpecFromRequest(probe, &pn)
+	execFn := func(argv []string) (string, string, int, error) {
+		return execInContainer(ctx, cli, cid, argv)
+	}
+	stateFn := func() (bool, string, error) {
+		ins, err := cli.InspectContainerWithOptions(docker.InspectContainerOptions{Context: ctx, ID: cid})
+		if err != nil {
+			return false, "", err
 		}
-		if trafficutil.HTTPWgetMissing(stderr) || trafficutil.HTTPWgetMissing(msg) {
-			return model.RuntimeHealthResponse{
-				Status:  "unsupported",
-				Target:  target,
-				Message: "HTTP check tool is missing in runtime container.",
-			}
-		}
-		return model.RuntimeHealthResponse{Status: "failed", Target: target, Message: msg}
+		st := strings.ToLower(ins.State.Status)
+		return ins.State.Running, st, nil
 	}
-	_ = stdout
-	return model.RuntimeHealthResponse{Status: "passed", Target: target, Message: "HTTP check succeeded inside container"}
+	return healthcheck.Run(spec, execFn, stateFn)
 }
 
 // RunRuntimeTrafficOp runs ping/http between nodes or http to an absolute URL from the source container.
@@ -219,8 +210,10 @@ func RunRuntimeTrafficOp(ctx context.Context, cli *docker.Client, req model.Runt
 		}
 		if code != 0 {
 			base.Status = "failed"
-			if trafficutil.HTTPWgetMissing(stderr) {
-				base.Output = strings.TrimSpace("HTTP test tool is missing in client image\n" + base.Output)
+			if trafficutil.HTTPWgetMissing(stderr) || trafficutil.HTTPCurlMissing(stderr) {
+				base.Status = "unsupported"
+				base.Output = trafficutil.ToolUnavailableMessage
+				return base
 			}
 			return base
 		}
@@ -228,12 +221,13 @@ func RunRuntimeTrafficOp(ctx context.Context, cli *docker.Client, req model.Runt
 		return base
 	}
 	// Target is a peer node id.
-	tt := "ping"
-	if proto == "http" {
-		tt = "http"
-	} else if proto != "ping" {
+	tt := proto
+	if tt == "" || tt == "ping" {
+		tt = "ping"
+	}
+	if tt != "ping" && tt != "http" && tt != "tcp" && tt != "dns" && tt != "command" {
 		base.Status = "unsupported"
-		base.Output = "protocol must be http or ping"
+		base.Output = "protocol must be ping, http, tcp, dns, or command"
 		return base
 	}
 	tr := model.TrafficRequest{
@@ -244,6 +238,7 @@ func RunRuntimeTrafficOp(ctx context.Context, cli *docker.Client, req model.Runt
 		Count:          req.Count,
 		Path:           req.Path,
 		Port:           req.Port,
+		Command:        req.Command,
 		DeploymentID:   req.DeploymentID,
 		ProjectID:      req.ProjectID,
 	}
@@ -258,7 +253,11 @@ func RunRuntimeTrafficOp(ctx context.Context, cli *docker.Client, req model.Runt
 	if resp.Success {
 		base.Status = "passed"
 	} else {
-		base.Status = "failed"
+		if resp.Error != nil && *resp.Error == trafficutil.ToolUnavailableMessage {
+			base.Status = "unsupported"
+		} else {
+			base.Status = "failed"
+		}
 		if resp.Error != nil {
 			if base.Output != "" {
 				base.Output += "\n"

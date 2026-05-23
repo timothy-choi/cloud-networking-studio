@@ -527,7 +527,7 @@ func (s *Server) handleRuntimeServiceHealth(w http.ResponseWriter, r *http.Reque
 			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
-		resp = rk8s.HealthCheckNode(ctx, s.k8sCfg, s.k8s, topologyID, deploymentID, projectID, nodeID, probe.Port, probe.Path)
+		resp = rk8s.HealthCheckNode(ctx, s.k8sCfg, s.k8s, topologyID, deploymentID, projectID, nodeID, probe)
 	} else {
 		if s.cli == nil {
 			resp = model.RuntimeHealthResponse{Status: "failed", Target: "", Message: "docker client not initialized"}
@@ -538,7 +538,7 @@ func (s *Server) handleRuntimeServiceHealth(w http.ResponseWriter, r *http.Reque
 			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
-		resp = rdocker.HealthCheckNode(ctx, s.cli, topologyID, nodeID, probe.Port, probe.Path)
+		resp = rdocker.HealthCheckNode(ctx, s.cli, topologyID, nodeID, probe)
 	}
 	ms := time.Since(start).Milliseconds()
 	resp.LatencyMs = &ms

@@ -19,7 +19,7 @@ import (
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/trafficutil"
 )
 
-// RunTrafficTest runs ping or wget inside the source pod toward the target pod IP.
+// RunTrafficTest runs protocol-aware traffic tests inside the source pod toward the target pod IP.
 func RunTrafficTest(ctx context.Context, cfg *rest.Config, client kubernetes.Interface, req *model.TrafficRequest) model.TrafficResponse {
 	tid := strings.TrimSpace(req.TopologyID)
 	src := strings.TrimSpace(req.SourceNodeID)
@@ -72,8 +72,27 @@ func RunTrafficTest(ctx context.Context, cfg *rest.Config, client kubernetes.Int
 			path = "/"
 		}
 		argv = []string{"wget", "-q", "-O-", "-T", "10", fmt.Sprintf("http://%s:%d%s", tgtIP, port, path)}
+	case "tcp":
+		port := req.Port
+		if port <= 0 {
+			port = 80
+		}
+		argv = []string{"sh", "-c", fmt.Sprintf("nc -z -w 3 %s %d", tgtIP, port)}
+	case "dns":
+		host := strings.TrimSpace(req.TargetNodeID)
+		if host == "" {
+			host = tgtIP
+		}
+		argv = []string{"nslookup", host}
+	case "command":
+		if len(req.Command) > 0 {
+			argv = append([]string{}, req.Command...)
+		} else {
+			msg := "command protocol requires command argv"
+			return model.TrafficResponse{ExitCode: 1, Success: false, Stderr: msg, Error: &msg}
+		}
 	default:
-		msg := "type must be ping or http"
+		msg := "type must be ping, http, tcp, dns, or command"
 		return model.TrafficResponse{ExitCode: 1, Success: false, Stderr: msg, Error: &msg}
 	}
 
@@ -109,16 +128,29 @@ func RunTrafficTest(ctx context.Context, cfg *rest.Config, client kubernetes.Int
 			exit = 1
 		}
 	}
-	ok := exit == 0
 	stdErr := stderr.String()
+	comout := stdout.String()
+	ok := exit == 0
 	var errPtr *string
-	if strings.EqualFold(tt, "http") && !ok && trafficutil.HTTPWgetMissing(stdErr) {
-		msg := "HTTP test tool is missing in client image"
-		errPtr = &msg
+	combined := strings.TrimSpace(stdErr + "\n" + comout)
+	if !ok {
+		if tt == "http" && trafficutil.HTTPWgetMissing(combined) {
+			msg := trafficutil.ToolUnavailableMessage
+			errPtr = &msg
+		} else if tt == "ping" && trafficutil.PingMissing(combined) {
+			msg := trafficutil.ToolUnavailableMessage
+			errPtr = &msg
+		} else if (tt == "tcp" && trafficutil.NcMissing(combined)) || (tt == "dns" && trafficutil.DigMissing(combined) && trafficutil.AnyToolMissing(combined, "nslookup")) {
+			msg := trafficutil.ToolUnavailableMessage
+			errPtr = &msg
+		} else if tt == "command" && len(argv) > 0 && trafficutil.AnyToolMissing(combined, argv[0]) {
+			msg := trafficutil.ToolUnavailableMessage
+			errPtr = &msg
+		}
 	}
 	return model.TrafficResponse{
 		ExitCode: exit,
-		Stdout:   stdout.String(),
+		Stdout:   comout,
 		Stderr:   stdErr,
 		Success:  ok,
 		Error:    errPtr,

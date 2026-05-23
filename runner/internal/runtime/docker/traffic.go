@@ -64,8 +64,27 @@ func RunTrafficTest(ctx context.Context, cli *docker.Client, req *model.TrafficR
 			path = "/"
 		}
 		argv = []string{"wget", "-q", "-O-", "-T", "10", fmt.Sprintf("http://%s:%d%s", tgtIP, port, path)}
+	case "tcp":
+		port := req.Port
+		if port <= 0 {
+			port = 80
+		}
+		argv = []string{"sh", "-c", fmt.Sprintf("nc -z -w 3 %s %d", tgtIP, port)}
+	case "dns":
+		host := strings.TrimSpace(req.TargetNodeID)
+		if host == "" {
+			host = tgtIP
+		}
+		argv = []string{"nslookup", host}
+	case "command":
+		if len(req.Command) > 0 {
+			argv = append([]string{}, req.Command...)
+		} else {
+			msg := "command protocol requires command argv"
+			return model.TrafficResponse{ExitCode: 1, Success: false, Stderr: msg, Error: &msg}
+		}
 	default:
-		msg := "type must be ping or http"
+		msg := "type must be ping, http, tcp, dns, or command"
 		return model.TrafficResponse{ExitCode: 1, Success: false, Stderr: msg, Error: &msg}
 	}
 
@@ -99,9 +118,22 @@ func RunTrafficTest(ctx context.Context, cli *docker.Client, req *model.TrafficR
 	stderr := errBuf.String()
 	ok := exit == 0
 	var errPtr *string
-	if tt == "http" && !ok && trafficutil.HTTPWgetMissing(stderr) {
-		msg := "HTTP test tool is missing in client image"
-		errPtr = &msg
+	comout := outBuf.String()
+	combined := strings.TrimSpace(stderr + "\n" + comout)
+	if !ok {
+		if tt == "http" && trafficutil.HTTPWgetMissing(stderr) {
+			msg := trafficutil.ToolUnavailableMessage
+			errPtr = &msg
+		} else if tt == "ping" && trafficutil.PingMissing(combined) {
+			msg := trafficutil.ToolUnavailableMessage
+			errPtr = &msg
+		} else if (tt == "tcp" && trafficutil.NcMissing(combined)) || (tt == "dns" && trafficutil.DigMissing(combined) && trafficutil.AnyToolMissing(combined, "nslookup")) {
+			msg := trafficutil.ToolUnavailableMessage
+			errPtr = &msg
+		} else if tt == "command" && len(argv) > 0 && trafficutil.AnyToolMissing(combined, argv[0]) {
+			msg := trafficutil.ToolUnavailableMessage
+			errPtr = &msg
+		}
 	}
 	return model.TrafficResponse{
 		ExitCode: exit,

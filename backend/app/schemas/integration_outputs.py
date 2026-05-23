@@ -49,3 +49,9 @@ class DeploymentIntegrationOutputsResponse(BaseModel):
     services: list[IntegrationServiceOutput] = Field(default_factory=list)
     outputs: IntegrationOutputsBundle = Field(default_factory=IntegrationOutputsBundle)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IntegrationOutputFileItem(BaseModel):
+    name: str
+    type: str
+    download_url: str

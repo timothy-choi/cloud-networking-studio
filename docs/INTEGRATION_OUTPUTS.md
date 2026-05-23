@@ -20,6 +20,22 @@ Authorization: Bearer <token>
 
 **Permissions:** Any project member who can **view** the deployment (viewer, member, owner). Non-members receive `404`.
 
+### Downloadable files
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET .../integration-outputs/files` | JSON manifest of downloadable files |
+| `GET .../integration-outputs/files/{file_name}` | Single file (`Content-Disposition: attachment`) |
+| `GET .../integration-outputs/archive` | Zip of all integration files |
+
+Allowed filenames (allowlist only — path traversal rejected):
+
+- `cns.env`, `cns-integration.sh`, `cns_integration.py`, `cns-integration.js`, `cns-integration.ts`
+- `CnsIntegration.java`, `cns_integration.go`, `cns_integration.rb`, `cns_integration.php`, `CnsIntegration.cs`
+- `github-actions-cns.yml`, `docker-compose.env`, `kubernetes-configmap.yaml`
+
+Archive download: `cns-integration-outputs.zip`
+
 ### Response overview
 
 | Field | Description |
@@ -108,7 +124,7 @@ Sections:
 - **Docker Compose**
 - **Kubernetes**
 
-Each block has a **Copy** button.
+Each block has a **Copy** button and a **Download** button (per file). Use **Download all (.zip)** for the full archive.
 
 ## Related docs
 

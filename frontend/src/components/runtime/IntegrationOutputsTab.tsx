@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, formatApiError } from '../../api/client';
 import {
+  APP_LANGUAGE_FILENAME,
   APP_LANGUAGE_OPTIONS,
   fetchDeploymentIntegrationOutputs,
+  fetchIntegrationOutputFiles,
+  SECTION_OUTPUT_FILENAME,
   type AppLanguageKey,
   type DeploymentIntegrationOutputsResponse,
+  type IntegrationOutputFileItem,
 } from '../../api/runtimeIntegration';
 import { Spinner } from '../Spinner';
 import { CopyButton } from './CopyButton';
+import { DownloadFileButton, downloadIntegrationOutputArchive } from './DownloadFileButton';
 
 type SectionId = 'env' | 'app' | 'cicd' | 'docker' | 'kubernetes';
 
@@ -22,10 +27,14 @@ const SECTIONS: { id: SectionId; label: string }[] = [
 function SnippetPanel({
   title,
   language,
+  fileName,
+  deploymentId,
   content,
 }: {
   title: string;
   language: string;
+  fileName?: string | null;
+  deploymentId: string;
   content: string;
 }) {
   return (
@@ -34,8 +43,16 @@ function SnippetPanel({
         <div>
           <h4 className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">{title}</h4>
           <span className="text-[10px] uppercase tracking-wide text-cns-muted">{language}</span>
+          {fileName ? (
+            <p className="mt-0.5 font-mono text-[10px] text-cns-muted">{fileName}</p>
+          ) : null}
         </div>
-        <CopyButton text={content} />
+        <div className="flex flex-wrap items-center gap-2">
+          <CopyButton text={content} />
+          {fileName ? (
+            <DownloadFileButton deploymentId={deploymentId} fileName={fileName} />
+          ) : null}
+        </div>
       </div>
       <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-950/90 p-2 font-mono text-[11px] text-zinc-100">
         {content}
@@ -46,7 +63,9 @@ function SnippetPanel({
 
 export function IntegrationOutputsTab({ deploymentId }: { deploymentId: string }) {
   const [data, setData] = useState<DeploymentIntegrationOutputsResponse | null>(null);
+  const [files, setFiles] = useState<IntegrationOutputFileItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [section, setSection] = useState<SectionId>('env');
   const [language, setLanguage] = useState<AppLanguageKey>('python');
@@ -55,9 +74,15 @@ export function IntegrationOutputsTab({ deploymentId }: { deploymentId: string }
     setLoading(true);
     setErr(null);
     try {
-      setData(await fetchDeploymentIntegrationOutputs(deploymentId));
+      const [outputs, manifest] = await Promise.all([
+        fetchDeploymentIntegrationOutputs(deploymentId),
+        fetchIntegrationOutputFiles(deploymentId),
+      ]);
+      setData(outputs);
+      setFiles(manifest);
     } catch (e) {
       setData(null);
+      setFiles([]);
       setErr(e instanceof ApiError ? formatApiError(e) : 'Could not load integration outputs.');
     } finally {
       setLoading(false);
@@ -73,6 +98,20 @@ export function IntegrationOutputsTab({ deploymentId }: { deploymentId: string }
     return data.outputs[language] ?? '';
   }, [data, language]);
 
+  const appFileName = APP_LANGUAGE_FILENAME[language] ?? null;
+
+  async function onDownloadAll() {
+    setArchiveBusy(true);
+    setErr(null);
+    try {
+      await downloadIntegrationOutputArchive(deploymentId);
+    } catch (e) {
+      setErr(e instanceof ApiError ? formatApiError(e) : 'Archive download failed.');
+    } finally {
+      setArchiveBusy(false);
+    }
+  }
+
   if (loading && !data) {
     return (
       <div className="flex items-center gap-2 text-sm text-cns-muted">
@@ -81,17 +120,46 @@ export function IntegrationOutputsTab({ deploymentId }: { deploymentId: string }
       </div>
     );
   }
-  if (err) {
+  if (err && !data) {
     return <p className="text-sm text-red-700 dark:text-red-300">{err}</p>;
   }
   if (!data) return null;
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-cns-muted">
-        Connect this deployment to your own apps, scripts, CI/CD jobs, and local workflows. Copy
-        generated snippets below — external URLs are preferred when a service is exposed.
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="max-w-2xl text-sm text-cns-muted">
+          Connect this deployment to your own apps, scripts, CI/CD jobs, and local workflows. Copy
+          snippets or download ready-made files — external URLs are preferred when a service is exposed.
+        </p>
+        <button
+          type="button"
+          onClick={() => void onDownloadAll()}
+          disabled={archiveBusy}
+          className="rounded-lg border border-emerald-700/40 bg-emerald-950/30 px-3 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-900/40 disabled:opacity-50"
+        >
+          {archiveBusy ? 'Preparing…' : 'Download all (.zip)'}
+        </button>
+      </div>
+
+      {err ? <p className="text-sm text-red-700 dark:text-red-300">{err}</p> : null}
+
+      {files.length > 0 ? (
+        <section>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-cns-label">Downloadable files</h3>
+          <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+            {files.map((f) => (
+              <li
+                key={f.name}
+                className="flex items-center justify-between gap-2 rounded border border-zinc-200 px-2 py-1 text-[11px] dark:border-zinc-700"
+              >
+                <span className="font-mono text-zinc-800 dark:text-zinc-200">{f.name}</span>
+                <DownloadFileButton deploymentId={deploymentId} fileName={f.name} label="↓" />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-cns-label">Services</h3>
@@ -145,7 +213,13 @@ export function IntegrationOutputsTab({ deploymentId }: { deploymentId: string }
       </div>
 
       {section === 'env' ? (
-        <SnippetPanel title="Environment variables" language="env" content={data.outputs.env} />
+        <SnippetPanel
+          title="Environment variables"
+          language="env"
+          fileName={SECTION_OUTPUT_FILENAME.env}
+          deploymentId={deploymentId}
+          content={data.outputs.env}
+        />
       ) : null}
 
       {section === 'app' ? (
@@ -167,24 +241,46 @@ export function IntegrationOutputsTab({ deploymentId }: { deploymentId: string }
           <SnippetPanel
             title={`${APP_LANGUAGE_OPTIONS.find((o) => o.id === language)?.label ?? language} example`}
             language={language}
+            fileName={appFileName}
+            deploymentId={deploymentId}
             content={appSnippet}
           />
-          <SnippetPanel title="bash exports" language="bash" content={data.outputs.bash} />
+          <SnippetPanel
+            title="bash exports"
+            language="bash"
+            fileName="cns-integration.sh"
+            deploymentId={deploymentId}
+            content={data.outputs.bash}
+          />
         </div>
       ) : null}
 
       {section === 'cicd' ? (
-        <SnippetPanel title="GitHub Actions" language="yaml" content={data.outputs.github_actions} />
+        <SnippetPanel
+          title="GitHub Actions"
+          language="yaml"
+          fileName={SECTION_OUTPUT_FILENAME.cicd}
+          deploymentId={deploymentId}
+          content={data.outputs.github_actions}
+        />
       ) : null}
 
       {section === 'docker' ? (
-        <SnippetPanel title="Docker Compose env" language="yaml" content={data.outputs.docker_compose_env} />
+        <SnippetPanel
+          title="Docker Compose env"
+          language="yaml"
+          fileName={SECTION_OUTPUT_FILENAME.docker}
+          deploymentId={deploymentId}
+          content={data.outputs.docker_compose_env}
+        />
       ) : null}
 
       {section === 'kubernetes' ? (
         <SnippetPanel
           title="Kubernetes ConfigMap"
           language="yaml"
+          fileName={SECTION_OUTPUT_FILENAME.kubernetes}
+          deploymentId={deploymentId}
           content={data.outputs.kubernetes_configmap}
         />
       ) : null}

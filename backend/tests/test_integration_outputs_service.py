@@ -6,11 +6,14 @@ from uuid import uuid4
 
 from app.schemas.integration_outputs import IntegrationServiceOutput
 from app.services.integration_outputs_service import (
+    ALLOWED_INTEGRATION_FILENAMES,
     INTERNAL_ONLY_NOTE,
     OUTPUT_LANGUAGE_KEYS,
     _catalog_services,
     _safe_env_base,
     build_integration_outputs_bundle,
+    normalize_integration_filename,
+    resolve_integration_file_spec,
 )
 
 
@@ -76,3 +79,19 @@ def test_all_output_language_keys_present():
         assert key in data
         assert isinstance(data[key], str)
         assert len(data[key]) > 0
+
+
+def test_normalize_integration_filename_rejects_traversal():
+    try:
+        normalize_integration_filename("../etc/passwd")
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+    assert normalize_integration_filename("cns.env") == "cns.env"
+
+
+def test_resolve_integration_file_spec_known_names():
+    spec = resolve_integration_file_spec("cns_integration.py")
+    assert spec.name == "cns_integration.py"
+    assert spec.type == "python"
+    assert len(ALLOWED_INTEGRATION_FILENAMES) == 13

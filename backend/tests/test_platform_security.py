@@ -98,7 +98,7 @@ def test_api_token_cannot_create_tokens(client_strict):
 
 
 def test_legacy_token_without_scopes_has_full_access(client_strict):
-    _, h = _reg(client_strict, "lg")
+    h, _ = _reg(client_strict, "lg")
     cr = client_strict.post("/api-tokens", headers=h, json={"name": "legacy"})
     assert cr.status_code == 201, cr.text
     hp = {"Authorization": f"Bearer {cr.json()['token']}"}

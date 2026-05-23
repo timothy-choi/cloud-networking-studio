@@ -173,5 +173,28 @@ def require_bearer_user(
     return _auth_from_token(db, creds.credentials).user
 
 
+def require_jwt_user(
+    db: Annotated[Session, Depends(get_db)],
+    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> User:
+    """Interactive JWT only — API tokens cannot manage tokens or other JWT-only routes."""
+    if creds is None or not creds.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    ctx = _auth_from_token(db, creds.credentials)
+    if ctx.auth_method != "jwt":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "FORBIDDEN",
+                "message": "This route requires interactive login (JWT), not an API token.",
+            },
+        )
+    return ctx.user
+
+
 def get_current_user(ctx: Annotated[AuthContext, Depends(get_auth_context)]) -> User:
     return ctx.user

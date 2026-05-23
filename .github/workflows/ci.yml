@@ -14,6 +14,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Required when the repo/org sets "Workflows must request permissions" (otherwise
+# GITHUB_TOKEN has no contents access and actions/checkout cannot authenticate).
+permissions:
+  contents: read
+
 jobs:
   backend-tests:
     name: Backend (pytest)
@@ -41,6 +46,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -68,6 +75,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -91,6 +100,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -119,6 +130,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Validate compose file
         run: docker compose -f docker-compose.prod.yml config --quiet

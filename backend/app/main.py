@@ -12,6 +12,7 @@ from app.api.controller import router as controller_router
 from app.api.deployments import router as deployments_router
 from app.api.failure_injections import router as failure_injections_router
 from app.api.metrics import router as metrics_router
+from app.api.platform_metrics import router as platform_metrics_router
 from app.api.security_status import router as security_status_router
 from app.api.onboarding import router as onboarding_router
 from app.api.projects import router as projects_router

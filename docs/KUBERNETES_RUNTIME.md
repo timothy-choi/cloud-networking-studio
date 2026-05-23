@@ -1,6 +1,14 @@
 # Kubernetes runtime (Go runner)
 
-This document describes the **optional** Kubernetes execution path in **`cns-runner`**. Docker remains the default (`RUNTIME_PROVIDER=docker`). Nothing here is required for normal Compose or production stacks that use Docker only.
+This document describes the **optional** Kubernetes execution path in **`cns-runner`**. **Docker remains the production default** (`RUNTIME_PROVIDER=docker`). Nothing here is required for normal Compose or production EC2 stacks that use Docker only.
+
+## Why production defaults to Docker
+
+- Production EC2 deploy workflow (`.github/workflows/deploy-production.yml`) sets `RUNTIME_EXECUTOR=go`, `RUNTIME_PROVIDER=docker`, and `GO_RUNNER_URL=http://runner:8090`.
+- Docker socket access from the runner is stable on a single host and does not require cluster credentials.
+- Local **kind** kubeconfigs often reference `host.docker.internal`, which is **not reliable on Linux EC2** and must never be used silently in production.
+
+Use Kubernetes when you explicitly operate a cluster (k3s on EC2, EKS, in-cluster runner) and mount a production-grade kubeconfig.
 
 ## Architecture
 
@@ -10,63 +18,118 @@ FastAPI (RUNTIME_EXECUTOR=go)
         ▼ HTTP (same contract as Docker)
    cns-runner
         │
-        ├─ RUNTIME_PROVIDER=docker ──► Docker Engine API
+        ├─ RUNTIME_PROVIDER=docker ──► Docker Engine API   (default / production)
         │
-        └─ RUNTIME_PROVIDER=kubernetes ──► Kubernetes API (client-go)
+        └─ RUNTIME_PROVIDER=kubernetes ──► Kubernetes API (advanced / optional)
 ```
 
-The control plane still uses **`go_runner_client.py`**. Runner routes (`POST /deployments`, `DELETE /deployments/{id}`, logs, traffic tests, `GET /runtime/status`) branch on **`RUNTIME_PROVIDER`** inside the runner. FastAPI does not need a second client.
+When a topology uses `runtime_target=kubernetes` and the backend uses `RUNTIME_EXECUTOR=go`, deploy/destroy/logs delegate to the Go runner via **`GoHybridKubernetesRuntimeProvider`**.
 
 ## Environment variables
 
 | Variable | Where | Default | Meaning |
 |----------|-------|---------|---------|
-| `RUNTIME_EXECUTOR` | Backend | `python` | Set **`go`** to delegate mutating work to the runner. |
+| `RUNTIME_EXECUTOR` | Backend | `go` in prod compose | Set **`go`** to delegate mutating work to the runner. |
 | `GO_RUNNER_URL` | Backend | `http://runner:8090` | Runner base URL. |
-| `RUNTIME_PROVIDER` | Runner | `docker` | **`docker`** or **`kubernetes`** (alias **`k8s`**). Unknown values fall back to **`docker`**. |
-| `KUBECONFIG` | Runner | kubeconfig default rules | Path to kubeconfig **inside the runner container** when not using in-cluster config. |
-| `RUNNER_LISTEN_ADDR` | Runner | `:8090` | HTTP listen address. |
+| `RUNTIME_PROVIDER` | Runner | **`docker`** | **`docker`** or **`kubernetes`**. Unknown values fall back to **`docker`**. |
+| `KUBECONFIG` | Runner | — | Path to kubeconfig **inside** the runner container (only when using Kubernetes). |
+| `CNS_ENVIRONMENT` | Backend/runner | `production` in prod | When `production`, local kind/minikube contexts are **rejected** by the runner. |
 
 ## Local cluster (kind / minikube)
 
-1. Create a cluster on the host (for example **kind** or **minikube**) and verify `kubectl get ns` works on the host.
-2. When running the runner **inside Docker Compose**, the API server address in your host kubeconfig is often **not** reachable from inside another container. Typical approaches:
-   - Mount kubeconfig and set **`KUBECONFIG`** to a copy whose `server:` URL is reachable from the runner network (for example the host gateway or kind’s extra port mappings).
-   - Run **`cns-runner` on the host** (`go run ./cmd/runner`) with `RUNTIME_PROVIDER=kubernetes` and point **`GO_RUNNER_URL`** at `http://host.docker.internal:8090` from the backend container (platform-dependent).
-3. Grant RBAC in the cluster for the runner identity (ServiceAccount when in-cluster, or kubeconfig user) to create/delete namespaces, Deployments, Services, and ConfigMaps in the target namespaces.
+1. Create a cluster and verify `kubectl get ns` on the host.
+2. **Do not** commit kubeconfig files — add them to `.gitignore` (`.kubeconfig.cns` is ignored by default).
+3. Enable Kubernetes on the runner with the overlay:
 
-Details vary by tool; start from your vendor’s “access API from a container” guidance.
+```bash
+docker compose -f docker-compose.prod.yml -f docker-compose.k8s-runtime.yml up -d
+export CNS_KUBECONFIG_HOST_PATH=/path/to/your/kubeconfig
+```
 
-## How deployments map to Kubernetes
+4. When the runner runs **inside Docker**, ensure the kubeconfig `server:` URL is reachable from the runner network (not `host.docker.internal` on Linux unless you know it resolves).
 
-For each deployment request the runner:
+### Troubleshooting `host.docker.internal` / kind
 
-1. Computes a **namespace** (RFC 1123, max 63 characters):
-   - With **`project_id`** on the request: `cns-p-{first 8 hex of project UUID}-d-{first 8 hex of deployment UUID}`.
-   - Without project: `cns-t-{first 8 hex of topology UUID}-d-{first 8 hex of deployment UUID}`.
-2. Creates the namespace (if missing) with labels: **`app=cloud-networking-studio`**, **`project_id`** (when present), **`topology_id`**, **`deployment_id`**, plus internal `cns.io/*` labels.
-3. Writes a **ConfigMap** `cns-topology-metadata` holding the deployment JSON.
-4. For each plan node: a **Deployment** and a **ClusterIP Service** (port 80), with pod label **`cns.io/node-id`** for log and traffic selection.
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Runner `kubernetes_reachable=false`, message mentions unreachable API | kind API bound to host-only address | Use kind extraPortMappings or run runner on host with `GO_RUNNER_URL` pointing from backend |
+| Production deploy accidentally uses kind | `.kubeconfig.cns` mounted with local context | Remove kubeconfig mount from prod; use Docker provider defaults |
+| `/runtime/status` degraded, `kubernetes_init_error` set | Missing/invalid kubeconfig or blocked local context | Fix kubeconfig path; use overlay only for dev |
+
+## Production options
+
+### k3s on EC2
+
+- Install k3s on the same or a peer EC2 instance.
+- Copy kubeconfig to the runner host; set `CNS_KUBECONFIG_HOST_PATH` in the k8s overlay.
+- Scope RBAC: namespace create/delete, Deployments, Services, ConfigMaps, Pods/exec — **not** cluster-admin unless required.
+
+### Amazon EKS
+
+- Use `aws eks update-kubeconfig` on the deploy host.
+- Mount resulting kubeconfig into the runner via `docker-compose.k8s-runtime.yml`.
+- Prefer IRSA / scoped IAM roles for the runner ServiceAccount when running in-cluster.
+
+## Deployment mapping
+
+For each deployment the runner:
+
+1. Creates namespace **`cns-deploy-{first 8 hex of deployment UUID}`** (RFC 1123).
+2. Writes ConfigMap `cns-topology-metadata` with deployment JSON.
+3. For each node: Deployment + Service from final node config (image, command, env, ports, labels, optional `kubernetes_service_type`).
+4. Default Service type: **ClusterIP** (internal DNS `service.namespace.svc.cluster.local`).
+5. Optional **NodePort** when node config sets `kubernetes_service_type: NodePort`.
+6. Applies default CPU/memory requests/limits (50m/64Mi request, 500m/512Mi limit).
+7. Persists runtime resources (pod/deployment name, service, namespace, DNS, exposure mode, pod IP when available).
 
 ## Destroy
 
-The runner deletes the **entire namespace** for that deployment (idempotent if already gone). The backend passes **`project_id`** as a query parameter when the topology belongs to a project so the namespace matches the deploy path.
+Deletes the deployment namespace (idempotent if already gone).
 
-## Status and logs
+## Runtime status (`GET /runtime/status`)
 
-- **`GET /deployments/{id}?topology_id=...&project_id=...`** returns JSON including **`status`** (`running`, `pending`, `failed`, `destroyed`), **`runtime_provider`**: `kubernetes`, **`namespace`**, and **`resources`** (pods, deployments, services, configmaps in that namespace).
-- **`GET /deployments/{id}/logs`** uses **`node_id`**, **`topology_id`**, optional **`project_id`**, optional **`tail`**.
+Reports:
 
-## Traffic tests
+- `runtime_provider`, `docker_reachable`, `kubernetes_reachable`
+- `current_context`, `kubeconfig_source`
+- `kubernetes_init_error` when kubeconfig is missing, unreachable, or blocked in production
+- `runner_reachable` (from backend merge when `RUNTIME_EXECUTOR=go`)
 
-Ping and HTTP tests run via **kubectl exec** into the source pod, targeting the **pod IP** of the destination workload (same namespace). Images should include **`ping`** and **`wget`** (for example **alpine**).
+## Health checks and traffic
 
-## Limitations (today)
+Protocol-aware checks run inside the cluster via pod exec (runtime / TCP / HTTP / command). Missing tools return **`unsupported`** with a clear message — CNS does not install tools into user images.
 
-- **Segmented multinet** topologies are rejected (same as the Go Docker path limitation).
-- No **EKS/GKE-specific** integration; any standard Kubernetes API endpoint reachable from the runner is enough.
-- **Read-only runtime** views in FastAPI (inspect topology, stats) still use **docker-py** in hybrid mode; they do not yet reflect Kubernetes pod state.
+## Service exposure
 
-## Future: managed clouds (EKS)
+- **ClusterIP (default):** internal-only; UI shows `exposure_mode=clusterip`.
+- **NodePort:** set `kubernetes_service_type: NodePort` on the node; UI shows `exposure_mode=nodeport`.
+- **Ingress:** documented future work; use kubectl/Ingress controller manually today.
 
-A likely next step is optional **IRSA / OIDC** wiring for AWS, node role policies for ELB/VPC CNI, and documenting how **`KUBECONFIG`** maps to cluster-admin vs scoped RBAC. The HTTP contract and FastAPI integration are intended to stay stable.
+## Safe exec and terminal
+
+- Safe exec uses Kubernetes exec via the Go runner.
+- Terminal sessions prefer shell fallback: `/bin/sh`, `sh`, `/bin/bash`, `bash`.
+- If no shell exists in the image, the session returns a readable error — use Safe exec or kubectl.
+
+## RBAC (recommended minimum)
+
+Grant the runner identity:
+
+- `namespaces` create/get/delete
+- `deployments`, `services`, `configmaps` CRUD in lab namespaces
+- `pods` get/list/delete, `pods/exec` create
+
+Do **not** document or require cluster-admin for production labs.
+
+## Known limitations
+
+- Segmented multinet topologies are rejected.
+- Control-plane inspect/reconcile/stats still target Docker in hybrid mode.
+- Ingress automation is not implemented.
+- Interactive terminal attach for Kubernetes is evolving; kubectl exec remains the fallback.
+
+## Tests
+
+- Go: `runner/internal/runtime/kubernetes/*_test.go`
+- Python: `backend/tests/test_kubernetes_runtime.py`
+- Docker regression: existing deploy/destroy/runtime tests unchanged when `runtime_target=docker`.

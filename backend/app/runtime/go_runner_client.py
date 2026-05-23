@@ -109,6 +109,8 @@ class GoRunnerClient:
                     row["health_check"] = rc.health_check
                 if rc.description:
                     row["description"] = rc.description
+                if rc.kubernetes_service_type:
+                    row["kubernetes_service_type"] = rc.kubernetes_service_type
             nodes.append(row)
         plan_links: list[dict[str, Any]] = []
         for pl in plan.plan_links:
@@ -447,3 +449,8 @@ def use_go_runner_for_docker() -> bool:
     if os.environ.get("CNS_USE_FAKE_DOCKER", "").lower() in ("1", "true", "yes"):
         return False
     return effective_runtime_executor() == "go"
+
+
+def use_go_runner() -> bool:
+    """True when mutating runtime work should delegate to the Go runner."""
+    return use_go_runner_for_docker()

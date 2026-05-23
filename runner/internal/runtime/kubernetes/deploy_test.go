@@ -56,12 +56,12 @@ func TestDeploy_MinimalCreatesNamespace(t *testing.T) {
 	}
 	foundPF := false
 	for _, r := range resp.RuntimeAccess.Resources {
-		if r.Type == "service" && r.Metadata["public_access"] == "manual_port_forward_required" {
+		if r.Type == "service" && r.Metadata["public_access"] == "internal_only" {
 			foundPF = true
 		}
 	}
 	if !foundPF {
-		t.Fatalf("expected manual public access hint on service resource: %+v", resp.RuntimeAccess.Resources)
+		t.Fatalf("expected internal-only public access hint on service resource: %+v", resp.RuntimeAccess.Resources)
 	}
 	_, err := client.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
 	if err != nil {

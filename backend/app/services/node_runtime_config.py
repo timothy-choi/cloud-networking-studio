@@ -34,6 +34,7 @@ class NodeRuntimeConfig:
     terminal_enabled: bool | None = None
     health_check: dict[str, Any] | None = None
     description: str | None = None
+    kubernetes_service_type: str | None = None
 
 
 def _coerce_str(value: Any) -> str | None:
@@ -157,6 +158,7 @@ def extract_node_runtime_config(config: dict[str, Any] | None) -> NodeRuntimeCon
         terminal_enabled=_parse_terminal_enabled(config.get("terminal_enabled")),
         health_check=_parse_health_check(config.get("health_check")),
         description=desc,
+        kubernetes_service_type=_coerce_str(config.get("kubernetes_service_type")),
     )
 
 

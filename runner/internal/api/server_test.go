@@ -61,6 +61,34 @@ func TestRuntimeStatusNilClient(t *testing.T) {
 	}
 }
 
+func TestRuntimeStatusKubernetesInitError(t *testing.T) {
+	s := &Server{
+		provider:          "kubernetes",
+		k8sCtx:            "kind-test",
+		kubeconfigSource:  "/tmp/missing-kubeconfig",
+		kubernetesInitErr: "kubeconfig not found",
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /runtime/status", s.handleRuntimeStatus)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/runtime/status", nil))
+	var st struct {
+		Status              string `json:"status"`
+		KubernetesReachable bool   `json:"kubernetes_reachable"`
+		KubernetesInitError string `json:"kubernetes_init_error"`
+		KubeconfigSource    string `json:"kubeconfig_source"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.Status != "degraded" || st.KubernetesReachable || st.KubernetesInitError == "" {
+		t.Fatalf("unexpected %+v", st)
+	}
+	if st.KubeconfigSource != "/tmp/missing-kubeconfig" {
+		t.Fatalf("source %+v", st)
+	}
+}
+
 func TestRuntimeStatusKubernetesFakeClient(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	s := &Server{

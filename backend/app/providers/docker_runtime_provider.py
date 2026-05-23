@@ -2390,7 +2390,7 @@ def _rollback_topology_deploy(client: docker.DockerClient, topology_id: UUID) ->
 
 
 def runtime_provider_for_topology(runtime_target: str) -> RuntimeProvider:
-    """Fake Docker for tests (``CNS_USE_FAKE_DOCKER``); real engine when ``runtime_target`` is docker."""
+    """Resolve runtime provider for topology ``runtime_target`` (docker, kubernetes, …)."""
     use_fake = os.environ.get("CNS_USE_FAKE_DOCKER", "").lower() in (
         "1",
         "true",
@@ -2398,12 +2398,27 @@ def runtime_provider_for_topology(runtime_target: str) -> RuntimeProvider:
     )
     if use_fake:
         return FakeDockerRuntimeProvider()
-    if (runtime_target or "").lower().strip() == "docker":
+    rt = (runtime_target or "").lower().strip()
+    from app.runtime.go_runner_client import GoRunnerClient, use_go_runner
+
+    if rt == "kubernetes":
+        if use_go_runner():
+            from app.providers.go_hybrid_kubernetes_runtime_provider import (
+                GoHybridKubernetesRuntimeProvider,
+            )
+            from app.core.config import settings
+
+            _log.info(
+                "runtime_target=kubernetes runtime_executor=go using GoHybridKubernetesRuntimeProvider url=%s",
+                settings.go_runner_url,
+            )
+            return GoHybridKubernetesRuntimeProvider(GoRunnerClient.from_settings())
+        return FakeDockerRuntimeProvider()
+    if rt == "docker":
         from app.providers.go_hybrid_runtime_provider import GoHybridDockerRuntimeProvider
-        from app.runtime.go_runner_client import GoRunnerClient, use_go_runner_for_docker
 
         base = DockerRuntimeProvider()
-        if use_go_runner_for_docker():
+        if use_go_runner():
             from app.core.config import settings
 
             _log.info(

@@ -1,0 +1,20 @@
+# Optional overlay: enable Kubernetes runtime on the Go runner.
+# Production EC2 should NOT use this file unless you have a reachable cluster kubeconfig.
+#
+# Usage (local/advanced):
+#   docker compose -f docker-compose.prod.yml -f docker-compose.k8s-runtime.yml up -d
+#
+# Set RUNTIME_PROVIDER=kubernetes and mount a kubeconfig that is reachable from the runner container.
+
+services:
+  runner:
+    environment:
+      RUNTIME_PROVIDER: kubernetes
+      KUBECONFIG: /root/.kube/config
+    volumes:
+      - ${CNS_KUBECONFIG_HOST_PATH:-./.kubeconfig.cns}:/root/.kube/config:ro
+
+  backend:
+    environment:
+      RUNTIME_EXECUTOR: go
+      GO_RUNNER_URL: http://runner:8090

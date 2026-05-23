@@ -10,6 +10,8 @@ type RuntimeStatusPayload = {
   docker_reachable?: boolean;
   kubernetes_reachable?: boolean;
   current_context?: string;
+  kubeconfig_source?: string;
+  kubernetes_init_error?: string;
   message?: string;
   last_runtime_error?: string | null;
   environment?: string;
@@ -71,6 +73,11 @@ export function PlatformStatusBanner() {
     );
   }
 
+  const providerHint =
+    data.runtime_provider === 'kubernetes'
+      ? 'Advanced Kubernetes runtime — ensure RUNTIME_PROVIDER=kubernetes on the Go runner and a reachable kubeconfig.'
+      : 'Docker is the stable default runtime provider for production.';
+
   const line = [
     `API ${data.backend_status ?? '—'}`,
     `exec ${data.runtime_executor ?? '—'}`,
@@ -90,6 +97,7 @@ export function PlatformStatusBanner() {
     <div className="max-w-2xl rounded-md border border-zinc-200 bg-white/90 px-2 py-1 text-[11px] text-zinc-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100">
       <div className="font-semibold text-zinc-600 dark:text-zinc-300">Platform</div>
       <div className="font-mono text-[10px] leading-snug text-zinc-700 dark:text-zinc-200">{line}</div>
+      <div className="mt-0.5 text-[10px] text-cns-muted">{providerHint}</div>
       {err ? (
         <div className="mt-0.5 truncate text-amber-800 dark:text-amber-200" title={err}>
           Last note: {err}

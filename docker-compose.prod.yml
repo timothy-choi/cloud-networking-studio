@@ -46,12 +46,10 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      # docker (default) or kubernetes — see docs/KUBERNETES_RUNTIME.md for local clusters.
+      # docker (default) or kubernetes — use docker-compose.k8s-runtime.yml overlay for Kubernetes.
       RUNTIME_PROVIDER: ${RUNTIME_PROVIDER:-docker}
-      KUBECONFIG: /root/.kube/config
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./.kubeconfig.cns:/root/.kube/config:ro
     expose:
       - "8090"
     networks: [cns]
@@ -82,7 +80,7 @@ services:
       # Step 34 auth: smoke tests expect AUTH_REQUIRE_LOGIN=true (set in CI / .env for production-like runs).
       AUTH_REQUIRE_LOGIN: ${AUTH_REQUIRE_LOGIN:-false}
       AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-local-dev-only-change-AUTH_SECRET_KEY-in-production-min-32-chars}
-      RUNTIME_EXECUTOR: ${RUNTIME_EXECUTOR:-python}
+      RUNTIME_EXECUTOR: ${RUNTIME_EXECUTOR:-go}
       GO_RUNNER_URL: ${GO_RUNNER_URL:-http://runner:8090}
     networks: [cns]
     depends_on:

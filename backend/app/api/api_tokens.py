@@ -11,6 +11,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.api_token import ApiTokenCreateRequest, ApiTokenCreateResponse, ApiTokenResponse
+from app.services import api_token_service as api_token_svc
 from app.services.audit_service import record_audit
 
 router = APIRouter(tags=["api-tokens"])

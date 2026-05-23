@@ -6,6 +6,7 @@ import { ApiTokensPage } from './pages/ApiTokensPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { PlatformMetricsPage } from './pages/PlatformMetricsPage';
+import { PlatformSecurityPage } from './pages/PlatformSecurityPage';
 import { PublicHomeRoute } from './pages/PublicHomeRoute';
 import { RegisterPage } from './pages/RegisterPage';
 import { TemplatesPage } from './pages/TemplatesPage';
@@ -23,6 +24,7 @@ export default function App() {
             <Route element={<Layout />}>
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="platform-metrics" element={<PlatformMetricsPage />} />
+              <Route path="platform-security" element={<PlatformSecurityPage />} />
               <Route path="api-tokens" element={<ApiTokensPage />} />
               <Route path="templates" element={<TemplatesPage />} />
               <Route path="topologies/:topologyId" element={<TopologyDetailPage />} />

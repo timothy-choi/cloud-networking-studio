@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { formatApiError } from '../api/client';
 import { createApiToken, listApiTokens, revokeApiToken, type ApiTokenCreated, type ApiTokenRow } from '../api/apiTokens';
+import { API_TOKEN_SCOPES } from '../types/securityStatus';
 import { SectionEmptyState } from '../components/SectionEmptyState';
 import { Spinner } from '../components/Spinner';
 
@@ -19,6 +20,8 @@ export function ApiTokensPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [name, setName] = useState('');
+  const [selectedScopes, setSelectedScopes] = useState<string[]>([]);
+  const [useFullAccess, setUseFullAccess] = useState(true);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<ApiTokenCreated | null>(null);
 
@@ -45,7 +48,10 @@ export function ApiTokensPage() {
     setErr(null);
     setCreated(null);
     try {
-      const t = await createApiToken({ name: n });
+      const t = await createApiToken({
+        name: n,
+        scopes: useFullAccess ? null : selectedScopes,
+      });
       setCreated(t);
       setName('');
       await load();
@@ -78,7 +84,8 @@ export function ApiTokensPage() {
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">API tokens</h1>
         <p className="mt-1 max-w-2xl text-sm text-cns-muted">
-          Use Bearer tokens from scripts and CI (same permissions as your account). Each token is shown in full only once — store it in your secret manager.
+          Use Bearer tokens from scripts and CI. Choose scopes to limit access, or leave full access for legacy behavior.
+          Each token is shown in full only once — store it in your secret manager.
         </p>
       </div>
 
@@ -117,9 +124,44 @@ export function ApiTokensPage() {
               placeholder="e.g. GitHub Actions prod"
             />
           </label>
+          <div className="w-full">
+            <div className="text-xs font-medium text-cns-label">Scopes</div>
+            <label className="mt-2 flex items-center gap-2 text-xs text-cns-muted">
+              <input
+                type="checkbox"
+                checked={useFullAccess}
+                onChange={(e) => setUseFullAccess(e.target.checked)}
+              />
+              Full account access (omit scope restrictions)
+            </label>
+            {!useFullAccess ? (
+              <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+                {API_TOKEN_SCOPES.map(({ scope, label }) => (
+                  <li key={scope}>
+                    <label className="flex items-start gap-2 text-xs text-zinc-800 dark:text-zinc-200">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={selectedScopes.includes(scope)}
+                        onChange={(e) => {
+                          setSelectedScopes((prev) =>
+                            e.target.checked ? [...prev, scope] : prev.filter((s) => s !== scope),
+                          );
+                        }}
+                      />
+                      <span>
+                        <code className="font-mono text-[10px]">{scope}</code>
+                        <span className="block text-[11px] text-cns-muted">{label}</span>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
           <button
             type="button"
-            disabled={busy || !name.trim()}
+            disabled={busy || !name.trim() || (!useFullAccess && selectedScopes.length === 0)}
             className="rounded-lg border border-emerald-600 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-900 disabled:opacity-50 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100"
             onClick={() => void onCreate()}
           >
@@ -166,7 +208,12 @@ export function ApiTokensPage() {
                 <div>
                   <div className="font-medium text-zinc-900 dark:text-zinc-50">{r.name}</div>
                   <div className="text-[11px] text-cns-muted">
-                    hint …{r.token_hint} · created {fmtWhen(r.created_at)}
+                    hint …{r.token_hint}
+                    {r.scopes && r.scopes.length > 0
+                      ? ` · scopes ${r.scopes.join(', ')}`
+                      : ' · full access'}
+                    {' · '}
+                    created {fmtWhen(r.created_at)}
                     {r.last_used_at ? ` · last used ${fmtWhen(r.last_used_at)}` : ''}
                     {r.revoked_at ? ` · revoked ${fmtWhen(r.revoked_at)}` : ''}
                   </div>

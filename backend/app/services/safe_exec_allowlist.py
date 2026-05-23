@@ -30,6 +30,16 @@ _DANGEROUS_SUBSTRINGS = (
     "bash ",
     "/bin/sh",
     "/bin/bash",
+    "sudo ",
+    " su ",
+    "eval ",
+    "exec ",
+    "python -c",
+    "python3 -c",
+    "nc -l",
+    "ncat ",
+    "> /etc/",
+    "/dev/tcp",
 )
 _PS_ARG = re.compile(r"^[a-zA-Z0-9._-]+$")
 _HOST = re.compile(r"^[a-zA-Z0-9._-]+$")

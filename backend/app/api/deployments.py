@@ -476,6 +476,7 @@ def post_deployment_runtime_service_exec(
         ) from exc
     dep = db.get(Deployment, deployment_id)
     topo = db.get(Topology, dep.topology_id) if dep else None
+    audit_status = "failure" if out.status == "rejected" else "success"
     record_audit(
         db,
         action="runtime.safe_exec",
@@ -483,8 +484,12 @@ def post_deployment_runtime_service_exec(
         resource_id=deployment_id,
         project_id=topo.project_id if topo else None,
         actor_user_id=user.id,
-        status="success",
-        metadata={"service_id": str(service_id), "command": payload.command},
+        status=audit_status,
+        metadata={
+            "service_id": str(service_id),
+            "command": payload.command,
+            "exec_status": out.status,
+        },
     )
     db.commit()
     return out
@@ -549,6 +554,18 @@ def post_deployment_runtime_service_restart(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc) or "Not found",
         ) from exc
+    dep = db.get(Deployment, deployment_id)
+    topo = db.get(Topology, dep.topology_id) if dep else None
+    record_audit(
+        db,
+        action="runtime.restart",
+        resource_type="deployment",
+        resource_id=deployment_id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"service_id": str(service_id)},
+    )
     db.commit()
     return out
 
@@ -699,6 +716,17 @@ def unexpose_runtime_service(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No active exposure for this service resource.",
         )
+    topo = db.get(Topology, dep.topology_id)
+    record_audit(
+        db,
+        action="service.unexpose",
+        resource_type="deployment",
+        resource_id=deployment_id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"service_id": str(service_id)},
+    )
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

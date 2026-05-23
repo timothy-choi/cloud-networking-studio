@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import require_jwt_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.api_token import ApiTokenCreateRequest, ApiTokenCreateResponse, ApiTokenResponse
@@ -26,9 +26,12 @@ router = APIRouter(tags=["api-tokens"])
 def post_api_token(
     body: ApiTokenCreateRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_jwt_user),
 ) -> ApiTokenCreateResponse:
-    out = api_token_svc.create_token(db, user, body)
+    try:
+        out = api_token_svc.create_token(db, user, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     record_audit(
         db,
         action="api_token.create",
@@ -36,7 +39,7 @@ def post_api_token(
         resource_id=out.id,
         actor_user_id=user.id,
         status="success",
-        metadata={"name": body.name},
+        metadata={"name": body.name, "scopes": body.scopes},
     )
     db.commit()
     return out
@@ -49,7 +52,7 @@ def post_api_token(
 )
 def list_api_tokens(
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_jwt_user),
 ) -> list[ApiTokenResponse]:
     rows = api_token_svc.list_tokens(db, user)
     db.commit()
@@ -64,7 +67,7 @@ def list_api_tokens(
 def delete_api_token(
     token_id: UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_jwt_user),
 ) -> Response:
     try:
         api_token_svc.revoke_token(db, user, token_id)

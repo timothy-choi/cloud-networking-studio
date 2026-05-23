@@ -11,10 +11,8 @@ import {
   healthCheckToConfig,
   type HealthCheckFields,
 } from '../../lib/healthCheckConfig';
-import {
-  HealthCheckFieldsForm,
-  healthCheckFieldsFromRaw,
-} from './HealthCheckFieldsForm';
+import { HealthCheckFieldsForm, healthCheckFieldsFromRaw } from './HealthCheckFieldsForm';
+import { ImageCapabilityHints } from './ImageCapabilityHints';
 import type {
   TopologyLinkResponse,
   TopologyLinkUpdate,
@@ -198,6 +196,7 @@ function NodeEditForm({
           placeholder="nginx:alpine"
         />
       </label>
+      <ImageCapabilityHints image={image} command={runtime.command} />
       <label className="block text-[11px] text-cns-field-label">
         Command
         <input

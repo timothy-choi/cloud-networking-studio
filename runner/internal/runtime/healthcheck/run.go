@@ -117,10 +117,24 @@ func runHTTP(spec ProbeSpec, exec ExecFunc) model.RuntimeHealthResponse {
 			}
 			return model.RuntimeHealthResponse{Status: "failed", Target: target, Message: fmt.Sprintf("HTTP status %d", statusCode)}
 		}
+		if trafficutil.HTTPConnectionRefused(combined) {
+			return model.RuntimeHealthResponse{
+				Status:  "failed",
+				Target:  target,
+				Message: trafficutil.NoHTTPServiceMessage,
+			}
+		}
 	}
 	if code != 0 {
 		if trafficutil.HTTPWgetMissing(combined) || trafficutil.HTTPCurlMissing(combined) {
 			return unsupportedTool(target, combined)
+		}
+		if trafficutil.HTTPConnectionRefused(combined) {
+			return model.RuntimeHealthResponse{
+				Status:  "failed",
+				Target:  target,
+				Message: trafficutil.NoHTTPServiceMessage,
+			}
 		}
 		msg := combined
 		if msg == "" {

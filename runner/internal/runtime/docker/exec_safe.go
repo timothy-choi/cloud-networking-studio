@@ -8,6 +8,8 @@ import (
 	"time"
 
 	docker "github.com/fsouza/go-dockerclient"
+
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/trafficutil"
 )
 
 // SafeExecWorkload runs argv inside the container for topology nodeID with a deadline.
@@ -17,7 +19,7 @@ func SafeExecWorkload(
 	topologyID, nodeID string,
 	argv []string,
 	timeout time.Duration,
-) (stdout, stderr string, exitCode int, status string) {
+) (stdout, stderr string, exitCode int, status, message string) {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
@@ -29,19 +31,23 @@ func SafeExecWorkload(
 
 	cid, err := findContainerID(ctx, cli, topologyID, nodeID)
 	if err != nil || cid == "" {
-		return "", "", -1, "failed"
+		return "", "", -1, "failed", ""
 	}
 	out, errOut, code, err := execInContainer(ctx, cli, cid, argv)
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-		return out, errOut, code, "timeout"
+		return out, errOut, code, "timeout", ""
 	}
 	if err != nil && code < 0 {
-		return out, errOut, code, "failed"
+		return out, errOut, code, "failed", ""
 	}
+	combined := strings.TrimSpace(errOut + "\n" + out)
 	if code != 0 {
-		return strings.TrimSpace(out), strings.TrimSpace(errOut), code, "failed"
+		if trafficutil.ExecArgvToolMissing(argv, combined) {
+			return strings.TrimSpace(out), strings.TrimSpace(errOut), code, "unsupported", trafficutil.ToolUnavailableMessage
+		}
+		return strings.TrimSpace(out), strings.TrimSpace(errOut), code, "failed", ""
 	}
-	return strings.TrimSpace(out), strings.TrimSpace(errOut), code, "succeeded"
+	return strings.TrimSpace(out), strings.TrimSpace(errOut), code, "succeeded", ""
 }
 
 // RestartWorkload restarts the container for a topology node.

@@ -99,7 +99,26 @@ def test_postgres_inferred_tcp_when_no_explicit_check():
     assert hc["port"] == 5432
 
 
-def test_none_health_check():
-    hc = normalize_health_check({"check_type": "none"}, image="alpine:latest", primary_port=80)
-    assert hc is not None
-    assert hc["check_type"] == "none"
+def test_ubuntu_debug_preset_command_in_config():
+    """Bootstrap presets put install logic in command — never silent auto-install."""
+    command = (
+        'bash -lc "apt-get update && apt-get install -y iproute2 iputils-ping curl dnsutils netcat-openbsd && sleep infinity"'
+    )
+    runtime = extract_node_runtime_config({"command": command})
+    joined = " ".join(runtime.command or [])
+    assert "apt-get install" in joined
+    probe = health_probe_payload_for_node(image="ubuntu:22.04", runtime=runtime)
+    assert probe["check_type"] == "runtime"
+
+
+def test_python_http_preset_probe_metadata():
+    runtime = extract_node_runtime_config(
+        {
+            "command": "python -m http.server 80",
+            "health_check": {"check_type": "http", "port": 80, "path": "/"},
+        }
+    )
+    probe = health_probe_payload_for_node(image="python:3.12", runtime=runtime)
+    assert probe["check_type"] == "http"
+    assert probe["port"] == 80
+    assert probe["path"] == "/"

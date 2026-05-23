@@ -121,16 +121,21 @@ func RunTrafficTest(ctx context.Context, cli *docker.Client, req *model.TrafficR
 	comout := outBuf.String()
 	combined := strings.TrimSpace(stderr + "\n" + comout)
 	if !ok {
-		if tt == "http" && trafficutil.HTTPWgetMissing(stderr) {
+		switch {
+		case tt == "http" && (trafficutil.HTTPWgetMissing(combined) || trafficutil.HTTPCurlMissing(combined)):
 			msg := trafficutil.ToolUnavailableMessage
 			errPtr = &msg
-		} else if tt == "ping" && trafficutil.PingMissing(combined) {
+		case tt == "http" && trafficutil.HTTPConnectionRefused(combined):
+			msg := trafficutil.NoHTTPServiceMessage
+			errPtr = &msg
+		case tt == "ping" && trafficutil.PingMissing(combined):
 			msg := trafficutil.ToolUnavailableMessage
 			errPtr = &msg
-		} else if (tt == "tcp" && trafficutil.NcMissing(combined)) || (tt == "dns" && trafficutil.DigMissing(combined) && trafficutil.AnyToolMissing(combined, "nslookup")) {
+		case (tt == "tcp" && trafficutil.NcMissing(combined)) ||
+			(tt == "dns" && trafficutil.DigMissing(combined) && trafficutil.AnyToolMissing(combined, "nslookup")):
 			msg := trafficutil.ToolUnavailableMessage
 			errPtr = &msg
-		} else if tt == "command" && len(argv) > 0 && trafficutil.AnyToolMissing(combined, argv[0]) {
+		case tt == "command" && len(argv) > 0 && trafficutil.AnyToolMissing(combined, argv[0]):
 			msg := trafficutil.ToolUnavailableMessage
 			errPtr = &msg
 		}

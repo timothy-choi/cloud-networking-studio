@@ -1,6 +1,7 @@
 package healthcheck
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
@@ -50,4 +51,35 @@ func TestRunRuntimeCheck(t *testing.T) {
 	if resp.Status != "passed" {
 		t.Fatalf("%+v", resp)
 	}
+}
+
+func TestRunHTTPMissingToolUnsupported(t *testing.T) {
+	resp := Run(ProbeSpec{CheckType: "http", Port: 80, Path: "/"}, func(argv []string) (string, string, int, error) {
+		return "", "wget: not found\ncurl: not found", 127, nil
+	}, nil)
+	if resp.Status != "unsupported" {
+		t.Fatalf("got %+v", resp)
+	}
+	if resp.Message == "" || !contains(resp.Message, "Tool missing") {
+		t.Fatalf("message %+v", resp.Message)
+	}
+}
+
+func TestRunHTTPConnectionRefused(t *testing.T) {
+	resp := Run(ProbeSpec{CheckType: "http", Port: 80, Path: "/"}, func(argv []string) (string, string, int, error) {
+		if len(argv) > 0 && argv[0] == "wget" {
+			return "", "Connecting to 127.0.0.1:80... failed: Connection refused.", 4, nil
+		}
+		return "000", "curl: (7) Failed to connect to 127.0.0.1 port 80: Connection refused", 7, nil
+	}, nil)
+	if resp.Status != "failed" {
+		t.Fatalf("got %+v", resp)
+	}
+	if !contains(resp.Message, "No HTTP service appears to be running") {
+		t.Fatalf("message %+v", resp.Message)
+	}
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || strings.Contains(s, sub))
 }

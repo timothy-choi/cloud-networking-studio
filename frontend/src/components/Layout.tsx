@@ -24,6 +24,9 @@ export function Layout() {
               <Link to="/templates" className="text-cns-muted hover:text-zinc-900 dark:hover:text-zinc-100">
                 Templates
               </Link>
+              <Link to="/platform-security" className="text-cns-muted hover:text-zinc-900 dark:hover:text-zinc-100">
+                Security
+              </Link>
               <Link to="/platform-metrics" className="text-cns-muted hover:text-zinc-900 dark:hover:text-zinc-100">
                 Metrics
               </Link>

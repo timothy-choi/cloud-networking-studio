@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.core.request_context import get_request_id
+from app.core.secret_masking import mask_secrets_in_text, scrub_sensitive_dict
 
 ERROR_CODES = frozenset(
     {
@@ -52,11 +53,12 @@ def _code_for_status(status: int) -> str:
 
 def _message_from_detail(detail: Any) -> str:
     if isinstance(detail, str):
-        return detail
+        return mask_secrets_in_text(detail) or detail
     if isinstance(detail, list) and detail:
-        return str(detail[0])
+        return mask_secrets_in_text(str(detail[0])) or str(detail[0])
     if isinstance(detail, dict):
-        return str(detail.get("message") or detail.get("detail") or detail)
+        raw = str(detail.get("message") or detail.get("detail") or detail)
+        return mask_secrets_in_text(raw) or raw
     return "Request failed"
 
 
@@ -69,12 +71,13 @@ def build_error_body(
     legacy_detail: Any = None,
 ) -> dict[str, Any]:
     rid = get_request_id()
+    safe_details = scrub_sensitive_dict(details) if details else {}
     body: dict[str, Any] = {
         "detail": legacy_detail if legacy_detail is not None else message,
         "error": {
             "code": code,
-            "message": message,
-            "details": details or {},
+            "message": mask_secrets_in_text(message) or message,
+            "details": safe_details or {},
             "request_id": rid,
         },
     }

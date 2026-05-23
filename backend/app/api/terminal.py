@@ -21,16 +21,32 @@ router = APIRouter(tags=["terminal"])
 
 
 def _user_from_ws_token(db: Session, token: str | None) -> User:
-    from app.api.deps import _user_from_token
+    from app.api.deps import _auth_from_token
     from app.core.config import settings
     from app.db.bootstrap import get_or_create_dev_user
+    from app.services.api_token_scope_service import ensure_api_token_scope
 
     if not token or not str(token).strip():
         if settings.auth_require_login:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
         return get_or_create_dev_user(db)
     try:
-        return _user_from_token(db, str(token).strip())
+        ctx = _auth_from_token(db, str(token).strip())
+        ensure_api_token_scope(
+            auth_method=ctx.auth_method,
+            token_scopes=ctx.token_scopes,
+            method="GET",
+            path="/terminal-sessions/ws",
+        )
+        if ctx.auth_method == "api_token":
+            from app.core.api_token_scopes import token_has_scope
+
+            if not token_has_scope(ctx.token_scopes, "runtime:operate"):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="API token lacks required scope: runtime:operate",
+                )
+        return ctx.user
     except HTTPException:
         if settings.auth_require_login:
             raise

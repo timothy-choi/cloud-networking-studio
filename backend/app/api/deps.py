@@ -1,23 +1,36 @@
-"""FastAPI dependencies: DB session, current user, JWT + API tokens."""
+"""FastAPI dependencies: DB session, current user, JWT + API tokens (Step 53D scopes)."""
 
 from __future__ import annotations
 
-from typing import Annotated
+from dataclasses import dataclass
+from typing import Annotated, Literal
 from uuid import UUID
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core.api_token_scopes import parse_stored_scopes
 from app.core.config import settings
 from app.core.security import decode_access_token, verify_api_token_secret
 from app.db.bootstrap import get_or_create_dev_user
 from app.db.session import get_db
 from app.models.api_token import ApiToken
 from app.models.user import User
+from app.services.api_token_scope_service import ensure_api_token_scope
 
 security = HTTPBearer(auto_error=False)
+
+AuthMethod = Literal["jwt", "api_token", "dev"]
+
+
+@dataclass
+class AuthContext:
+    user: User
+    auth_method: AuthMethod
+    api_token: ApiToken | None = None
+    token_scopes: set[str] | None = None
 
 
 def _user_from_jwt(db: Session, token: str) -> User:
@@ -54,8 +67,8 @@ def _user_from_jwt(db: Session, token: str) -> User:
     return user
 
 
-def _user_from_api_token_bearer(db: Session, token: str) -> User | None:
-    """Resolve ``{token_id}.{secret}`` (single dot) to a user, or return ``None``."""
+def _auth_from_api_token_bearer(db: Session, token: str) -> AuthContext | None:
+    """Resolve ``{token_id}.{secret}`` (single dot) to auth context, or return ``None``."""
     if token.count(".") != 1:
         return None
     left, secret = token.split(".", 1)
@@ -75,10 +88,18 @@ def _user_from_api_token_bearer(db: Session, token: str) -> User | None:
     row.last_used_at = datetime.now(UTC)
     db.flush()
     db.commit()
-    return db.get(User, row.user_id)
+    user = db.get(User, row.user_id)
+    if user is None:
+        return None
+    return AuthContext(
+        user=user,
+        auth_method="api_token",
+        api_token=row,
+        token_scopes=parse_stored_scopes(row.scopes_json),
+    )
 
 
-def _user_from_token(db: Session, token: str) -> User:
+def _auth_from_token(db: Session, token: str) -> AuthContext:
     """JWT (three segments) or personal API token ``uuid.secret``."""
     raw = (token or "").strip()
     if not raw:
@@ -88,16 +109,54 @@ def _user_from_token(db: Session, token: str) -> User:
             headers={"WWW-Authenticate": "Bearer"},
         )
     if raw.count(".") == 2:
-        return _user_from_jwt(db, raw)
+        return AuthContext(user=_user_from_jwt(db, raw), auth_method="jwt")
     if raw.count(".") == 1:
-        u = _user_from_api_token_bearer(db, raw)
-        if u is not None:
-            return u
+        ctx = _auth_from_api_token_bearer(db, raw)
+        if ctx is not None:
+            return ctx
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired token",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def get_auth_context(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> AuthContext:
+    if settings.auth_require_login:
+        if creds is None or not creds.credentials:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        ctx = _auth_from_token(db, creds.credentials)
+    elif creds and creds.credentials:
+        try:
+            ctx = _auth_from_token(db, creds.credentials)
+        except HTTPException:
+            ctx = AuthContext(user=get_or_create_dev_user(db), auth_method="dev")
+    else:
+        ctx = AuthContext(user=get_or_create_dev_user(db), auth_method="dev")
+
+    ensure_api_token_scope(
+        auth_method=ctx.auth_method,
+        token_scopes=ctx.token_scopes,
+        method=request.method,
+        path=request.url.path,
+    )
+    return ctx
+
+
+def enforce_api_token_scopes(
+    request: Request,
+    ctx: Annotated[AuthContext, Depends(get_auth_context)],
+) -> None:
+    """Global dependency — scope checks run inside :func:`get_auth_context`."""
+    _ = ctx
 
 
 def require_bearer_user(
@@ -111,25 +170,8 @@ def require_bearer_user(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return _user_from_token(db, creds.credentials)
+    return _auth_from_token(db, creds.credentials).user
 
 
-def get_current_user(
-    db: Annotated[Session, Depends(get_db)],
-    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
-) -> User:
-    if settings.auth_require_login:
-        if creds is None or not creds.credentials:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Not authenticated",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        return _user_from_token(db, creds.credentials)
-
-    if creds and creds.credentials:
-        try:
-            return _user_from_token(db, creds.credentials)
-        except HTTPException:
-            pass
-    return get_or_create_dev_user(db)
+def get_current_user(ctx: Annotated[AuthContext, Depends(get_auth_context)]) -> User:
+    return ctx.user

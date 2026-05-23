@@ -11,33 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.request_context import get_request_id
 from app.models.audit_log import AuditLog
 
-_SENSITIVE_KEYS = frozenset(
-    {
-        "password",
-        "token",
-        "access_token",
-        "refresh_token",
-        "secret",
-        "authorization",
-        "jwt",
-        "api_key",
-    }
-)
-
-
-def _scrub_metadata(data: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not data:
-        return None
-    out: dict[str, Any] = {}
-    for k, v in data.items():
-        lk = k.lower()
-        if lk in _SENSITIVE_KEYS or "token" in lk or "secret" in lk:
-            out[k] = "[redacted]"
-        elif isinstance(v, dict):
-            out[k] = _scrub_metadata(v) or {}
-        else:
-            out[k] = v
-    return out
+from app.core.secret_masking import scrub_sensitive_dict
 
 
 def record_audit(
@@ -63,7 +37,7 @@ def record_audit(
         resource_type=resource_type,
         resource_id=res_id,
         status=status,
-        metadata_json=_scrub_metadata(metadata),
+        metadata_json=scrub_sensitive_dict(metadata),
         request_id=rid_str,
     )
     db.add(row)

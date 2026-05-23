@@ -4,6 +4,7 @@ export interface ApiTokenRow {
   id: string;
   name: string;
   token_hint: string;
+  scopes: string[] | null;
   created_at: string;
   last_used_at: string | null;
   revoked_at: string | null;
@@ -17,7 +18,10 @@ export async function listApiTokens(): Promise<ApiTokenRow[]> {
   return apiFetch<ApiTokenRow[]>('/api-tokens');
 }
 
-export async function createApiToken(body: { name: string }): Promise<ApiTokenCreated> {
+export async function createApiToken(body: {
+  name: string;
+  scopes?: string[] | null;
+}): Promise<ApiTokenCreated> {
   return apiFetch<ApiTokenCreated>('/api-tokens', {
     method: 'POST',
     body: JSON.stringify(body),

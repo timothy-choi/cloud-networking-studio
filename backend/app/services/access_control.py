@@ -127,6 +127,13 @@ def require_deployment_editor(db: Session, user: User, deployment_id: uuid.UUID)
     return dep
 
 
+def require_deployment_runtime_operator(
+    db: Session, user: User, deployment_id: uuid.UUID
+) -> Deployment:
+    """Terminal, exec, restart, and expose require member or owner."""
+    return require_deployment_editor(db, user, deployment_id)
+
+
 def get_node_for_user(db: Session, user: User, node_id: uuid.UUID) -> TopologyNode:
     stmt = (
         select(TopologyNode)

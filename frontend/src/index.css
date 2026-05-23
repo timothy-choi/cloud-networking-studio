@@ -53,4 +53,32 @@ body {
   .cns-disabled-control {
     @apply disabled:cursor-not-allowed disabled:opacity-[0.78];
   }
+
+  /** Interactive runtime terminal — full-size xterm viewport inside a sized shell */
+  .runtime-terminal-shell {
+    @apply w-full overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950;
+    min-height: 320px;
+    height: clamp(320px, 52vh, 520px);
+  }
+  @media (min-width: 768px) {
+    .runtime-terminal-shell {
+      min-height: 420px;
+      height: clamp(420px, 55vh, 520px);
+    }
+  }
+  .runtime-terminal-host {
+    @apply h-full w-full min-h-0;
+    overflow: hidden;
+  }
+  .runtime-terminal-host .xterm {
+    height: 100%;
+    width: 100%;
+    padding: 0;
+  }
+  .runtime-terminal-host .xterm-viewport {
+    overflow-y: auto;
+  }
+  .runtime-terminal-host .xterm-screen {
+    line-height: 1.2;
+  }
 }

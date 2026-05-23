@@ -55,14 +55,24 @@ function connBadgeClass(state: ConnState): string {
   }
 }
 
+function scheduleRefit(refit: () => void) {
+  requestAnimationFrame(() => {
+    refit();
+    requestAnimationFrame(refit);
+  });
+}
+
 export function RuntimeTerminalTab({
   deploymentId,
   services,
   readOnly,
+  active = true,
 }: {
   deploymentId: string;
   services: RuntimeAccessResourceRow[];
   readOnly?: boolean;
+  /** When false, tab is hidden — refit when it becomes visible again. */
+  active?: boolean;
 }) {
   const [serviceId, setServiceId] = useState('');
   const [connState, setConnState] = useState<ConnState>('idle');
@@ -73,6 +83,7 @@ export function RuntimeTerminalTab({
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const serviceIdRef = useRef(serviceId);
   const intentionalCloseRef = useRef(false);
@@ -87,6 +98,31 @@ export function RuntimeTerminalTab({
   useEffect(() => {
     if (!serviceId && selectable[0]?.id) setServiceId(selectable[0].id);
   }, [serviceId, selectable]);
+
+  const refitTerminal = useCallback((notifyRemote = true) => {
+    const term = termRef.current;
+    const fit = fitRef.current;
+    const shell = shellRef.current;
+    if (!term || !fit || !shell) return;
+    if (shell.clientWidth <= 0 || shell.clientHeight <= 0) return;
+    try {
+      fit.fit();
+      if (notifyRemote) {
+        const ws = wsRef.current;
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: 'resize',
+              cols: term.cols,
+              rows: term.rows,
+            }),
+          );
+        }
+      }
+    } catch {
+      /* ignore fit errors during layout transitions */
+    }
+  }, []);
 
   const teardown = useCallback(async (closeSession: boolean) => {
     intentionalCloseRef.current = true;
@@ -108,11 +144,13 @@ export function RuntimeTerminalTab({
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
+    const shell = shellRef.current;
+    if (!host || !shell) return;
 
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: 14,
+      lineHeight: 1.2,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       theme: {
         background: '#09090b',
@@ -124,32 +162,16 @@ export function RuntimeTerminalTab({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
-    fit.fit();
+    scheduleRefit(() => refitTerminal(false));
     term.writeln('Select a service and press Connect.');
 
     termRef.current = term;
     fitRef.current = fit;
 
-    const onResize = () => {
-      try {
-        fit.fit();
-        const ws = wsRef.current;
-        if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(
-            JSON.stringify({
-              type: 'resize',
-              cols: term.cols,
-              rows: term.rows,
-            }),
-          );
-        }
-      } catch {
-        /* ignore */
-      }
-    };
+    const onResize = () => refitTerminal(true);
     window.addEventListener('resize', onResize);
     const ro = new ResizeObserver(onResize);
-    ro.observe(host);
+    ro.observe(shell);
 
     return () => {
       window.removeEventListener('resize', onResize);
@@ -159,7 +181,12 @@ export function RuntimeTerminalTab({
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [teardown]);
+  }, [refitTerminal, teardown]);
+
+  useEffect(() => {
+    if (!active) return;
+    scheduleRefit(() => refitTerminal(true));
+  }, [active, refitTerminal]);
 
   function applyControlFrame(frame: TerminalControlFrame, ws: WebSocket): void {
     switch (frame.type) {
@@ -173,6 +200,7 @@ export function RuntimeTerminalTab({
         if (frame.message) {
           setErr(null);
         }
+        scheduleRefit(() => refitTerminal(true));
         break;
       case 'error':
         setConnState('error');
@@ -209,6 +237,7 @@ export function RuntimeTerminalTab({
         term.clear();
         term.writeln(mode === 'reconnect' ? 'Reconnecting…' : 'Connecting…');
       }
+      scheduleRefit(() => refitTerminal(false));
 
       try {
         const session = await createTerminalSession(deploymentId, sid);
@@ -224,18 +253,7 @@ export function RuntimeTerminalTab({
         ws.onopen = () => {
           setConnState('connected');
           setBusy(false);
-          const t = termRef.current;
-          const f = fitRef.current;
-          if (t && f) {
-            f.fit();
-            ws.send(
-              JSON.stringify({
-                type: 'resize',
-                cols: t.cols,
-                rows: t.rows,
-              }),
-            );
-          }
+          scheduleRefit(() => refitTerminal(true));
           if (termRef.current) {
             const disposable = termRef.current.onData((data) => {
               if (ws.readyState === WebSocket.OPEN) {
@@ -276,12 +294,12 @@ export function RuntimeTerminalTab({
         };
       } catch (e) {
         setConnState('error');
-        setErr(e instanceof ApiError ? formatApiError(e) : 'Could not open terminal.');
+        setErr(e instanceof ApiError ? formatApiError(e) : 'Could not open terminal session.');
         termRef.current?.writeln('\r\n\x1b[31mFailed to open terminal session.\x1b[0m');
         setBusy(false);
       }
     },
-    [deploymentId, readOnly, teardown],
+    [deploymentId, readOnly, refitTerminal, teardown],
   );
 
   async function disconnect() {
@@ -310,7 +328,7 @@ export function RuntimeTerminalTab({
   const connected = connState === 'connected';
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-3">
       <p className="text-xs text-cns-muted">
         Interactive shell inside the workload (advanced). Safe exec remains available for allowlisted
         diagnostics. Members and owners only. Sessions idle-timeout and are audited on the server.
@@ -394,11 +412,9 @@ export function RuntimeTerminalTab({
 
       {err ? <p className="text-sm text-red-700 dark:text-red-300">{err}</p> : null}
 
-      <div
-        ref={hostRef}
-        className="h-64 w-full overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 p-1"
-        aria-label="Terminal"
-      />
+      <div ref={shellRef} className="runtime-terminal-shell shrink-0">
+        <div ref={hostRef} className="runtime-terminal-host" aria-label="Terminal" />
+      </div>
     </div>
   );
 }

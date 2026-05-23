@@ -20,15 +20,11 @@ func short8(id string) string {
 }
 
 // NamespaceFor builds a deterministic namespace name per deployment (RFC 1123, max 63 chars).
-// With project_id: cns-p-{proj8}-d-{dep8}. Without: cns-t-{topo8}-d-{dep8}.
+// Pattern: cns-deploy-{first 8 hex of deployment UUID}.
 func NamespaceFor(projectID, topologyID, deploymentID string) string {
-	dep := short8(deploymentID)
-	var raw string
-	if strings.TrimSpace(projectID) != "" {
-		raw = "cns-p-" + short8(projectID) + "-d-" + dep
-	} else {
-		raw = "cns-t-" + short8(topologyID) + "-d-" + dep
-	}
+	_ = projectID
+	_ = topologyID
+	raw := "cns-deploy-" + short8(deploymentID)
 	return sanitizeRFC1123Label(raw)
 }
 

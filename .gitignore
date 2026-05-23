@@ -12,3 +12,5 @@ infra/terraform/*.tfvars
 !infra/terraform/terraform.tfvars.example
 .vercel
 .env*.local
+.kubeconfig.cns
+.kube/config

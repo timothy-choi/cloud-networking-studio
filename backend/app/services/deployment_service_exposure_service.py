@@ -129,11 +129,14 @@ def _build_kubernetes_exposure(dep: Deployment, res: DeploymentRuntimeResource) 
     svc = (res.runtime_name or "").strip()
     meta: dict[str, Any] = {
         "manual_port_forward_required": True,
+        "exposure_mode": "clusterip",
+        "public_access": "internal_only",
+        "internal_dns": f"{svc}.{ns}.svc.cluster.local" if ns and svc else None,
         "commands": [
             f"kubectl port-forward -n {ns} svc/{svc} 18080:80",
             "curl -sS http://127.0.0.1:18080/",
         ],
-        "notes": "ClusterIP services are not publicly reachable without Ingress/NodePort; port-forward is the supported baseline.",
+        "notes": "ClusterIP services are internal-only unless NodePort is configured on the node (kubernetes_service_type=NodePort) or you use port-forward/Ingress.",
     }
     if ns and svc:
         return "kubernetes_service", None, None, None, meta

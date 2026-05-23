@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -39,6 +40,43 @@ func baseLabels(req *model.DeploymentRequest) map[string]string {
 		l["project_id"] = pid
 	}
 	return l
+}
+
+func defaultResourceRequirements() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("50m"),
+			corev1.ResourceMemory: resource.MustParse("64Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("500m"),
+			corev1.ResourceMemory: resource.MustParse("512Mi"),
+		},
+	}
+}
+
+func serviceTypeForNode(pn model.PlanNode) corev1.ServiceType {
+	if pn.KubernetesServiceType != nil {
+		switch strings.ToLower(strings.TrimSpace(*pn.KubernetesServiceType)) {
+		case "nodeport", "node_port":
+			return corev1.ServiceTypeNodePort
+		}
+	}
+	return corev1.ServiceTypeClusterIP
+}
+
+func lookupPodIP(ctx context.Context, client kubernetes.Interface, ns, nodeID string) string {
+	sel := "cns.io/node-id=" + strings.TrimSpace(nodeID)
+	pods, err := client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: sel})
+	if err != nil {
+		return ""
+	}
+	for _, p := range pods.Items {
+		if strings.TrimSpace(p.Status.PodIP) != "" {
+			return p.Status.PodIP
+		}
+	}
+	return ""
 }
 
 func resolveImage(img *string) string {
@@ -188,11 +226,12 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 			envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
 		}
 		container := corev1.Container{
-			Name:    cnsContainerName,
-			Image:   img,
-			Command: cmdSlice,
-			Ports:   containerPorts,
-			Env:     envVars,
+			Name:      cnsContainerName,
+			Image:     img,
+			Command:   cmdSlice,
+			Ports:     containerPorts,
+			Env:       envVars,
+			Resources: defaultResourceRequirements(),
 		}
 		if hcPath := nodeconfig.HealthCheckPath(pn); hcPath != "" {
 			hcPort := int32(nodeconfig.HealthCheckPort(pn, portNum))
@@ -257,6 +296,7 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 				Protocol:   corev1.ProtocolTCP,
 			}}
 		}
+		svcType := serviceTypeForNode(pn)
 		svc := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      svcName,
@@ -266,7 +306,7 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 			Spec: corev1.ServiceSpec{
 				Selector: map[string]string{"cns.io/node-id": strings.TrimSpace(pn.ID)},
 				Ports:    svcPorts,
-				Type:     corev1.ServiceTypeClusterIP,
+				Type:     svcType,
 			},
 		}
 		if _, err := client.CoreV1().Services(ns).Get(ctx, svcName, metav1.GetOptions{}); apierrors.IsNotFound(err) {
@@ -287,9 +327,18 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 		metaBase := nodeconfig.PlanNodeRuntimeMeta(pn, img, cmd)
 		metaBase["deployment"] = dname
 		metaBase["service"] = svcName
-		metaBase["cluster_service_type"] = "ClusterIP"
-		metaBase["public_access"] = "manual_port_forward_required"
-		metaBase["manual_port_forward_cmd"] = fmt.Sprintf("kubectl port-forward -n %s svc/%s 8080:%d", ns, svcName, portNum)
+		metaBase["cluster_service_type"] = string(svcType)
+		if svcType == corev1.ServiceTypeNodePort {
+			metaBase["public_access"] = "nodeport"
+			metaBase["exposure_mode"] = "nodeport"
+		} else {
+			metaBase["public_access"] = "internal_only"
+			metaBase["exposure_mode"] = "clusterip"
+			metaBase["manual_port_forward_cmd"] = fmt.Sprintf("kubectl port-forward -n %s svc/%s 8080:%d", ns, svcName, portNum)
+		}
+		if podIP := lookupPodIP(ctx, client, ns, nid); podIP != "" {
+			metaBase["actual_runtime_ip"] = podIP
+		}
 		accessResources = append(accessResources, model.RuntimeAccessResource{
 			Type:               "node",
 			NodeID:             nid,
@@ -302,10 +351,16 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 			Metadata:           metaBase,
 		})
 		svcMeta := map[string]string{
-			"dns":                     fmt.Sprintf("%s.%s.svc.cluster.local", svcName, ns),
-			"cluster_service_type":    "ClusterIP",
-			"public_access":           "manual_port_forward_required",
-			"manual_port_forward_cmd": fmt.Sprintf("kubectl port-forward -n %s svc/%s 8080:%d", ns, svcName, portNum),
+			"dns":                  fmt.Sprintf("%s.%s.svc.cluster.local", svcName, ns),
+			"cluster_service_type": string(svcType),
+		}
+		if svcType == corev1.ServiceTypeNodePort {
+			svcMeta["public_access"] = "nodeport"
+			svcMeta["exposure_mode"] = "nodeport"
+		} else {
+			svcMeta["public_access"] = "internal_only"
+			svcMeta["exposure_mode"] = "clusterip"
+			svcMeta["manual_port_forward_cmd"] = fmt.Sprintf("kubectl port-forward -n %s svc/%s 8080:%d", ns, svcName, portNum)
 		}
 		for k, v := range metaBase {
 			svcMeta[k] = v

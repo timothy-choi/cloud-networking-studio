@@ -1158,7 +1158,18 @@ export function RuntimeAccessPanel({
             </div>
             <div>
               <dt className="text-xs uppercase tracking-wide text-cns-label">Runtime provider</dt>
-              <dd className="mt-1 text-sm font-medium">{data.runtime_provider}</dd>
+              <dd className="mt-1 text-sm font-medium">
+                {data.runtime_provider ?? '—'}
+                {data.runtime_provider === 'kubernetes' ? (
+                  <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
+                    advanced
+                  </span>
+                ) : (
+                  <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200">
+                    default
+                  </span>
+                )}
+              </dd>
             </div>
             <div>
               <dt className="text-xs uppercase tracking-wide text-cns-label">Namespace / network</dt>

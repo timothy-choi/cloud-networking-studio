@@ -15,6 +15,7 @@ type PlanNode struct {
 	TerminalEnabled *bool               `json:"terminal_enabled,omitempty"`
 	HealthCheck map[string]interface{} `json:"health_check,omitempty"`
 	Description *string                `json:"description,omitempty"`
+	KubernetesServiceType *string      `json:"kubernetes_service_type,omitempty"`
 }
 
 type PlanLink struct {
@@ -88,16 +89,18 @@ type DeploymentResponse struct {
 }
 
 type RuntimeStatus struct {
-	Status                 string `json:"status"`
-	RuntimeProvider        string `json:"runtime_provider"`
-	DockerReachable        bool   `json:"docker_reachable"`
-	KubernetesReachable    bool   `json:"kubernetes_reachable"`
-	CurrentContext         string `json:"current_context,omitempty"`
-	Message                string `json:"message,omitempty"`
-	BackendStatus          string `json:"backend_status,omitempty"`
-	RuntimeExecutor        string `json:"runtime_executor,omitempty"`
-	RunnerReachable        *bool  `json:"runner_reachable,omitempty"`
-	LastRuntimeError       string `json:"last_runtime_error,omitempty"`
+	Status              string `json:"status"`
+	RuntimeProvider     string `json:"runtime_provider"`
+	DockerReachable     bool   `json:"docker_reachable"`
+	KubernetesReachable bool   `json:"kubernetes_reachable"`
+	CurrentContext      string `json:"current_context,omitempty"`
+	KubeconfigSource    string `json:"kubeconfig_source,omitempty"`
+	KubernetesInitError string `json:"kubernetes_init_error,omitempty"`
+	Message             string `json:"message,omitempty"`
+	BackendStatus       string `json:"backend_status,omitempty"`
+	RuntimeExecutor     string `json:"runtime_executor,omitempty"`
+	RunnerReachable     *bool  `json:"runner_reachable,omitempty"`
+	LastRuntimeError    string `json:"last_runtime_error,omitempty"`
 }
 
 type ResourceRef struct {

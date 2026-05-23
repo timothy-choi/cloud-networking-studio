@@ -73,6 +73,17 @@ def test_effective_runtime_executor_prefers_process_environ(monkeypatch):
     assert grc.effective_runtime_executor() == "go"
 
 
+def test_go_executor_kubernetes_uses_hybrid_provider(monkeypatch):
+    monkeypatch.delenv("CNS_USE_FAKE_DOCKER", raising=False)
+    monkeypatch.setenv("RUNTIME_EXECUTOR", "go")
+    from app.providers.go_hybrid_kubernetes_runtime_provider import (
+        GoHybridKubernetesRuntimeProvider,
+    )
+
+    prov = runtime_provider_for_topology("kubernetes")
+    assert isinstance(prov, GoHybridKubernetesRuntimeProvider)
+
+
 def test_go_executor_uses_hybrid_provider(go_executor_no_fake_docker):
     prov = runtime_provider_for_topology("docker")
     assert isinstance(prov, GoHybridDockerRuntimeProvider)

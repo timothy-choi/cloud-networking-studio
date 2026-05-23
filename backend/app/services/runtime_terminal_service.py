@@ -144,8 +144,9 @@ def create_terminal_session(
     msg = None
     if prov_name == "kubernetes":
         msg = (
-            "Kubernetes: interactive attach is not available in this build. "
-            "Use kubectl exec from the Use deployment tab, or Safe exec for allowlisted commands."
+            "Kubernetes interactive terminal attach runs through the Go runner when RUNTIME_EXECUTOR=go. "
+            "Shell fallback order: /bin/sh, sh, /bin/bash, bash. "
+            "If no shell is available in the image, use Safe exec or kubectl exec from Runtime instructions."
         )
 
     return TerminalSessionCreateResponse(

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,11 +22,13 @@ import (
 
 // Server exposes the Go runner HTTP API.
 type Server struct {
-	provider string
-	cli      *docker.Client
-	k8s      kubernetes.Interface
-	k8sCfg   *rest.Config
-	k8sCtx   string
+	provider           string
+	cli                *docker.Client
+	k8s                kubernetes.Interface
+	k8sCfg             *rest.Config
+	k8sCtx             string
+	kubeconfigSource   string
+	kubernetesInitErr  string
 }
 
 func NewServer() (*Server, error) {
@@ -33,23 +36,43 @@ func NewServer() (*Server, error) {
 	s := &Server{provider: prov}
 	switch prov {
 	case "kubernetes":
-		cs, cfg, ctxName, err := rk8s.NewClientset()
+		cs, cfg, meta, err := rk8s.NewClientsetWithMeta()
+		s.k8sCtx = meta.Context
+		s.kubeconfigSource = meta.Source
 		if err != nil {
-			return nil, fmt.Errorf("runner kubernetes client: %w", err)
+			s.kubernetesInitErr = err.Error()
+			break
 		}
-		s.k8s, s.k8sCfg, s.k8sCtx = cs, cfg, ctxName
+		if msg := rk8s.ProductionBlocked(meta, os.Getenv("CNS_ENVIRONMENT")); msg != "" {
+			s.kubernetesInitErr = msg
+			break
+		}
+		s.k8s, s.k8sCfg = cs, cfg
 	default:
 		cli, err := rdocker.NewClient()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("runner docker client: %w", err)
 		}
 		s.cli = cli
+	}
+	// Optional docker probe for status diagnostics (even when primary provider is kubernetes).
+	if s.cli == nil {
+		if cli, err := rdocker.NewClient(); err == nil {
+			s.cli = cli
+		}
 	}
 	return s, nil
 }
 
 func (s *Server) useKubernetes() bool {
 	return s.provider == "kubernetes"
+}
+
+func (s *Server) kubernetesUnavailableMessage() string {
+	if strings.TrimSpace(s.kubernetesInitErr) != "" {
+		return s.kubernetesInitErr
+	}
+	return "kubernetes client not initialized"
 }
 
 // Handler returns the root HTTP handler.
@@ -97,13 +120,16 @@ func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 		prov = "docker"
 	}
 	st := model.RuntimeStatus{
-		RuntimeProvider: prov,
+		RuntimeProvider:     prov,
+		CurrentContext:      s.k8sCtx,
+		KubeconfigSource:    s.kubeconfigSource,
+		KubernetesInitError: s.kubernetesInitErr,
 	}
 
 	if s.cli != nil {
 		_, err := s.cli.Info()
 		st.DockerReachable = err == nil
-		if err != nil {
+		if err != nil && st.Message == "" {
 			st.Message = err.Error()
 		}
 	}
@@ -111,9 +137,13 @@ func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 	if s.k8s != nil {
 		err := rk8s.ProbeCluster(ctx, s.k8s)
 		st.KubernetesReachable = err == nil
-		st.CurrentContext = s.k8sCtx
 		if err != nil && st.Message == "" {
 			st.Message = err.Error()
+		}
+	} else if s.kubernetesInitErr != "" {
+		st.KubernetesReachable = false
+		if st.Message == "" {
+			st.Message = s.kubernetesInitErr
 		}
 	}
 
@@ -123,6 +153,9 @@ func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 			st.Status = "ok"
 		} else {
 			st.Status = "degraded"
+			if st.KubernetesInitError == "" && s.kubernetesInitErr != "" {
+				st.KubernetesInitError = s.kubernetesInitErr
+			}
 		}
 	default:
 		if st.DockerReachable {
@@ -152,7 +185,7 @@ func (s *Server) handlePostDeployment(w http.ResponseWriter, r *http.Request) {
 	var resp model.DeploymentResponse
 	if s.useKubernetes() {
 		if s.k8s == nil {
-			msg := "kubernetes client not initialized"
+			msg := s.kubernetesUnavailableMessage()
 			resp = model.DeploymentResponse{Status: "failed", RuntimeProvider: "kubernetes", Error: &msg}
 		} else {
 			resp = rk8s.Deploy(ctx, s.k8s, &req)
@@ -193,7 +226,7 @@ func (s *Server) handleDeleteDeploymentID(w http.ResponseWriter, r *http.Request
 	var resp model.DeploymentResponse
 	if s.useKubernetes() {
 		if s.k8s == nil {
-			msg := "kubernetes client not initialized"
+			msg := s.kubernetesUnavailableMessage()
 			resp = model.DeploymentResponse{Status: "failed", RuntimeProvider: "kubernetes", Error: &msg}
 		} else {
 			events := rk8s.DestroyDeployment(ctx, s.k8s, topologyID, deploymentID, projectID)
@@ -235,7 +268,7 @@ func (s *Server) handleGetDeploymentID(w http.ResponseWriter, r *http.Request) {
 
 	if s.useKubernetes() {
 		if s.k8s == nil {
-			http.Error(w, "kubernetes client not initialized", http.StatusInternalServerError)
+			http.Error(w, s.kubernetesUnavailableMessage(), http.StatusInternalServerError)
 			return
 		}
 		out := rk8s.GetDeploymentStatus(ctx, s.k8s, topologyID, deploymentID, projectID)
@@ -291,7 +324,7 @@ func (s *Server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 
 	if s.useKubernetes() {
 		if s.k8s == nil {
-			msg := "kubernetes client not initialized"
+			msg := s.kubernetesUnavailableMessage()
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(model.LogsResponse{DeploymentID: deploymentID, NodeID: nodeID, Error: &msg})
@@ -338,7 +371,7 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	var resp model.TrafficResponse
 	if s.useKubernetes() {
 		if s.k8s == nil || s.k8sCfg == nil {
-			msg := "kubernetes client not initialized"
+			msg := s.kubernetesUnavailableMessage()
 			resp = model.TrafficResponse{ExitCode: 1, Success: false, Error: &msg}
 		} else {
 			resp = rk8s.RunTrafficTest(ctx, s.k8sCfg, s.k8s, &req)
@@ -386,7 +419,7 @@ func (s *Server) handleRuntimeDeploymentLogs(w http.ResponseWriter, r *http.Requ
 
 	if s.useKubernetes() {
 		if s.k8s == nil {
-			writeRuntimeLogsError(w, http.StatusInternalServerError, deploymentID, "", "kubernetes", "kubernetes client not initialized")
+			writeRuntimeLogsError(w, http.StatusInternalServerError, deploymentID, "", "kubernetes", s.kubernetesUnavailableMessage())
 			return
 		}
 		tail64 := int64(tail)
@@ -453,7 +486,7 @@ func (s *Server) handleRuntimeServiceLogs(w http.ResponseWriter, r *http.Request
 	if s.useKubernetes() {
 		out.RuntimeProvider = "kubernetes"
 		if s.k8s == nil {
-			writeRuntimeLogsError(w, http.StatusInternalServerError, deploymentID, nodeID, "kubernetes", "kubernetes client not initialized")
+			writeRuntimeLogsError(w, http.StatusInternalServerError, deploymentID, nodeID, "kubernetes", s.kubernetesUnavailableMessage())
 			return
 		}
 		tail64 := int64(tail)
@@ -519,7 +552,7 @@ func (s *Server) handleRuntimeServiceHealth(w http.ResponseWriter, r *http.Reque
 	var resp model.RuntimeHealthResponse
 	if s.useKubernetes() {
 		if s.k8s == nil || s.k8sCfg == nil {
-			resp = model.RuntimeHealthResponse{Status: "failed", Target: "", Message: "kubernetes client not initialized"}
+			resp = model.RuntimeHealthResponse{Status: "unsupported", Target: "", Message: s.kubernetesUnavailableMessage()}
 			ms := time.Since(start).Milliseconds()
 			resp.LatencyMs = &ms
 			w.Header().Set("Content-Type", "application/json")
@@ -575,7 +608,7 @@ func (s *Server) handleRuntimeTrafficTests(w http.ResponseWriter, r *http.Reques
 		if s.k8s == nil || s.k8sCfg == nil {
 			out = model.RuntimeTrafficOpResponse{
 				Status: "failed", Source: req.SourceNodeID, Target: req.Target, Protocol: req.Protocol,
-				Output: "kubernetes client not initialized",
+				Output: s.kubernetesUnavailableMessage(),
 			}
 		} else {
 			out = rk8s.RunRuntimeTrafficOp(ctx, s.k8sCfg, s.k8s, req)

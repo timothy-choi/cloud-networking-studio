@@ -69,20 +69,20 @@ func (s *Server) handleRuntimeServiceExec(w http.ResponseWriter, r *http.Request
 
 	var stdout, stderr string
 	var exitCode int
-	var st string
+	var st, msg string
 
 	if s.useKubernetes() {
 		if s.k8s == nil || s.k8sCfg == nil {
 			writeExecUnsupported(w, deploymentID, nodeID, cmd, started, prov, "kubernetes client not initialized")
 			return
 		}
-		stdout, stderr, exitCode, st = rk8s.SafeExecWorkload(ctx, s.k8sCfg, s.k8s, topologyID, deploymentID, projectID, nodeID, argv, timeout)
+		stdout, stderr, exitCode, st, msg = rk8s.SafeExecWorkload(ctx, s.k8sCfg, s.k8s, topologyID, deploymentID, projectID, nodeID, argv, timeout)
 	} else {
 		if s.cli == nil {
 			writeExecUnsupported(w, deploymentID, nodeID, cmd, started, prov, "docker client not initialized")
 			return
 		}
-		stdout, stderr, exitCode, st = rdocker.SafeExecWorkload(ctx, s.cli, topologyID, nodeID, argv, timeout)
+		stdout, stderr, exitCode, st, msg = rdocker.SafeExecWorkload(ctx, s.cli, topologyID, nodeID, argv, timeout)
 	}
 
 	finished := time.Now().UTC().Format(time.RFC3339Nano)
@@ -91,6 +91,7 @@ func (s *Server) handleRuntimeServiceExec(w http.ResponseWriter, r *http.Request
 		ServiceID:       nodeID,
 		Command:         cmd,
 		Status:          st,
+		Message:         msg,
 		Stdout:          stdout,
 		Stderr:          stderr,
 		StartedAt:       started,

@@ -1,5 +1,10 @@
 /** Protocol-aware health check configuration stored in node.config.health_check */
 
+import {
+  DEBUG_TOOLBOX_RECOMMENDATION,
+  inferHealthWarningsFromCapabilities,
+} from './imageCapabilities';
+
 export type HealthCheckType = 'runtime' | 'tcp' | 'http' | 'command' | 'none';
 
 export interface HealthCheckFields {
@@ -91,29 +96,7 @@ export function healthCheckToConfig(fields: HealthCheckFields): Record<string, u
 }
 
 export function inferHealthWarnings(image: string, command: string, hc: HealthCheckFields): string[] {
-  const warnings: string[] = [];
-  const il = image.toLowerCase();
-  const base =
-    il.includes('ubuntu') ||
-    il.includes('debian') ||
-    il.includes('alpine') ||
-    il.includes('python') ||
-    il.includes('node');
-  if (base && !command.trim()) {
-    warnings.push(
-      'Base/runtime images usually need a long-running command such as sleep infinity, or a server startup command.',
-    );
-  }
-  if (hc.check_type === 'http' && base && !il.includes('nginx') && !il.includes('httpd')) {
-    warnings.push('This image may not expose an HTTP service unless you configure one.');
-  }
-  if (hc.check_type === 'http' || hc.check_type === 'tcp') {
-    warnings.push(
-      'For curl, dig, ping, traceroute, tcpdump, add a Debug Toolbox node (e.g. nicolaka/netshoot).',
-    );
-  }
-  return warnings;
+  return inferHealthWarningsFromCapabilities(image, command, hc.check_type);
 }
 
-export const DEBUG_TOOLBOX_HINT =
-  'For curl, dig, ping, traceroute, tcpdump, use a Debug Toolbox node (nicolaka/netshoot).';
+export const DEBUG_TOOLBOX_HINT = DEBUG_TOOLBOX_RECOMMENDATION;

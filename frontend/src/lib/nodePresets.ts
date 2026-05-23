@@ -44,6 +44,49 @@ export const NODE_PRESETS: NodePreset[] = [
     healthCheck: { check_type: 'runtime' },
   },
   {
+    id: 'ubuntu-debug-client',
+    label: 'Ubuntu debug client (bootstrap)',
+    description:
+      'Installs ping/ip/curl via apt on first start — user-selected preset, not silent auto-install.',
+    node_type: 'host',
+    image: 'ubuntu:22.04',
+    runtime: {
+      role_label: 'debug_client',
+      command:
+        'bash -lc "apt-get update && apt-get install -y iproute2 iputils-ping curl dnsutils netcat-openbsd && sleep infinity"',
+      terminal_enabled: true,
+    },
+    healthCheck: { check_type: 'runtime' },
+  },
+  {
+    id: 'ubuntu-http-server',
+    label: 'Ubuntu HTTP server (bootstrap)',
+    description: 'Installs python3 and serves HTTP on port 80 via explicit bootstrap command.',
+    node_type: 'generic',
+    image: 'ubuntu:22.04',
+    runtime: {
+      role_label: 'http_server',
+      command:
+        'bash -lc "apt-get update && apt-get install -y python3 curl && python3 -m http.server 80"',
+      portsJson: JSON.stringify([{ port: 80, target_port: 80 }], null, 2),
+    },
+    healthCheck: { check_type: 'http', port: '80', path: '/' },
+  },
+  {
+    id: 'alpine-debug-client',
+    label: 'Alpine debug client (bootstrap)',
+    description: 'Installs network tools via apk — explicit preset command only.',
+    node_type: 'host',
+    image: 'alpine:latest',
+    runtime: {
+      role_label: 'debug_client',
+      command:
+        'sh -c "apk add --no-cache iproute2 iputils curl bind-tools netcat-openbsd && sleep infinity"',
+      terminal_enabled: true,
+    },
+    healthCheck: { check_type: 'runtime' },
+  },
+  {
     id: 'python-sandbox',
     label: 'Python sandbox',
     description: 'Python runtime image kept alive with sleep infinity.',
@@ -55,6 +98,19 @@ export const NODE_PRESETS: NodePreset[] = [
       terminal_enabled: true,
     },
     healthCheck: { check_type: 'runtime' },
+  },
+  {
+    id: 'python-http-server',
+    label: 'Python HTTP server',
+    description: 'Built-in http.server on port 80 — no package install required.',
+    node_type: 'generic',
+    image: 'python:3.12',
+    runtime: {
+      role_label: 'http_server',
+      command: 'python -m http.server 80',
+      portsJson: JSON.stringify([{ port: 80, target_port: 80 }], null, 2),
+    },
+    healthCheck: { check_type: 'http', port: '80', path: '/' },
   },
   {
     id: 'node-sandbox',

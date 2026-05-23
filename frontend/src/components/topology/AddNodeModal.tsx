@@ -9,6 +9,7 @@ import {
 } from '../../lib/nodeRuntimeConfig';
 import { healthCheckToConfig, type HealthCheckFields } from '../../lib/healthCheckConfig';
 import { HealthCheckFieldsForm, healthCheckFieldsFromRaw } from './HealthCheckFieldsForm';
+import { ImageCapabilityHints } from './ImageCapabilityHints';
 import {
   applyPreset,
   defaultImageForNodeType,
@@ -201,6 +202,7 @@ export function AddNodeModal({ open, initialNodeType, onClose, onSubmit }: AddNo
               placeholder="nginx:alpine"
             />
           </label>
+          <ImageCapabilityHints image={image} command={runtime.command} />
           <label className="block text-[11px] text-cns-field-label">
             Command
             <input
@@ -248,12 +250,12 @@ export function AddNodeModal({ open, initialNodeType, onClose, onSubmit }: AddNo
             Terminal enabled
           </label>
           <label className="block text-[11px] text-cns-field-label">
-            Bootstrap command (optional)
+            Bootstrap command (optional — not run unless you set command or pick a bootstrap preset)
             <input
               className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2 py-1.5 font-mono text-sm text-zinc-100"
               value={runtime.bootstrap_command}
               onChange={(e) => setRuntime((r) => ({ ...r, bootstrap_command: e.target.value }))}
-              placeholder="apt-get update && apt-get install -y git curl"
+              placeholder="Reference only — copy into Command, or use Ubuntu/Alpine debug preset"
             />
           </label>
           <HealthCheckFieldsForm

@@ -28,6 +28,7 @@ import { RuntimeAccessPanel } from '../components/runtime/RuntimeAccessPanel';
 import { SaveAsTemplateModal } from '../components/templates/SaveAsTemplateModal';
 import { Spinner } from '../components/Spinner';
 import { TopologyWorkspace } from '../components/topology/TopologyWorkspace';
+import { IaCExportPanel } from '../components/topology/IaCExportPanel';
 import { TrafficValidationSection } from '../components/traffic/TrafficValidationSection';
 import { useDeploymentEvents } from '../hooks/useDeploymentEvents';
 import { useFailures } from '../hooks/useFailures';
@@ -436,6 +437,12 @@ export function TopologyDetailPage() {
           deploymentStatus={deploymentStatus}
           latestSeverity={latestSeverity}
         />
+      )}
+
+      {topology && (
+        <CollapsibleSection title="IaC Export" defaultOpen={false}>
+          <IaCExportPanel topologyId={id} />
+        </CollapsibleSection>
       )}
 
       {topology && !deploymentId ? (

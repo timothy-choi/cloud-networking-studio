@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,7 +13,10 @@ from app.models.project_membership import ProjectMembership
 from app.models.user import User
 from app.schemas.auth import LoginRequest, MeResponse, RegisterRequest, TokenResponse, UserPublic
 from app.api.deps import require_bearer_user
+from app.api.request_util import client_ip
+from app.core.config import settings
 from app.services.audit_service import record_audit
+from app.services.rate_limit_service import check_rate_limit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -72,7 +75,12 @@ def _assert_register_password_policy(password: str) -> None:
     status_code=status.HTTP_201_CREATED,
     summary="Register a new user",
 )
-def register(body: RegisterRequest, db: Session = Depends(get_db)) -> TokenResponse:
+def register(body: RegisterRequest, request: Request, db: Session = Depends(get_db)) -> TokenResponse:
+    check_rate_limit(
+        key=f"auth:ip:{client_ip(request)}",
+        limit=settings.rate_limit_auth_per_ip,
+        action="register",
+    )
     _assert_register_password_policy(body.password)
     em = _normalize_email(str(body.email))
     if _user_by_email(db, em) is not None:
@@ -115,7 +123,12 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> TokenRespo
 
 
 @router.post("/login", response_model=TokenResponse, summary="Login")
-def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)) -> TokenResponse:
+    check_rate_limit(
+        key=f"auth:ip:{client_ip(request)}",
+        limit=settings.rate_limit_auth_per_ip,
+        action="login",
+    )
     em = _normalize_email(str(body.email))
     user = _user_by_email(db, em)
     if user is None:

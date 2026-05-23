@@ -32,6 +32,9 @@ from app.services.audit_service import record_audit
 from app.services.deployment_timeline_helpers import timeline_from_runner_message
 from app.services.deployment_timeline_service import record_timeline_event
 from app.services.deployment_validation import validate_topology_for_deploy
+from app.services.quota_service import ensure_can_deploy_project, ensure_topology_node_quota
+from app.core.config import settings
+from app.services.rate_limit_service import check_rate_limit
 
 
 def _append_event(
@@ -80,6 +83,13 @@ def execute_topology_deploy(
 ) -> Deployment | JSONResponse:
     """Create and run a deployment for ``topology_id``; same semantics as ``POST /topologies/{id}/deploy``."""
     topo = _topology_for_deploy(db, user, topology_id)
+    ensure_can_deploy_project(db, topo.project_id)
+    check_rate_limit(
+        key=f"deploy:user:{user.id}",
+        limit=settings.rate_limit_deploy_per_user,
+        action="deploy_topology",
+    )
+    ensure_topology_node_quota(db, topology_id, adding=0)
     alloc_mode = resolve_network_allocation_mode(topo, network_allocation_mode)
     if network_allocation_mode is not None:
         topo.config = merge_allocation_mode_into_config(topo.config, alloc_mode)
@@ -331,6 +341,35 @@ def execute_topology_deploy(
         status="success",
     )
     if outcome.runtime_access:
+        resources = outcome.runtime_access.get("resources") or []
+        service_count = sum(
+            1
+            for row in resources
+            if isinstance(row, dict) and str(row.get("type") or "").strip() == "service"
+        )
+        if service_count > settings.quota_max_services_per_deployment:
+            deployment.status = DeploymentStatus.FAILED
+            deployment.finished_at = datetime.now(UTC)
+            msg = (
+                f"Deployment failed: service quota exceeded "
+                f"({service_count}/{settings.quota_max_services_per_deployment})."
+            )
+            _append_event(db, deployment.id, msg, DeploymentEventLevel.ERROR)
+            record_timeline_event(
+                db,
+                deployment_id=deployment.id,
+                event_type=TimelineEventType.DEPLOY_FAILED,
+                message=msg,
+                status="failed",
+            )
+            db.commit()
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
+                "code": "QUOTA_EXCEEDED",
+                "message": msg,
+                "quota": "services_per_deployment",
+                "used": service_count,
+                "limit": settings.quota_max_services_per_deployment,
+            })
         replace_runtime_resources_from_payload(
             db, deployment.id, outcome.runtime_access
         )

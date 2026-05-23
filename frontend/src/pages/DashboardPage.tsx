@@ -10,6 +10,7 @@ import { CreateBlankTopologyModal } from '../components/CreateBlankTopologyModal
 import { CreateProjectModal } from '../components/CreateProjectModal';
 import { OnboardingChecklist } from '../components/OnboardingChecklist';
 import { ProjectMembersPanel } from '../components/ProjectMembersPanel';
+import { ProjectQuotaPanel } from '../components/project/ProjectQuotaPanel';
 import { Spinner } from '../components/Spinner';
 import { usePolling } from '../hooks/usePolling';
 import type { ControllerStatusResponse, HealthResponse, TopologyResponse } from '../types';
@@ -274,12 +275,13 @@ export function DashboardPage() {
           </button>
         </div>
         {projects.length > 0 && selectedProjectId ? (
-          <div className="mt-4">
+          <div className="mt-4 space-y-4">
             <ProjectMembersPanel
               projectId={selectedProjectId}
               myRole={projectRole ?? undefined}
               onChanged={() => void refresh()}
             />
+            <ProjectQuotaPanel projectId={selectedProjectId} />
           </div>
         ) : null}
         {projects.length === 0 ? (

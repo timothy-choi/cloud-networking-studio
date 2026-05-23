@@ -92,6 +92,81 @@ class Settings(BaseSettings):
         le=20,
         validation_alias="TERMINAL_MAX_SESSIONS_PER_USER",
     )
+    # --- Step 53B: project quotas (generous defaults for local dev) ---
+    quota_max_active_deployments_per_project: int = Field(
+        default=20,
+        ge=1,
+        le=500,
+        validation_alias="CNS_QUOTA_MAX_ACTIVE_DEPLOYMENTS_PER_PROJECT",
+    )
+    quota_max_nodes_per_topology: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+        validation_alias="CNS_QUOTA_MAX_NODES_PER_TOPOLOGY",
+    )
+    quota_max_services_per_deployment: int = Field(
+        default=30,
+        ge=1,
+        le=500,
+        validation_alias="CNS_QUOTA_MAX_SERVICES_PER_DEPLOYMENT",
+    )
+    quota_max_api_tokens_per_user: int = Field(
+        default=25,
+        ge=1,
+        le=200,
+        validation_alias="CNS_QUOTA_MAX_API_TOKENS_PER_USER",
+    )
+    # Optional deployment TTL (hours); 0 = disabled.
+    deployment_ttl_hours: int = Field(
+        default=0,
+        ge=0,
+        le=8760,
+        validation_alias="CNS_DEPLOYMENT_TTL_HOURS",
+    )
+    # --- Step 53B: per-user/IP rate limits (requests per window) ---
+    rate_limit_window_seconds: int = Field(
+        default=60,
+        ge=10,
+        le=3600,
+        validation_alias="CNS_RATE_LIMIT_WINDOW_SECONDS",
+    )
+    rate_limit_auth_per_ip: int = Field(
+        default=30,
+        ge=5,
+        le=500,
+        validation_alias="CNS_RATE_LIMIT_AUTH_PER_IP",
+    )
+    rate_limit_deploy_per_user: int = Field(
+        default=20,
+        ge=1,
+        le=500,
+        validation_alias="CNS_RATE_LIMIT_DEPLOY_PER_USER",
+    )
+    rate_limit_expose_per_user: int = Field(
+        default=30,
+        ge=1,
+        le=500,
+        validation_alias="CNS_RATE_LIMIT_EXPOSE_PER_USER",
+    )
+    rate_limit_terminal_per_user: int = Field(
+        default=20,
+        ge=1,
+        le=500,
+        validation_alias="CNS_RATE_LIMIT_TERMINAL_PER_USER",
+    )
+    rate_limit_exec_per_user: int = Field(
+        default=60,
+        ge=1,
+        le=1000,
+        validation_alias="CNS_RATE_LIMIT_EXEC_PER_USER",
+    )
+    rate_limit_download_per_user: int = Field(
+        default=60,
+        ge=1,
+        le=1000,
+        validation_alias="CNS_RATE_LIMIT_DOWNLOAD_PER_USER",
+    )
 
 
 settings = Settings()

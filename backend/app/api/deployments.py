@@ -62,6 +62,10 @@ from app.models.deployment_runtime_resource import DeploymentRuntimeResource
 from app.models.deployment_timeline import TimelineEventType
 from app.schemas.deployment_timeline import DeploymentTimelineResponse, TimelineEventRead
 from app.services.audit_service import record_audit
+from app.schemas.cleanup import DeploymentCleanupResponse, DeploymentCleanupStatusResponse
+from app.core.config import settings
+from app.services.cleanup_service import build_cleanup_status, run_deployment_cleanup
+from app.services.rate_limit_service import check_rate_limit
 from app.services.deployment_timeline_helpers import record_exposed_timeline
 from app.services.deployment_timeline_service import list_timeline_events, record_timeline_event
 
@@ -451,6 +455,11 @@ def post_deployment_runtime_service_exec(
     user: User = Depends(get_current_user),
 ) -> RuntimeExecResultResponse:
     require_deployment_editor(db, user, deployment_id)
+    check_rate_limit(
+        key=f"exec:user:{user.id}",
+        limit=settings.rate_limit_exec_per_user,
+        action="safe_exec",
+    )
     try:
         out = runtime_exec_svc.run_safe_exec(
             db,
@@ -622,6 +631,11 @@ def expose_runtime_service(
     payload: ServiceExposureCreate | None = Body(None),
 ) -> ServiceExposureResponse:
     dep = require_deployment_editor(db, user, deployment_id)
+    check_rate_limit(
+        key=f"expose:user:{user.id}",
+        limit=settings.rate_limit_expose_per_user,
+        action="expose_service",
+    )
     try:
         row = exposure_svc.create_exposure(
             db,
@@ -722,6 +736,11 @@ def get_deployment_integration_outputs(
     user: User = Depends(get_current_user),
 ) -> DeploymentIntegrationOutputsResponse:
     get_deployment_for_user(db, user, deployment_id)
+    check_rate_limit(
+        key=f"download:user:{user.id}",
+        limit=settings.rate_limit_download_per_user,
+        action="integration_outputs",
+    )
     try:
         body = integration_outputs_svc.build_deployment_integration_outputs(db, deployment_id)
     except ValueError:
@@ -773,6 +792,11 @@ def download_deployment_integration_output_file(
     user: User = Depends(get_current_user),
 ) -> Response:
     get_deployment_for_user(db, user, deployment_id)
+    check_rate_limit(
+        key=f"download:user:{user.id}",
+        limit=settings.rate_limit_download_per_user,
+        action="integration_outputs_download",
+    )
     try:
         spec, content = integration_outputs_svc.get_integration_output_file(db, deployment_id, file_name)
     except ValueError as exc:
@@ -811,6 +835,11 @@ def download_deployment_integration_outputs_archive(
     user: User = Depends(get_current_user),
 ) -> Response:
     get_deployment_for_user(db, user, deployment_id)
+    check_rate_limit(
+        key=f"download:user:{user.id}",
+        limit=settings.rate_limit_download_per_user,
+        action="integration_outputs_archive",
+    )
     try:
         payload = integration_outputs_svc.build_integration_outputs_archive(db, deployment_id)
     except ValueError:
@@ -870,6 +899,11 @@ def post_deployment_runtime_service_terminal(
     user: User = Depends(get_current_user),
 ) -> TerminalSessionCreateResponse:
     require_deployment_editor(db, user, deployment_id)
+    check_rate_limit(
+        key=f"terminal:user:{user.id}",
+        limit=settings.rate_limit_terminal_per_user,
+        action="terminal_open",
+    )
     try:
         body = terminal_svc.create_terminal_session(
             db, user.id, deployment_id, service_id
@@ -992,6 +1026,57 @@ def get_deployment_timeline(
     return DeploymentTimelineResponse(
         deployment_id=deployment_id,
         events=[TimelineEventRead.model_validate(e) for e in events],
+    )
+
+
+@router.get(
+    "/deployments/{deployment_id}/cleanup-status",
+    response_model=DeploymentCleanupStatusResponse,
+    summary="Deployment cleanup eligibility and resource status",
+)
+def get_deployment_cleanup_status(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DeploymentCleanupStatusResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        body = build_cleanup_status(db, deployment_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found") from None
+    return DeploymentCleanupStatusResponse.model_validate(body)
+
+
+@router.post(
+    "/deployments/{deployment_id}/cleanup",
+    response_model=DeploymentCleanupResponse,
+    summary="Run best-effort runtime cleanup for a deployment",
+)
+def post_deployment_cleanup(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DeploymentCleanupResponse:
+    dep = require_deployment_editor(db, user, deployment_id)
+    try:
+        out = run_deployment_cleanup(db, dep)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    topo = db.get(Topology, dep.topology_id)
+    record_audit(
+        db,
+        action="deployment.cleanup",
+        resource_type="deployment",
+        resource_id=dep.id,
+        project_id=topo.project_id if topo else None,
+        actor_user_id=user.id,
+        status="success",
+    )
+    db.commit()
+    return DeploymentCleanupResponse(
+        ok=bool(out.get("ok")),
+        deployment_id=deployment_id,
+        events=[{"message": e.get("message", "")} for e in out.get("events", [])],
     )
 
 

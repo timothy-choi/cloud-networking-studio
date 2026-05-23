@@ -23,6 +23,7 @@ ERROR_CODES = frozenset(
         "EXEC_UNSUPPORTED",
         "EXPORT_FAILED",
         "RATE_LIMITED",
+        "QUOTA_EXCEEDED",
         "INTERNAL_ERROR",
         "CONFLICT",
     }

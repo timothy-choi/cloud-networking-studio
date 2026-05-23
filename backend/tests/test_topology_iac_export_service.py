@@ -8,14 +8,15 @@ from app.services.node_runtime_config import extract_node_runtime_config
 from app.services.topology_iac_export_service import (
     DOCKER_COMPOSE_FILENAME,
     KUBERNETES_FILENAME,
-    TopologyExportBundle,
     ExportLink,
     ExportNode,
+    TopologyExportBundle,
     build_ansible_zip,
     build_iac_archive,
     build_terraform_zip,
     generate_docker_compose,
     generate_kubernetes_yaml,
+    validate_topology_export,
 )
 
 
@@ -110,3 +111,33 @@ def test_archive_contains_all_artifacts():
     assert KUBERNETES_FILENAME in names
     assert "terraform/main.tf" in names
     assert "ansible/playbook.yml" in names
+
+
+def test_validate_warnings_incomplete_node():
+    nid = uuid4()
+    runtime = extract_node_runtime_config({})
+    node = ExportNode(
+        id=nid,
+        name="blank",
+        node_type="host",
+        image=None,
+        ip_address=None,
+        service_name="blank-abc",
+        runtime=runtime,
+        health_check=None,
+    )
+    bundle = TopologyExportBundle(
+        topology_id=uuid4(),
+        topology_name="t",
+        description=None,
+        runtime_target="docker",
+        networking_mode="docker_bridge",
+        nodes=(node,),
+        links=(),
+        networks=("cns-network",),
+    )
+    warnings, _unsupported, todos = validate_topology_export(bundle)
+    codes = {w["code"] for w in warnings}
+    assert "missing_image" in codes
+    assert "no_ports_configured" in codes
+    assert any("skeleton" in t.lower() for t in todos)

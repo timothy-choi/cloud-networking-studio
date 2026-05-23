@@ -127,6 +127,11 @@ def build_runtime_instructions(
                 },
                 {
                     "method": "GET",
+                    "path": f"{api_base}/deployments/{dep_id}/integration-outputs",
+                    "description": "Integration outputs for apps, CI/CD, Docker Compose, and Kubernetes",
+                },
+                {
+                    "method": "GET",
                     "path": f"{api_base}/deployments/{dep_id}/runtime/instructions",
                     "description": "Integration snippets only",
                 },

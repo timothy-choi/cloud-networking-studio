@@ -39,6 +39,7 @@ from app.schemas.runtime_exec import (
     RuntimeExecResultResponse,
     RuntimeRestartResponse,
 )
+from app.schemas.integration_outputs import DeploymentIntegrationOutputsResponse
 from app.schemas.runtime_integration import (
     DeploymentIntegrationResponse,
     DeploymentRuntimeMappingResponse,
@@ -52,6 +53,7 @@ from app.schemas.service_exposure import (
 from app.services.deployment_service_exposure_service import DuplicateExposureError
 from app.services import deployment_service_exposure_service as exposure_svc
 from app.services import runtime_exec_service as runtime_exec_svc
+from app.services import integration_outputs_service as integration_outputs_svc
 from app.services import runtime_integration_service as integration_svc
 from app.services import runtime_operations_service as runtime_ops
 from app.services import runtime_state_service as runtime_svc
@@ -626,6 +628,28 @@ def get_deployment_runtime_integration(
     get_deployment_for_user(db, user, deployment_id)
     try:
         body = integration_svc.build_deployment_integration(db, deployment_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Deployment not found",
+        ) from None
+    db.commit()
+    return body
+
+
+@router.get(
+    "/deployments/{deployment_id}/integration-outputs",
+    response_model=DeploymentIntegrationOutputsResponse,
+    summary="Integration outputs for apps, CI/CD, Docker Compose, and Kubernetes",
+)
+def get_deployment_integration_outputs(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DeploymentIntegrationOutputsResponse:
+    get_deployment_for_user(db, user, deployment_id)
+    try:
+        body = integration_outputs_svc.build_deployment_integration_outputs(db, deployment_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

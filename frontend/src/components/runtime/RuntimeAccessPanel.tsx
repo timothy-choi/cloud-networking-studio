@@ -23,6 +23,7 @@ import { CopyButton } from './CopyButton';
 import { RuntimeMappingTab } from './RuntimeMappingTab';
 import { RuntimeTerminalTab } from './RuntimeTerminalTab';
 import { UseDeploymentTab } from './UseDeploymentTab';
+import { IntegrationOutputsTab } from './IntegrationOutputsTab';
 import type {
   DeploymentRuntimeDetailResponse,
   RuntimeAccessResourceRow,
@@ -32,6 +33,7 @@ import type {
 const TABS = [
   'overview',
   'use_deployment',
+  'integration_outputs',
   'mapping',
   'nodes',
   'services',
@@ -48,6 +50,7 @@ type TabId = (typeof TABS)[number];
 const TAB_LABEL: Record<TabId, string> = {
   overview: 'Overview',
   use_deployment: 'Use deployment',
+  integration_outputs: 'Use outside CNS',
   mapping: 'Topology → Runtime',
   nodes: 'Nodes',
   services: 'Services',
@@ -63,6 +66,7 @@ const TAB_LABEL: Record<TabId, string> = {
 const TAB_HINT: Record<TabId, string> = {
   overview: 'Deployment-level access summary and exposure counts.',
   use_deployment: 'Endpoints, env vars, and copy-paste integration snippets.',
+  integration_outputs: 'Env vars, app code, CI/CD, Docker Compose, and Kubernetes outputs for your projects.',
   mapping: 'How each topology node maps to containers, pods, and service URLs.',
   nodes: 'Runtime resources mapped to topology host/router nodes.',
   services: 'Service workloads, port mappings, Expose/Unexpose controls, logs, and restarts.',
@@ -1142,6 +1146,10 @@ export function RuntimeAccessPanel({
 
         {deploymentId && tab === 'use_deployment' ? (
           <UseDeploymentTab deploymentId={deploymentId} />
+        ) : null}
+
+        {deploymentId && tab === 'integration_outputs' ? (
+          <IntegrationOutputsTab deploymentId={deploymentId} />
         ) : null}
 
         {deploymentId && tab === 'mapping' ? <RuntimeMappingTab deploymentId={deploymentId} /> : null}

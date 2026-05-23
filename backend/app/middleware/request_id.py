@@ -35,6 +35,9 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             raise
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         response.headers[_HEADER] = rid
+        from app.services.request_metrics import record_api_request
+
+        record_api_request(status_code=response.status_code)
         _log.info(
             "request method=%s path=%s status=%s request_id=%s elapsed_ms=%s",
             request.method,

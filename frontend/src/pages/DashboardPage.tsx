@@ -11,6 +11,7 @@ import { CreateProjectModal } from '../components/CreateProjectModal';
 import { OnboardingChecklist } from '../components/OnboardingChecklist';
 import { ProjectMembersPanel } from '../components/ProjectMembersPanel';
 import { ProjectQuotaPanel } from '../components/project/ProjectQuotaPanel';
+import { ProjectMetricsSection } from '../components/metrics/ProjectMetricsSection';
 import { Spinner } from '../components/Spinner';
 import { usePolling } from '../hooks/usePolling';
 import type { ControllerStatusResponse, HealthResponse, TopologyResponse } from '../types';
@@ -282,6 +283,7 @@ export function DashboardPage() {
               onChanged={() => void refresh()}
             />
             <ProjectQuotaPanel projectId={selectedProjectId} />
+            <ProjectMetricsSection projectId={selectedProjectId} />
           </div>
         ) : null}
         {projects.length === 0 ? (
@@ -352,6 +354,10 @@ export function DashboardPage() {
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Observability</h2>
           <span className="text-[11px] text-cns-muted">
+            <Link to="/platform-metrics" className="font-medium text-emerald-700 hover:underline dark:text-emerald-400">
+              Platform metrics
+            </Link>
+            {' · '}
             <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[10px] dark:bg-zinc-800">GET /metrics/summary</code>
             · see <code className="font-mono text-[10px]">docs/OBSERVABILITY.md</code>
           </span>

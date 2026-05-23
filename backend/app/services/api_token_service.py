@@ -37,6 +37,9 @@ def list_tokens(db: Session, user: User) -> list[ApiTokenResponse]:
 
 
 def create_token(db: Session, user: User, body: ApiTokenCreateRequest) -> ApiTokenCreateResponse:
+    from app.services.quota_service import ensure_api_token_quota
+
+    ensure_api_token_quota(db, user.id)
     secret = secrets.token_urlsafe(32)
     row = ApiToken(
         user_id=user.id,

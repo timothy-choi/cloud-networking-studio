@@ -39,6 +39,7 @@ from app.services.access_control import (
     require_topology_editor,
 )
 from app.services.audit_service import record_audit
+from app.services.quota_service import ensure_topology_node_quota
 
 router = APIRouter(prefix="/topologies", tags=["topologies"])
 
@@ -226,6 +227,7 @@ def create_topology_node(
     user: User = Depends(get_current_user),
 ) -> TopologyNode:
     require_topology_editor(db, user, topology_id)
+    ensure_topology_node_quota(db, topology_id, adding=1)
     image, ip_address, config = _validated_node_fields(
         image=body.image,
         ip_address=body.ip_address,

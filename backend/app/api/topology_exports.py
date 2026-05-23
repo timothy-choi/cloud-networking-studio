@@ -14,6 +14,8 @@ from app.models.topology import Topology
 from app.models.user import User
 from app.services.access_control import get_topology_for_user
 from app.services.audit_service import record_audit
+from app.core.config import settings
+from app.services.rate_limit_service import check_rate_limit
 from app.services import topology_iac_export_service as iac_svc
 from app.schemas.topology_iac_export import TopologyIacExportPreviewResponse
 
@@ -76,12 +78,21 @@ def export_topology_docker_compose(
     user: User = Depends(get_current_user),
 ) -> Response:
     bundle = _bundle(db, user, topology_id)
+    _rate_limit_iac_download(user)
     content = iac_svc.generate_docker_compose(bundle)
     _audit_iac_download(db, user, topology_id, "docker-compose")
     return Response(
         content=content.encode("utf-8"),
         media_type="application/yaml; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{iac_svc.DOCKER_COMPOSE_FILENAME}"'},
+    )
+
+
+def _rate_limit_iac_download(user: User) -> None:
+    check_rate_limit(
+        key=f"download:user:{user.id}",
+        limit=settings.rate_limit_download_per_user,
+        action="iac_export",
     )
 
 
@@ -95,6 +106,7 @@ def export_topology_kubernetes(
     user: User = Depends(get_current_user),
 ) -> Response:
     bundle = _bundle(db, user, topology_id)
+    _rate_limit_iac_download(user)
     content = iac_svc.generate_kubernetes_yaml(bundle)
     _audit_iac_download(db, user, topology_id, "kubernetes")
     return Response(
@@ -114,6 +126,7 @@ def export_topology_terraform(
     user: User = Depends(get_current_user),
 ) -> Response:
     bundle = _bundle(db, user, topology_id)
+    _rate_limit_iac_download(user)
     payload = iac_svc.build_terraform_zip(bundle)
     _audit_iac_download(db, user, topology_id, "terraform")
     return Response(
@@ -133,6 +146,7 @@ def export_topology_ansible(
     user: User = Depends(get_current_user),
 ) -> Response:
     bundle = _bundle(db, user, topology_id)
+    _rate_limit_iac_download(user)
     payload = iac_svc.build_ansible_zip(bundle)
     _audit_iac_download(db, user, topology_id, "ansible")
     return Response(
@@ -152,6 +166,7 @@ def export_topology_iac_archive(
     user: User = Depends(get_current_user),
 ) -> Response:
     bundle = _bundle(db, user, topology_id)
+    _rate_limit_iac_download(user)
     payload = iac_svc.build_iac_archive(bundle)
     _audit_iac_download(db, user, topology_id, "archive")
     return Response(

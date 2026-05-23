@@ -96,6 +96,12 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     verify_core_schema(engine)
     run_startup_datafixes(engine)
+    from app.db.session import SessionLocal
+    from app.services.cleanup_service import expire_stale_terminal_sessions
+
+    with SessionLocal() as db:
+        expire_stale_terminal_sessions(db)
+        db.commit()
     yield
 
 

@@ -1,4 +1,5 @@
 import { apiFetch } from './client';
+import type { ProjectQuotaResponse } from '../types/quota';
 
 export interface ProjectResponse {
   id: string;
@@ -23,4 +24,8 @@ export async function createProject(body: {
     method: 'POST',
     body: JSON.stringify(body),
   });
+}
+
+export async function getProjectQuotas(projectId: string): Promise<ProjectQuotaResponse> {
+  return apiFetch<ProjectQuotaResponse>(`/projects/${projectId}/quotas`);
 }

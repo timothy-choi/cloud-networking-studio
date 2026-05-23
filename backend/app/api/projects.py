@@ -21,6 +21,8 @@ from app.schemas.project_member import (
     ProjectMemberRoleUpdate,
 )
 from app.services.access_control import get_project_for_member, require_project_owner
+from app.schemas.quota import ProjectQuotaResponse, QuotaLimits, QuotaRemaining, QuotaUsage
+from app.services.quota_service import build_project_quota_usage
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -223,6 +225,26 @@ def get_project(
 ) -> ProjectResponse:
     proj, role = get_project_for_member(db, user, project_id)
     return _project_response(proj, role)
+
+
+@router.get(
+    "/{project_id}/quotas",
+    response_model=ProjectQuotaResponse,
+    summary="Project quota limits and current usage",
+)
+def get_project_quotas(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ProjectQuotaResponse:
+    get_project_for_member(db, user, project_id)
+    raw = build_project_quota_usage(db, project_id, user.id)
+    return ProjectQuotaResponse(
+        project_id=project_id,
+        limits=QuotaLimits.model_validate(raw["limits"]),
+        usage=QuotaUsage.model_validate(raw["usage"]),
+        remaining=QuotaRemaining.model_validate(raw["remaining"]),
+    )
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse, summary="Update project")

@@ -107,8 +107,9 @@ def create_terminal_session(
     if wid is None:
         raise ValueError("runtime resource has no workload node id")
 
-    if _count_active_sessions(db, user_id) >= _max_sessions_per_user():
-        raise PermissionError("maximum concurrent terminal sessions reached")
+    from app.services.quota_service import ensure_terminal_session_quota
+
+    ensure_terminal_session_quota(db, user_id)
 
     prov_name = (dep.runtime_target or "docker").strip().lower()
     now = datetime.now(UTC)

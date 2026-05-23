@@ -106,6 +106,12 @@ function extractRequestId(detail: unknown): string | null {
 export function formatApiError(err: unknown): string {
   if (err instanceof ApiError) {
     const structured = parseStructuredError(err.detail);
+    if (structured?.code === 'RATE_LIMITED') {
+      return structured.message || 'Too many requests. Please wait a moment and try again.';
+    }
+    if (structured?.code === 'QUOTA_EXCEEDED') {
+      return structured.message || 'Quota limit reached for this project or account.';
+    }
     if (structured?.message) return structured.message;
     const d = err.detail as { detail?: unknown };
     if (typeof d?.detail === 'string') return d.detail;

@@ -114,16 +114,16 @@ def test_env_var_names_are_safe(client):
 
 
 def test_unauthorized_user_blocked(client_strict):
-    ha, _ = _reg(client_strict, "ioo")
-    _, hb = _reg(client_strict, "iox")
-    pid = client_strict.get("/projects", headers=ha).json()[0]["id"]
+    _, owner_h = _reg(client_strict, "ioo")
+    _, other_h = _reg(client_strict, "iox")
+    pid = client_strict.get("/projects", headers=owner_h).json()[0]["id"]
     tid = client_strict.post(
         "/topologies",
-        headers=ha,
+        headers=owner_h,
         json={**TOPO, "project_id": pid},
     ).json()["id"]
-    did = client_strict.post(f"/topologies/{tid}/deploy", headers=ha).json()["id"]
-    r = client_strict.get(f"/deployments/{did}/integration-outputs", headers=hb)
+    did = client_strict.post(f"/topologies/{tid}/deploy", headers=owner_h).json()["id"]
+    r = client_strict.get(f"/deployments/{did}/integration-outputs", headers=other_h)
     assert r.status_code == 404
 
 

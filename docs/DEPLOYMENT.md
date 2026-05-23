@@ -111,7 +111,7 @@ Copy examples:
 
 ## Continuous integration (GitHub Actions)
 
-On every push to `main` and on pull requests, CI runs **pytest**, a **production `npm run build`**, then **`docker compose -f docker-compose.prod.yml up -d --build`** on an `ubuntu-latest` runner with **`AUTH_REQUIRE_LOGIN=true`**, waits for HTTP readiness (up to 90 seconds), and runs **`scripts/prod_smoke_test.sh`** with **`CNS_HEAVY_SMOKE=1`** so **deploy + destroy** is exercised against the runner’s Docker engine (same socket mount as production compose). The smoke script **registers** a unique user, obtains a **JWT**, creates a topology under a **project**, and asserts **401** for unauthenticated topology **POST**.
+On every push to `main` and on pull requests, CI runs **pytest**, a **production `npm run build`**, then **`docker compose -f docker-compose.prod.yml up -d --build`** on an `ubuntu-latest` runner with **`AUTH_REQUIRE_LOGIN=true`** and a strong ephemeral **`AUTH_SECRET_KEY`** (Step 53D rejects the compose dev default in production), waits for HTTP readiness (up to 90 seconds), and runs **`scripts/prod_smoke_test.sh`** with **`CNS_HEAVY_SMOKE=1`** so **deploy + destroy** is exercised against the runner’s Docker engine (same socket mount as production compose). The smoke script **registers** a unique user, obtains a **JWT**, creates a topology under a **project**, and asserts **401** for unauthenticated topology **POST**.
 
 Details, log capture on failure, and what is **not** covered: [CI.md](CI.md).
 

@@ -19,6 +19,7 @@ import { SectionEmptyState } from '../components/SectionEmptyState';
 import { DeploymentLifecycleTimeline } from '../components/deployment/DeploymentLifecycleTimeline';
 import { DeploymentOperationTimeline } from '../components/deployment/DeploymentOperationTimeline';
 import { DeploymentCleanupPanel } from '../components/deployment/DeploymentCleanupPanel';
+import { DeploymentMetricsPanel } from '../components/metrics/DeploymentMetricsPanel';
 import { ApiErrorDisplay } from '../components/errors/ApiErrorDisplay';
 import { DeploymentPhaseStrip } from '../components/deployment/DeploymentPhaseStrip';
 import { DeploymentProgressRail } from '../components/deployment/DeploymentProgressRail';
@@ -1059,6 +1060,7 @@ export function TopologyDetailPage() {
       {deploymentId ? (
         <DeploymentCleanupPanel deploymentId={deploymentId} viewerMode={viewerMode} />
       ) : null}
+      {deploymentId ? <DeploymentMetricsPanel deploymentId={deploymentId} /> : null}
 
       <div className="grid gap-6 md:grid-cols-2 md:items-start">
         <div className="min-w-0 space-y-2">

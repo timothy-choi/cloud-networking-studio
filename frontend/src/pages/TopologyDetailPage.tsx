@@ -440,7 +440,7 @@ export function TopologyDetailPage() {
       )}
 
       {topology && (
-        <CollapsibleSection title="IaC Export" defaultOpen={false}>
+        <CollapsibleSection title="IaC Export" defaultOpen>
           <IaCExportPanel topologyId={id} />
         </CollapsibleSection>
       )}

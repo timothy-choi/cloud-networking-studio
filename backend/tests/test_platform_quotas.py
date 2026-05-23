@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
-
 from app.core.config import settings
 from app.models.topology import NodeType
 from app.services.rate_limit_service import reset_rate_limits_for_tests
@@ -50,29 +48,21 @@ def _register(client_strict, prefix: str = "q") -> tuple[dict[str, str], str]:
     return h, pid
 
 
-@pytest.fixture(autouse=True)
-def _reset_limits():
-    reset_rate_limits_for_tests()
-    yield
-    reset_rate_limits_for_tests()
-
-
-def test_quota_prevents_too_many_active_deployments(client, monkeypatch):
+def test_quota_prevents_too_many_active_deployments(client_strict, monkeypatch):
+    """Isolated project so prior session deployments do not affect the quota count."""
     monkeypatch.setattr(settings, "quota_max_active_deployments_per_project", 1)
-    t1 = _topology_with_node(client)
-    t2 = _topology_with_node(client)
-    assert client.post(f"/topologies/{t1}/deploy").status_code == 201
-    r2 = client.post(f"/topologies/{t2}/deploy")
+    ha, _pid = _register(client_strict, "qa")
+    t1 = _topology_with_node(client_strict, ha)
+    t2 = _topology_with_node(client_strict, ha)
+    assert client_strict.post(f"/topologies/{t1}/deploy", headers=ha).status_code == 201
+    r2 = client_strict.post(f"/topologies/{t2}/deploy", headers=ha)
     assert r2.status_code == 403
     body = r2.json()
     assert body["error"]["code"] == "QUOTA_EXCEEDED"
 
 
 def test_rate_limit_returns_rate_limited(client, monkeypatch):
-    monkeypatch.setattr(settings, "rate_limit_deploy_per_user", 1)
-    tid = _topology_with_node(client)
-    assert client.post(f"/topologies/{tid}/deploy").status_code == 201
-    # Second deploy attempt on same topology returns 409 (active deployment), so use rate limit on auth instead.
+    monkeypatch.setenv("CNS_DISABLE_RATE_LIMITS", "0")
     reset_rate_limits_for_tests()
     monkeypatch.setattr(settings, "rate_limit_auth_per_ip", 1)
     email = f"rl{uuid.uuid4().hex[:8]}@example.com"
@@ -89,13 +79,12 @@ def test_rate_limit_returns_rate_limited(client, monkeypatch):
 
 
 def test_cleanup_endpoint_enforces_permissions(client_strict, monkeypatch):
-    ha, pid = _register(client_strict, "ca")
+    ha, _pid = _register(client_strict, "ca")
     tid = _topology_with_node(client_strict, ha)
-    # deploy with auth headers
     r = client_strict.post(f"/topologies/{tid}/deploy", headers=ha)
     assert r.status_code == 201, r.text
     did = r.json()["id"]
-    _, hb = _register(client_strict, "cb")
+    hb, _ = _register(client_strict, "cb")
     assert client_strict.get(f"/deployments/{did}/cleanup-status", headers=hb).status_code == 404
     st = client_strict.get(f"/deployments/{did}/cleanup-status", headers=ha)
     assert st.status_code == 200

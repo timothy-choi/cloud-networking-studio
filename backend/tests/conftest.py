@@ -19,9 +19,30 @@ os.environ.setdefault("AUTH_REQUIRE_LOGIN", "false")
 
 # Integration tests must never require a local Docker daemon.
 os.environ["CNS_USE_FAKE_DOCKER"] = "1"
+# Rate limits use a process-wide in-memory bucket; disable by default so the full
+# pytest session (shared dev user / TestClient IP) does not trip RATE_LIMITED.
+os.environ.setdefault("CNS_DISABLE_RATE_LIMITS", "1")
 
 import pytest
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def _relax_platform_limits_for_tests(monkeypatch):
+    """Generous quotas/limits + fresh rate-limit buckets for each test."""
+    from app.core.config import settings
+    from app.services.rate_limit_service import reset_rate_limits_for_tests
+
+    reset_rate_limits_for_tests()
+    monkeypatch.setattr(settings, "quota_max_active_deployments_per_project", 100_000)
+    monkeypatch.setattr(settings, "rate_limit_auth_per_ip", 100_000)
+    monkeypatch.setattr(settings, "rate_limit_deploy_per_user", 100_000)
+    monkeypatch.setattr(settings, "rate_limit_expose_per_user", 100_000)
+    monkeypatch.setattr(settings, "rate_limit_terminal_per_user", 100_000)
+    monkeypatch.setattr(settings, "rate_limit_exec_per_user", 100_000)
+    monkeypatch.setattr(settings, "rate_limit_download_per_user", 100_000)
+    yield
+    reset_rate_limits_for_tests()
 
 
 @pytest.fixture(scope="session")

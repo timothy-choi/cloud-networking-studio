@@ -54,6 +54,37 @@ def _reg(client_strict, prefix: str) -> tuple[str, dict[str, str]]:
     return email, {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
+def test_preview_endpoint_works(client):
+    tid = _topology_with_node(client)
+    r = client.get(f"/topologies/{tid}/exports/preview")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["topology_id"] == tid
+    assert len(body["artifacts"]) == 5
+    assert "docker-compose" in body["previews"]
+    assert "kubernetes" in body["previews"]
+    assert set(body["terraform_files"]) == {"main.tf", "variables.tf", "outputs.tf", "README.md"}
+    assert "inventory.ini" in body["ansible_files"]
+    assert any(w["code"] == "custom_command_included" for w in body["warnings"])
+
+
+def test_preview_warnings_for_incomplete_node(client):
+    tid = client.post("/topologies", json=TOPO).json()["id"]
+    client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "blank",
+            "node_type": NodeType.HOST.value,
+            "image": None,
+            "config": None,
+        },
+    )
+    body = client.get(f"/topologies/{tid}/exports/preview").json()
+    codes = {w["code"] for w in body["warnings"]}
+    assert "missing_image" in codes
+    assert "no_ports_configured" in codes
+
+
 def test_docker_compose_export_returns_yaml(client):
     tid = _topology_with_node(client)
     r = client.get(f"/topologies/{tid}/exports/docker-compose")

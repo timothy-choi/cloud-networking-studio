@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.services.access_control import get_topology_for_user
 from app.services import topology_iac_export_service as iac_svc
+from app.schemas.topology_iac_export import TopologyIacExportPreviewResponse
 
 router = APIRouter(prefix="/topologies", tags=["topologies"])
 
@@ -23,6 +24,24 @@ def _bundle(db: Session, user: User, topology_id: UUID):
         return iac_svc.load_topology_export_bundle(db, topology_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topology not found") from None
+
+
+@router.get(
+    "/{topology_id}/exports/preview",
+    response_model=TopologyIacExportPreviewResponse,
+    summary="Preview IaC exports with validation warnings before download",
+)
+def preview_topology_iac_exports(
+    topology_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TopologyIacExportPreviewResponse:
+    get_topology_for_user(db, user, topology_id)
+    try:
+        body = iac_svc.build_topology_export_preview(db, topology_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topology not found") from None
+    return TopologyIacExportPreviewResponse.model_validate(body)
 
 
 @router.get(

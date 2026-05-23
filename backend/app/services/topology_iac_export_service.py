@@ -27,6 +27,9 @@ TERRAFORM_ZIP_NAME = "terraform-cns.zip"
 ANSIBLE_ZIP_NAME = "ansible-cns.zip"
 DOCKER_COMPOSE_FILENAME = "docker-compose.cns.yml"
 KUBERNETES_FILENAME = "kubernetes.cns.yaml"
+TERRAFORM_FILES = ("main.tf", "variables.tf", "outputs.tf", "README.md")
+ANSIBLE_FILES = ("inventory.ini", "playbook.yml", "README.md")
+PREVIEW_MAX_CHARS = 12_000
 
 
 @dataclass(frozen=True)
@@ -558,3 +561,197 @@ def build_iac_archive(bundle: TopologyExportBundle) -> bytes:
             for name in inner.namelist():
                 zf.writestr(f"ansible/{name}", inner.read(name))
     return buf.getvalue()
+
+
+def _truncate_preview(text: str, limit: int = PREVIEW_MAX_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n\n# … preview truncated ({len(text) - limit} more characters). Download for full file.\n"
+
+
+def validate_topology_export(bundle: TopologyExportBundle) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """Return (warnings, unsupported_features, todo_notes)."""
+    warnings: list[dict[str, Any]] = []
+    unsupported: list[str] = []
+    todos: list[str] = []
+
+    todos.append("Terraform export is a skeleton only — wire providers and resources before apply.")
+    todos.append("Ansible export is a skeleton only — replace debug tasks with real modules.")
+    todos.append("CNS does not execute downloaded IaC files.")
+
+    if not bundle.nodes:
+        warnings.append(
+            {
+                "severity": "warning",
+                "code": "empty_topology",
+                "message": "Topology has no nodes; exports will contain TODO placeholders only.",
+                "node_name": None,
+            }
+        )
+
+    for node in bundle.nodes:
+        if not (node.image or "").strip():
+            warnings.append(
+                {
+                    "severity": "warning",
+                    "code": "missing_image",
+                    "message": f'Node "{node.name}" has no image — export uses alpine:latest with a TODO comment.',
+                    "node_name": node.name,
+                }
+            )
+        if not node.runtime.ports:
+            warnings.append(
+                {
+                    "severity": "warning",
+                    "code": "no_ports_configured",
+                    "message": f'Node "{node.name}" has no ports configured — host/service exposure may be incomplete.',
+                    "node_name": node.name,
+                }
+            )
+        if node.runtime.env:
+            warnings.append(
+                {
+                    "severity": "info",
+                    "code": "env_vars_present",
+                    "message": f'Node "{node.name}" includes {len(node.runtime.env)} environment variable(s) in the export.',
+                    "node_name": node.name,
+                }
+            )
+        if node.runtime.command:
+            warnings.append(
+                {
+                    "severity": "info",
+                    "code": "custom_command_included",
+                    "message": f'Node "{node.name}" custom command will be included: {" ".join(node.runtime.command)[:120]}',
+                    "node_name": node.name,
+                }
+            )
+        if node.ip_address:
+            todos.append(
+                f'Static IP intent for "{node.name}" ({node.ip_address}) — map manually in Compose IPAM or Kubernetes networking.'
+            )
+        if node.runtime.terminal_enabled:
+            unsupported.append(
+                f'Interactive terminal (node "{node.name}") is a CNS runtime feature — not exported to IaC.'
+            )
+
+    if bundle.links:
+        warnings.append(
+            {
+                "severity": "info",
+                "code": "links_as_comments",
+                "message": f"{len(bundle.links)} topology link(s) exported as network comments/labels (not live segmentation rules).",
+                "node_name": None,
+            }
+        )
+        for link in bundle.links:
+            if link.vlan_tag is not None:
+                unsupported.append(
+                    f'VLAN tag {link.vlan_tag} on link {link.source_name}<->{link.target_name} is not mapped to Compose/Kubernetes.'
+                )
+            if link.cidr and not link.gateway:
+                todos.append(
+                    f'Network "{link.network_name}" CIDR {link.cidr} — configure gateway/IPAM outside CNS if needed.'
+                )
+
+    if bundle.runtime_target == "kubernetes":
+        todos.append("Kubernetes YAML uses a generated namespace — adjust for your cluster context.")
+    elif bundle.runtime_target == "docker":
+        todos.append("Docker Compose networks use bridge driver — review port bindings for production use.")
+
+    if bundle.networking_mode not in ("docker_bridge", "managed", "intent"):
+        unsupported.append(
+            f'Networking mode "{bundle.networking_mode}" may not map cleanly to generic IaC templates.'
+        )
+
+    return warnings, unsupported, todos
+
+
+def build_topology_export_preview(
+    session: Session,
+    topology_id: UUID,
+    *,
+    api_base: str = "/api",
+) -> dict[str, Any]:
+    from app.schemas.topology_iac_export import (
+        IaCExportArtifactItem,
+        IaCExportWarningItem,
+        TopologyIacExportPreviewResponse,
+    )
+
+    bundle = load_topology_export_bundle(session, topology_id)
+    compose = generate_docker_compose(bundle)
+    k8s = generate_kubernetes_yaml(bundle)
+    warnings_raw, unsupported, todos = validate_topology_export(bundle)
+    warnings = [IaCExportWarningItem(**w) for w in warnings_raw]
+
+    base = f"{api_base}/topologies/{topology_id}/exports"
+    artifacts = [
+        IaCExportArtifactItem(
+            id="docker-compose",
+            name=DOCKER_COMPOSE_FILENAME,
+            type="yaml",
+            category="runtime",
+            download_path=f"{base}/docker-compose",
+        ),
+        IaCExportArtifactItem(
+            id="kubernetes",
+            name=KUBERNETES_FILENAME,
+            type="yaml",
+            category="runtime",
+            download_path=f"{base}/kubernetes",
+        ),
+        IaCExportArtifactItem(
+            id="terraform",
+            name=TERRAFORM_ZIP_NAME,
+            type="zip",
+            category="skeleton",
+            download_path=f"{base}/terraform",
+        ),
+        IaCExportArtifactItem(
+            id="ansible",
+            name=ANSIBLE_ZIP_NAME,
+            type="zip",
+            category="skeleton",
+            download_path=f"{base}/ansible",
+        ),
+        IaCExportArtifactItem(
+            id="archive",
+            name=ARCHIVE_ZIP_NAME,
+            type="zip",
+            category="bundle",
+            download_path=f"{base}/archive",
+        ),
+    ]
+
+    archive_files = [
+        DOCKER_COMPOSE_FILENAME,
+        KUBERNETES_FILENAME,
+        *[f"terraform/{f}" for f in TERRAFORM_FILES],
+        *[f"ansible/{f}" for f in ANSIBLE_FILES],
+    ]
+
+    resp = TopologyIacExportPreviewResponse(
+        topology_id=bundle.topology_id,
+        topology_name=bundle.topology_name,
+        runtime_target=bundle.runtime_target,
+        networking_mode=bundle.networking_mode,
+        artifacts=artifacts,
+        previews={
+            "docker-compose": _truncate_preview(compose),
+            "kubernetes": _truncate_preview(k8s),
+        },
+        terraform_files=list(TERRAFORM_FILES),
+        ansible_files=list(ANSIBLE_FILES),
+        archive_files=archive_files,
+        warnings=warnings,
+        unsupported_features=unsupported,
+        todo_notes=todos,
+        metadata={
+            "node_count": len(bundle.nodes),
+            "link_count": len(bundle.links),
+            "preview_max_chars": PREVIEW_MAX_CHARS,
+        },
+    )
+    return resp.model_dump(mode="json")
+

@@ -1,4 +1,4 @@
-import { getApiBase, getStoredAccessToken, ApiError } from './client';
+import { getApiBase, getStoredAccessToken, ApiError, apiFetch } from './client';
 
 export type TopologyIacExportKind =
   | 'docker-compose'
@@ -86,4 +86,41 @@ export async function downloadTopologyIacExport(topologyId: string, kind: Topolo
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(href);
+}
+
+export type IaCExportWarning = {
+  severity: string;
+  code: string;
+  message: string;
+  node_name?: string | null;
+};
+
+export type IaCExportArtifact = {
+  id: string;
+  name: string;
+  type: string;
+  category: string;
+  download_path: string;
+};
+
+export type TopologyIacExportPreview = {
+  topology_id: string;
+  topology_name: string;
+  runtime_target: string;
+  networking_mode: string;
+  artifacts: IaCExportArtifact[];
+  previews: Record<string, string>;
+  terraform_files: string[];
+  ansible_files: string[];
+  archive_files: string[];
+  warnings: IaCExportWarning[];
+  unsupported_features: string[];
+  todo_notes: string[];
+  metadata?: Record<string, unknown>;
+};
+
+export type PreviewArtifactId = 'docker-compose' | 'kubernetes' | 'terraform' | 'ansible' | 'archive';
+
+export function fetchTopologyIacExportPreview(topologyId: string) {
+  return apiFetch<TopologyIacExportPreview>(`/topologies/${topologyId}/exports/preview`);
 }

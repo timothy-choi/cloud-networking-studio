@@ -11,7 +11,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.api_token import ApiTokenCreateRequest, ApiTokenCreateResponse, ApiTokenResponse
-from app.services import api_token_service as api_token_svc
+from app.services.audit_service import record_audit
 
 router = APIRouter(tags=["api-tokens"])
 
@@ -28,6 +28,15 @@ def post_api_token(
     user: User = Depends(get_current_user),
 ) -> ApiTokenCreateResponse:
     out = api_token_svc.create_token(db, user, body)
+    record_audit(
+        db,
+        action="api_token.create",
+        resource_type="api_token",
+        resource_id=out.id,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"name": body.name},
+    )
     db.commit()
     return out
 
@@ -60,5 +69,13 @@ def delete_api_token(
         api_token_svc.revoke_token(db, user, token_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found") from None
+    record_audit(
+        db,
+        action="api_token.revoke",
+        resource_type="api_token",
+        resource_id=token_id,
+        actor_user_id=user.id,
+        status="success",
+    )
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

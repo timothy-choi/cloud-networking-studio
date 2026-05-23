@@ -23,17 +23,38 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, withDeploymentRequestLogging(srv.Handler())))
 }
 
-func withDeploymentRequestLogging(inner http.Handler) http.Handler {
+func withRequestIdLogging(inner http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rid := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 		p := r.URL.Path
 		switch {
 		case r.Method == http.MethodPost && p == "/deployments":
-			log.Printf("cns-runner: POST /deployments")
+			if rid != "" {
+				log.Printf("cns-runner: POST /deployments request_id=%s", rid)
+			} else {
+				log.Printf("cns-runner: POST /deployments")
+			}
 		case r.Method == http.MethodDelete && strings.HasPrefix(p, "/deployments/"):
-			log.Printf("cns-runner: DELETE %s", p)
+			if rid != "" {
+				log.Printf("cns-runner: DELETE %s request_id=%s", p, rid)
+			} else {
+				log.Printf("cns-runner: DELETE %s", p)
+			}
 		case r.Method == http.MethodGet && strings.HasPrefix(p, "/deployments/") && !strings.Contains(p, "/logs"):
-			log.Printf("cns-runner: GET %s", p)
+			if rid != "" {
+				log.Printf("cns-runner: GET %s request_id=%s", p, rid)
+			} else {
+				log.Printf("cns-runner: GET %s", p)
+			}
+		default:
+			if rid != "" {
+				log.Printf("cns-runner: %s %s request_id=%s", r.Method, p, rid)
+			}
 		}
 		inner.ServeHTTP(w, r)
 	})
+}
+
+func withDeploymentRequestLogging(inner http.Handler) http.Handler {
+	return withRequestIdLogging(inner)
 }

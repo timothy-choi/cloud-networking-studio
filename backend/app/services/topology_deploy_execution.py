@@ -27,6 +27,10 @@ from app.services.network_allocation import (
     merge_allocation_mode_into_config,
     resolve_network_allocation_mode,
 )
+from app.models.deployment_timeline import TimelineEventType
+from app.services.audit_service import record_audit
+from app.services.deployment_timeline_helpers import timeline_from_runner_message
+from app.services.deployment_timeline_service import record_timeline_event
 from app.services.deployment_validation import validate_topology_for_deploy
 
 
@@ -112,6 +116,24 @@ def execute_topology_deploy(
     db.add(deployment)
     db.flush()
 
+    record_timeline_event(
+        db,
+        deployment_id=deployment.id,
+        event_type=TimelineEventType.DEPLOY_REQUESTED,
+        message="Deployment requested.",
+        status="info",
+    )
+    record_audit(
+        db,
+        action="topology.deploy",
+        resource_type="deployment",
+        resource_id=deployment.id,
+        project_id=topo.project_id,
+        actor_user_id=user.id,
+        status="pending",
+        metadata={"topology_id": str(topology_id)},
+    )
+
     deployment.started_at = datetime.now(UTC)
     _append_event(db, deployment.id, "Deployment pending — record created.")
 
@@ -129,6 +151,24 @@ def execute_topology_deploy(
         )
         deployment.status = DeploymentStatus.FAILED
         deployment.finished_at = datetime.now(UTC)
+        record_timeline_event(
+            db,
+            deployment_id=deployment.id,
+            event_type=TimelineEventType.DEPLOY_FAILED,
+            message=f"Topology validation failed: {joined}",
+            status="failed",
+            metadata={"errors": val_errors},
+        )
+        record_audit(
+            db,
+            action="topology.deploy",
+            resource_type="deployment",
+            resource_id=deployment.id,
+            project_id=topo.project_id,
+            actor_user_id=user.id,
+            status="failure",
+            metadata={"reason": "validation_failed"},
+        )
         db.commit()
         loaded = _load_deployment_full(db, deployment.id)
         from app.schemas.deployment import DeploymentResponse
@@ -141,6 +181,13 @@ def execute_topology_deploy(
     _append_event(db, deployment.id, "Topology validation passed.")
 
     deployment.status = DeploymentStatus.DEPLOYING
+    record_timeline_event(
+        db,
+        deployment_id=deployment.id,
+        event_type=TimelineEventType.DEPLOY_STARTED,
+        message="Deployment started — invoking runtime provider.",
+        status="running",
+    )
     _append_event(
         db,
         deployment.id,
@@ -180,6 +227,25 @@ def execute_topology_deploy(
                     message=msg,
                 )
             )
+            timeline_from_runner_message(db, deployment_id=deployment.id, message=msg)
+        record_timeline_event(
+            db,
+            deployment_id=deployment.id,
+            event_type=TimelineEventType.DEPLOY_FAILED,
+            message=f"Deployment failed: {exc.message}",
+            status="failed",
+            metadata={"error": exc.message},
+        )
+        record_audit(
+            db,
+            action="topology.deploy",
+            resource_type="deployment",
+            resource_id=deployment.id,
+            project_id=topo.project_id,
+            actor_user_id=user.id,
+            status="failure",
+            metadata={"error": exc.message},
+        )
         _append_event(
             db,
             deployment.id,
@@ -212,6 +278,22 @@ def execute_topology_deploy(
             f"Deployment failed: {exc}",
             DeploymentEventLevel.ERROR,
         )
+        record_timeline_event(
+            db,
+            deployment_id=deployment.id,
+            event_type=TimelineEventType.DEPLOY_FAILED,
+            message=f"Deployment failed: {exc}",
+            status="failed",
+        )
+        record_audit(
+            db,
+            action="topology.deploy",
+            resource_type="deployment",
+            resource_id=deployment.id,
+            project_id=topo.project_id,
+            actor_user_id=user.id,
+            status="failure",
+        )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -228,9 +310,26 @@ def execute_topology_deploy(
                 message=msg,
             )
         )
+        timeline_from_runner_message(db, deployment_id=deployment.id, message=msg)
 
     deployment.status = DeploymentStatus.SUCCEEDED
     deployment.finished_at = datetime.now(UTC)
+    record_timeline_event(
+        db,
+        deployment_id=deployment.id,
+        event_type=TimelineEventType.DEPLOY_SUCCEEDED,
+        message="Deployment succeeded.",
+        status="succeeded",
+    )
+    record_audit(
+        db,
+        action="topology.deploy",
+        resource_type="deployment",
+        resource_id=deployment.id,
+        project_id=topo.project_id,
+        actor_user_id=user.id,
+        status="success",
+    )
     if outcome.runtime_access:
         replace_runtime_resources_from_payload(
             db, deployment.id, outcome.runtime_access

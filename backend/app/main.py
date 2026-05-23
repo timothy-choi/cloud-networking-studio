@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.audit_logs import router as audit_logs_router
 from app.api.api_tokens import router as api_tokens_router
 from app.api.auth import router as auth_router
 from app.api.controller import router as controller_router
@@ -21,6 +22,8 @@ from app.api.topology_exports import router as topology_exports_router
 from app.api.traffic_tests import router as traffic_tests_router
 from app.core.config import settings
 from app.db.session import Base, engine
+from app.core.errors import register_exception_handlers
+from app.middleware.request_id import RequestIdMiddleware
 from app.middleware.strip_api_prefix import StripApiPrefixMiddleware
 
 OPENAPI_TAGS_METADATA: list[dict[str, str]] = [
@@ -104,6 +107,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+register_exception_handlers(app)
+
 app.include_router(auth_router)
 app.include_router(api_tokens_router)
 app.include_router(projects_router)
@@ -118,6 +123,7 @@ app.include_router(traffic_tests_router)
 app.include_router(failure_injections_router)
 app.include_router(metrics_router)
 app.include_router(onboarding_router)
+app.include_router(audit_logs_router)
 
 
 def _cors_origins() -> list[str]:
@@ -135,6 +141,7 @@ if (rx := (settings.cors_origin_regex or "").strip()):
     _cors_kw["allow_origin_regex"] = rx
 
 app.add_middleware(CORSMiddleware, **_cors_kw)
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(StripApiPrefixMiddleware)
 
 

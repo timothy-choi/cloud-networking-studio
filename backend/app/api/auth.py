@@ -13,6 +13,7 @@ from app.models.project_membership import ProjectMembership
 from app.models.user import User
 from app.schemas.auth import LoginRequest, MeResponse, RegisterRequest, TokenResponse, UserPublic
 from app.api.deps import require_bearer_user
+from app.services.audit_service import record_audit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -94,6 +95,16 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> TokenRespo
     db.add(proj)
     db.flush()
     db.add(ProjectMembership(project_id=proj.id, user_id=user.id, role="owner"))
+    record_audit(
+        db,
+        action="auth.register",
+        resource_type="user",
+        resource_id=user.id,
+        project_id=proj.id,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"email": em},
+    )
     db.commit()
     db.refresh(user)
     token = create_access_token(user_id=user.id, email=user.email)
@@ -130,6 +141,16 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
             detail="Invalid email or password",
         )
     token = create_access_token(user_id=user.id, email=user.email)
+    record_audit(
+        db,
+        action="auth.login",
+        resource_type="user",
+        resource_id=user.id,
+        actor_user_id=user.id,
+        status="success",
+        metadata={"email": em},
+    )
+    db.commit()
     return TokenResponse(
         access_token=token,
         user=UserPublic.model_validate(user),

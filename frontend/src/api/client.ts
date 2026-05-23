@@ -9,14 +9,38 @@ export class ApiError extends Error {
   readonly status: number;
   readonly statusText: string;
   readonly detail: unknown;
+  readonly requestId: string | null;
 
-  constructor(status: number, statusText: string, detail: unknown) {
+  constructor(status: number, statusText: string, detail: unknown, requestId: string | null = null) {
     super(`${status} ${statusText}`);
     this.name = 'ApiError';
     this.status = status;
     this.statusText = statusText;
     this.detail = detail;
+    this.requestId = requestId;
   }
+}
+
+export interface StructuredApiError {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+  request_id?: string | null;
+}
+
+export function parseStructuredError(detail: unknown): StructuredApiError | null {
+  if (!detail || typeof detail !== 'object') return null;
+  const d = detail as Record<string, unknown>;
+  const err = d.error as Record<string, unknown> | undefined;
+  if (err && typeof err.code === 'string') {
+    return {
+      code: err.code,
+      message: String(err.message ?? d.detail ?? ''),
+      details: (err.details as Record<string, unknown>) ?? {},
+      request_id: (err.request_id as string | null) ?? (d.request_id as string | null) ?? null,
+    };
+  }
+  return null;
 }
 
 export function getApiBase(): string {
@@ -59,7 +83,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     } catch {
       detail = text;
     }
-    throw new ApiError(res.status, res.statusText, detail);
+    throw new ApiError(res.status, res.statusText, detail, extractRequestId(detail));
   }
 
   if (res.status === 204) {
@@ -74,8 +98,15 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return res.json() as Promise<T>;
 }
 
+function extractRequestId(detail: unknown): string | null {
+  const structured = parseStructuredError(detail);
+  return structured?.request_id ?? null;
+}
+
 export function formatApiError(err: unknown): string {
   if (err instanceof ApiError) {
+    const structured = parseStructuredError(err.detail);
+    if (structured?.message) return structured.message;
     const d = err.detail as { detail?: unknown };
     if (typeof d?.detail === 'string') return d.detail;
     if (Array.isArray(d?.detail)) {

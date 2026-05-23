@@ -1,6 +1,7 @@
 import { apiFetch } from './client';
 import type { NetworkAllocationMode } from '../lib/networkAllocation';
 import type { DeploymentEventResponse, DeploymentResponse } from '../types/deployment';
+import type { DeploymentTimelineResponse } from '../types/deploymentTimeline';
 import type { HealingResponse, ReconciliationResponse } from '../types/runtime';
 
 export type DeployTopologyOptions = {
@@ -31,6 +32,12 @@ export async function listDeploymentEvents(
   deploymentId: string,
 ): Promise<DeploymentEventResponse[]> {
   return apiFetch<DeploymentEventResponse[]>(`/deployments/${deploymentId}/events`);
+}
+
+export async function getDeploymentTimeline(
+  deploymentId: string,
+): Promise<DeploymentTimelineResponse> {
+  return apiFetch<DeploymentTimelineResponse>(`/deployments/${deploymentId}/timeline`);
 }
 
 export async function reconcileDeployment(deploymentId: string): Promise<ReconciliationResponse> {

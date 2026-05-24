@@ -43,6 +43,7 @@ export interface RuntimeTopologyResponse {
   topology_id: string;
   deployment_status: DeploymentStatus | null;
   latest_deployment_id: string | null;
+  topology_sync_status?: string | null;
   runtime_provider: string;
   networks: RuntimeNetworkResponse[];
   containers: RuntimeContainerResponse[];

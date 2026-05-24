@@ -2,9 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   createTopologyVersion,
   diffTopologyVersions,
+  getRollbackImpact,
   listTopologyVersions,
   rollbackTopologyVersion,
+  type RollbackMode,
   type TopologyVersion,
+  type TopologyVersionRollbackImpact,
 } from '../../api/topologyVersions';
 import { ApiErrorDisplay } from '../errors/ApiErrorDisplay';
 import { Spinner } from '../Spinner';
@@ -17,11 +20,11 @@ function fmtWhen(iso: string): string {
   }
 }
 
-function snapshotSummary(snapshot: Record<string, unknown> | undefined): string {
-  const nodes = (snapshot?.nodes as unknown[]) ?? [];
-  const links = (snapshot?.links as unknown[]) ?? [];
-  return `${nodes.length} nodes · ${links.length} links`;
-}
+const ROLLBACK_MODE_LABEL: Record<RollbackMode, string> = {
+  config_only: 'Roll back config only',
+  rollback_and_destroy: 'Roll back and destroy deployments',
+  rollback_and_redeploy: 'Roll back and redeploy',
+};
 
 export function TopologyVersionsPanel({
   topologyId,
@@ -42,6 +45,9 @@ export function TopologyVersionsPanel({
   const [compareB, setCompareB] = useState<string>('');
   const [diffJson, setDiffJson] = useState<Record<string, unknown> | null>(null);
   const [rollbackTarget, setRollbackTarget] = useState<string | null>(null);
+  const [rollbackImpact, setRollbackImpact] = useState<TopologyVersionRollbackImpact | null>(null);
+  const [rollbackMode, setRollbackMode] = useState<RollbackMode>('config_only');
+  const [impactLoading, setImpactLoading] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -58,6 +64,19 @@ export function TopologyVersionsPanel({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    if (!rollbackTarget) {
+      setRollbackImpact(null);
+      setRollbackMode('config_only');
+      return;
+    }
+    setImpactLoading(true);
+    void getRollbackImpact(topologyId, rollbackTarget)
+      .then(setRollbackImpact)
+      .catch((e) => setError(e))
+      .finally(() => setImpactLoading(false));
+  }, [rollbackTarget, topologyId]);
 
   async function onSaveVersion() {
     setBusy('save');
@@ -88,7 +107,7 @@ export function TopologyVersionsPanel({
   async function confirmRollback(versionId: string) {
     setBusy('rollback');
     try {
-      await rollbackTopologyVersion(topologyId, versionId);
+      await rollbackTopologyVersion(topologyId, versionId, rollbackMode);
       setRollbackTarget(null);
       await reload();
       onRollback?.();
@@ -209,25 +228,75 @@ export function TopologyVersionsPanel({
           onClick={() => setRollbackTarget(null)}
         >
           <div
-            className="max-w-md rounded-xl border border-zinc-200 bg-white p-4 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+            className="max-w-lg rounded-xl border border-zinc-200 bg-white p-4 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="font-semibold">Confirm rollback</h3>
-            <p className="mt-2 text-sm text-cns-muted">
-              Restores the topology graph from this snapshot. Does not deploy automatically — run Deploy after
-              rollback.
-            </p>
+            {impactLoading ? (
+              <p className="mt-2 flex items-center gap-2 text-sm text-cns-muted">
+                <Spinner className="h-4 w-4" /> Checking active deployments…
+              </p>
+            ) : rollbackImpact ? (
+              <div className="mt-3 space-y-2 text-sm">
+                {rollbackImpact.warning_message ? (
+                  <p className="rounded border border-amber-500/50 bg-amber-50 p-2 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+                    {rollbackImpact.warning_message}
+                  </p>
+                ) : null}
+                <p className="text-cns-muted">
+                  Active deployments: <strong>{rollbackImpact.active_deployment_count}</strong>
+                  {rollbackImpact.active_deployments.length > 0 ? (
+                    <span className="ml-1 font-mono text-xs">
+                      ({rollbackImpact.active_deployments.map((d) => d.id.slice(0, 8)).join(', ')})
+                    </span>
+                  ) : null}
+                </p>
+                {rollbackImpact.nodes_removed.length > 0 ? (
+                  <p>
+                    Nodes removed: <strong>{rollbackImpact.nodes_removed.join(', ')}</strong>
+                  </p>
+                ) : null}
+                {rollbackImpact.services_removed.length > 0 ? (
+                  <p>
+                    Services on removed nodes:{' '}
+                    <strong>{rollbackImpact.services_removed.join(', ')}</strong>
+                  </p>
+                ) : null}
+                <fieldset className="mt-3 space-y-2">
+                  <legend className="text-xs font-semibold uppercase tracking-wide text-cns-label">
+                    Rollback mode
+                  </legend>
+                  {(Object.keys(ROLLBACK_MODE_LABEL) as RollbackMode[]).map((mode) => (
+                    <label key={mode} className="flex cursor-pointer items-start gap-2">
+                      <input
+                        type="radio"
+                        name="rollback-mode"
+                        checked={rollbackMode === mode}
+                        onChange={() => setRollbackMode(mode)}
+                        className="mt-1"
+                      />
+                      <span>{ROLLBACK_MODE_LABEL[mode]}</span>
+                    </label>
+                  ))}
+                </fieldset>
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-cns-muted">
+                Restores the topology graph from this snapshot. Active deployments are not changed unless you
+                choose destroy or redeploy.
+              </p>
+            )}
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" className="rounded border px-3 py-1 text-sm" onClick={() => setRollbackTarget(null)}>
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={busy !== null}
-                className="rounded bg-amber-600 px-3 py-1 text-sm text-white"
+                disabled={busy !== null || impactLoading}
+                className="rounded bg-amber-600 px-3 py-1 text-sm text-white disabled:opacity-50"
                 onClick={() => void confirmRollback(rollbackTarget)}
               >
-                Rollback
+                Confirm rollback
               </button>
             </div>
           </div>
@@ -236,5 +305,3 @@ export function TopologyVersionsPanel({
     </div>
   );
 }
-
-export { snapshotSummary };

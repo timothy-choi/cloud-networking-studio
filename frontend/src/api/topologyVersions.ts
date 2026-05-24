@@ -24,6 +24,36 @@ export interface TopologyVersionDiff {
   diff: Record<string, unknown>;
 }
 
+export type RollbackMode = 'config_only' | 'rollback_and_destroy' | 'rollback_and_redeploy';
+
+export interface RollbackImpactDeployment {
+  id: string;
+  status: string;
+  topology_sync_status?: string | null;
+}
+
+export interface TopologyVersionRollbackImpact {
+  active_deployment_count: number;
+  active_deployments: RollbackImpactDeployment[];
+  nodes_removed: string[];
+  nodes_added: string[];
+  services_removed: string[];
+  removes_deployed_nodes: boolean;
+  nodes_removed_from_runtime: string[];
+  target_node_count: number;
+  current_node_count: number;
+  warning_message: string | null;
+}
+
+export interface TopologyVersionRollbackResult {
+  version: TopologyVersion;
+  mode: RollbackMode;
+  message: string;
+  impact: TopologyVersionRollbackImpact | null;
+  destroyed_deployment_ids: string[];
+  redeployed_deployment_id: string | null;
+}
+
 export async function listTopologyVersions(topologyId: string): Promise<TopologyVersion[]> {
   const res = await apiFetch<{ items: TopologyVersion[] }>(`/topologies/${topologyId}/versions`);
   return res.items;
@@ -56,11 +86,22 @@ export async function diffTopologyVersions(
   );
 }
 
+export async function getRollbackImpact(
+  topologyId: string,
+  versionId: string,
+): Promise<TopologyVersionRollbackImpact> {
+  return apiFetch<TopologyVersionRollbackImpact>(
+    `/topologies/${topologyId}/versions/${versionId}/rollback-impact`,
+  );
+}
+
 export async function rollbackTopologyVersion(
   topologyId: string,
   versionId: string,
-): Promise<{ version: TopologyVersion; message: string }> {
+  mode: RollbackMode = 'config_only',
+): Promise<TopologyVersionRollbackResult> {
   return apiFetch(`/topologies/${topologyId}/versions/${versionId}/rollback`, {
     method: 'POST',
+    body: JSON.stringify({ mode }),
   });
 }

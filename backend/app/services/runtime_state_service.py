@@ -211,6 +211,11 @@ def build_topology_runtime(
         topology_id=topology_id,
         deployment_status=latest.status if latest else None,
         latest_deployment_id=latest.id if latest else None,
+        topology_sync_status=(
+            latest.topology_sync_status.value
+            if latest and hasattr(latest.topology_sync_status, "value")
+            else (str(latest.topology_sync_status) if latest else None)
+        ),
         runtime_provider=topo.runtime_target,
         networks=_snapshot_to_networks(snap),
         containers=_snapshot_to_containers(
@@ -275,6 +280,11 @@ def build_deployment_runtime(
         topology_id=dep.topology_id,
         runtime_provider=dep.runtime_target,
         deployment_status=dep.status,
+        topology_sync_status=(
+            dep.topology_sync_status.value
+            if hasattr(dep.topology_sync_status, "value")
+            else str(dep.topology_sync_status)
+        ),
         networks=_snapshot_to_networks(snap),
         containers=_snapshot_to_containers(
             snap,

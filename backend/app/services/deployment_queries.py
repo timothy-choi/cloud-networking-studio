@@ -30,6 +30,26 @@ def deployment_status_blocks_new_deploy(status: DeploymentStatus) -> bool:
     )
 
 
+def list_active_deployments_for_topology(session: Session, topology_id: UUID) -> list[Deployment]:
+    """Deployments that may still have runtime resources or block new deploys."""
+    stmt = (
+        select(Deployment)
+        .where(
+            Deployment.topology_id == topology_id,
+            Deployment.status.in_(
+                (
+                    DeploymentStatus.PENDING,
+                    DeploymentStatus.DEPLOYING,
+                    DeploymentStatus.STOPPING,
+                    DeploymentStatus.SUCCEEDED,
+                )
+            ),
+        )
+        .order_by(Deployment.created_at.desc())
+    )
+    return list(session.scalars(stmt).all())
+
+
 def active_deployment_blocking_new_deploy(
     session: Session, topology_id: UUID
 ) -> Deployment | None:

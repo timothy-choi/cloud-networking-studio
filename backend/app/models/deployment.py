@@ -30,6 +30,13 @@ class DeploymentStatus(str, enum.Enum):
     STOPPED = "stopped"
 
 
+class TopologySyncStatus(str, enum.Enum):
+    """Whether deployment config still matches the topology definition."""
+
+    IN_SYNC = "in_sync"
+    OUT_OF_SYNC = "out_of_sync"
+
+
 class DeploymentEventLevel(str, enum.Enum):
     """Severity for deployment log lines stored as relational events."""
 
@@ -80,6 +87,11 @@ class Deployment(Base):
         index=True,
     )
     effective_config_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    topology_sync_status: Mapped[TopologySyncStatus] = mapped_column(
+        _enum_column(TopologySyncStatus),
+        default=TopologySyncStatus.IN_SYNC,
+        index=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now

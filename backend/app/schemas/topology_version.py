@@ -41,6 +41,36 @@ class TopologyVersionDiffResponse(BaseModel):
     diff: dict
 
 
+class TopologyVersionRollbackRequest(BaseModel):
+    mode: str = Field(
+        default="config_only",
+        pattern="^(config_only|rollback_and_destroy|rollback_and_redeploy)$",
+    )
+
+
+class RollbackImpactDeploymentItem(BaseModel):
+    id: UUID
+    status: str
+    topology_sync_status: str | None = None
+
+
+class TopologyVersionRollbackImpact(BaseModel):
+    active_deployment_count: int
+    active_deployments: list[RollbackImpactDeploymentItem]
+    nodes_removed: list[str] = Field(default_factory=list)
+    nodes_added: list[str] = Field(default_factory=list)
+    services_removed: list[str] = Field(default_factory=list)
+    removes_deployed_nodes: bool = False
+    nodes_removed_from_runtime: list[str] = Field(default_factory=list)
+    target_node_count: int = 0
+    current_node_count: int = 0
+    warning_message: str | None = None
+
+
 class TopologyVersionRollbackResponse(BaseModel):
     version: TopologyVersionResponse
-    message: str = "Topology restored from snapshot. Deploy separately to apply runtime."
+    mode: str = "config_only"
+    message: str = "Topology restored from snapshot."
+    impact: TopologyVersionRollbackImpact | None = None
+    destroyed_deployment_ids: list[UUID] = Field(default_factory=list)
+    redeployed_deployment_id: UUID | None = None

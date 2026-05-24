@@ -38,7 +38,8 @@ install_docker_via_apt() {
   install -m 0755 -d /etc/apt/keyrings
   retry 5 10 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   chmod a+r /etc/apt/keyrings/docker.asc
-  ARCH="$$(dpkg --print-architecture)"
+  # templatefile: use $(...) unescaped; use $${...} for bash parameter expansion only.
+  ARCH="$(/usr/bin/dpkg --print-architecture)"
   # shellcheck disable=SC1091
   . /etc/os-release
   UBUNTU_CODENAME="$${VERSION_CODENAME:-noble}"
@@ -55,7 +56,7 @@ install_docker_via_apt() {
 }
 
 validate_docker_apt_list() {
-  grep -Eq '^deb \[arch=(amd64|arm64) signed-by=/etc/apt/keyrings/docker.asc\] https://download.docker.com/linux/ubuntu (noble|jammy|focal) stable$$' \
+  grep -Eq '^deb \[arch=(amd64|arm64) signed-by=/etc/apt/keyrings/docker.asc\] https://download.docker.com/linux/ubuntu (noble|jammy|focal) stable$' \
     /etc/apt/sources.list.d/docker.list
 }
 
@@ -86,7 +87,7 @@ enable_docker_service() {
 verify_docker() {
   docker --version
   docker compose version
-  [[ "$$(systemctl is-active docker)" == "active" ]]
+  [[ "$(systemctl is-active docker)" == "active" ]]
 }
 
 log "Installing Docker Engine..."

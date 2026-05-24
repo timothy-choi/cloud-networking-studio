@@ -29,6 +29,7 @@ Common mistakes:
 - Single-line echo that drops the codename or breaks bracket syntax
 - Stale malformed file left from a previous boot attempt
 - Using `$(. /etc/os-release && echo "$VERSION_CODENAME")` under `set -u` inside Terraform user_data — can fail with `VERSION_CODENAME: unbound variable`. Source `/etc/os-release` first, set `UBUNTU_CODENAME="${VERSION_CODENAME:-noble}"`, then write `docker.list`.
+- Using `$$(command)` in **`templatefile()`** templates — Terraform leaves `$$(` as a **literal double dollar** in user_data; bash then expands `$$` to the process ID (e.g. `ARCH=1118(dpkg ...)`). Use **unescaped** `$(command)` for command substitution; use **`$${VAR}`** only for bash `${parameter}` expansions.
 
 ### Fix (in repo)
 

@@ -521,14 +521,13 @@ jobs:
           set -euo pipefail
           export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
           API_BASE_URL="${VITE_API_BASE_URL:-$PROD_VITE_API_DEFAULT}"
-          cd frontend
           echo "=== pwd ==="
           pwd
-          npm ci
+          npm ci --prefix frontend
           npx vercel@54.0.0 pull --yes --environment=production --token "${VERCEL_TOKEN}"
-          VITE_API_BASE_URL="${API_BASE_URL}" npm run build
-          echo "=== ls -la ==="
-          ls -la
-          echo "=== ls -la dist ==="
-          ls -la dist
+          VITE_API_BASE_URL="${API_BASE_URL}" npm run build --prefix frontend
+          echo "=== ls -la frontend ==="
+          ls -la frontend
+          echo "=== ls -la frontend/dist ==="
+          ls -la frontend/dist
           npx vercel@54.0.0 deploy --prod --yes --token "${VERCEL_TOKEN}"

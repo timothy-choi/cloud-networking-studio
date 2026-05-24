@@ -70,16 +70,32 @@ _cns_install_prereqs() {
   _cns_retry 3 5 sudo apt-get install -y ca-certificates curl gnupg git jq openssl
 }
 
-_cns_install_docker_via_apt() {
-  _cns_install_prereqs
+_cns_docker_apt_diagnostics() {
+  echo "=== /etc/apt/sources.list.d/docker.list ==="
+  sudo cat /etc/apt/sources.list.d/docker.list 2>/dev/null || true
+  echo "=== /etc/apt/keyrings ==="
+  sudo ls -la /etc/apt/keyrings 2>/dev/null || true
+  echo "=== tail /var/log/cloud-init-output.log ==="
+  sudo tail -n 200 /var/log/cloud-init-output.log 2>/dev/null || true
+}
+
+_cns_write_docker_apt_repo() {
+  sudo rm -f /etc/apt/sources.list.d/docker.list
   sudo install -m 0755 -d /etc/apt/keyrings
   _cns_retry 5 10 curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-    | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
-  sudo chmod a+r /etc/apt/keyrings/docker.gpg
-  # shellcheck disable=SC1091
-  . /etc/os-release
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+    -o /etc/apt/keyrings/docker.asc
+  sudo chmod a+r /etc/apt/keyrings/docker.asc
+  echo \
+    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
     | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+  _cns_log "Wrote /etc/apt/sources.list.d/docker.list:"
+  sudo cat /etc/apt/sources.list.d/docker.list
+}
+
+_cns_install_docker_via_apt() {
+  _cns_install_prereqs
+  _cns_write_docker_apt_repo
   _cns_apt_get_update
   _cns_retry 3 10 sudo apt-get install -y \
     docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
@@ -134,6 +150,7 @@ _cns_install_docker_if_needed() {
     return 0
   fi
   _cns_log "apt Docker install failed; trying get.docker.com"
+  _cns_docker_apt_diagnostics
   _cns_install_docker_via_getdocker
   _cns_enable_docker_service
 }
@@ -163,6 +180,7 @@ _cns_wait_for_docker() {
     n=$((n + 1))
   done
   _cns_cloud_init_report
+  _cns_docker_apt_diagnostics
   _cns_die "Docker not available after ${CNS_DOCKER_WAIT_SECONDS}s"
 }
 

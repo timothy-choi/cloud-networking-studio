@@ -34,14 +34,25 @@ install_prereqs() {
 
 install_docker_via_apt() {
   install_prereqs
+  rm -f /etc/apt/sources.list.d/docker.list
   install -m 0755 -d /etc/apt/keyrings
-  retry 5 10 curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-    | gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
-  chmod a+r /etc/apt/keyrings/docker.gpg
-  . /etc/os-release
-  echo "deb [arch=$$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list
+  retry 5 10 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
+  echo \
+    "deb [arch=$$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+    $$(. /etc/os-release && echo "$${VERSION_CODENAME}") stable" \
+    > /etc/apt/sources.list.d/docker.list
+  log "Wrote /etc/apt/sources.list.d/docker.list:"
+  cat /etc/apt/sources.list.d/docker.list
   apt_get_update
   retry 3 10 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+}
+
+docker_apt_diagnostics() {
+  log "Docker apt diagnostics:"
+  cat /etc/apt/sources.list.d/docker.list || true
+  ls -la /etc/apt/keyrings || true
+  tail -n 200 /var/log/cloud-init-output.log || true
 }
 
 install_docker_via_getdocker() {
@@ -69,11 +80,12 @@ if install_docker_via_apt; then
   log "Docker installed via apt"
 else
   log "apt Docker install failed; trying get.docker.com"
-  install_docker_via_getdocker || die "get.docker.com install failed"
+  docker_apt_diagnostics
+  install_docker_via_getdocker || { docker_apt_diagnostics; die "get.docker.com install failed"; }
 fi
 
-enable_docker_service || die "failed to enable/start docker service"
-verify_docker || die "Docker verification failed after install"
+enable_docker_service || { docker_apt_diagnostics; die "failed to enable/start docker service"; }
+verify_docker || { docker_apt_diagnostics; die "Docker verification failed after install"; }
 
 log "Docker bootstrap completed successfully"
 

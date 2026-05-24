@@ -152,5 +152,6 @@ docker compose -f docker-compose.prod.yml -f docker-compose.caddy-https.yml -f d
 
 ## Related docs
 
+- [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) — cloud-init Docker / malformed `docker.list`
 - [CICD_DEPLOYMENT.md](./CICD_DEPLOYMENT.md) — production deploy
 - [EPHEMERAL_CI_ENVIRONMENTS.md](./EPHEMERAL_CI_ENVIRONMENTS.md) — throwaway PR EC2 (not staging)

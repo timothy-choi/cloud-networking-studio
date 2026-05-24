@@ -17,3 +17,11 @@ func TestContainerName(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestResolveImageBlankRejected(t *testing.T) {
+	blank := ""
+	_, err := resolveImage(&blank, "host")
+	if err == nil {
+		t.Fatal("expected error for blank image")
+	}
+}

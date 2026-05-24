@@ -79,15 +79,8 @@ func lookupPodIP(ctx context.Context, client kubernetes.Interface, ns, nodeID st
 	return ""
 }
 
-func resolveImage(img *string) string {
-	if img == nil {
-		return "alpine:latest"
-	}
-	s := strings.TrimSpace(*img)
-	if s == "" {
-		return "alpine:latest"
-	}
-	return s
+func resolveImage(img *string, nodeType string) (string, error) {
+	return nodeconfig.ResolveImage(img, nodeType)
 }
 
 func deploymentNameForNode(pn model.PlanNode) string {
@@ -178,7 +171,13 @@ func Deploy(ctx context.Context, client kubernetes.Interface, req *model.Deploym
 
 	for _, pn := range req.Nodes {
 		dname := deploymentNameForNode(pn)
-		img := resolveImage(pn.Image)
+		img, imgErr := resolveImage(pn.Image, pn.NodeType)
+		if imgErr != nil {
+			msg := fmt.Sprintf("pod create failed (%s): %v", dname, imgErr)
+			events = append(events, ev("error", msg))
+			_ = DestroyNamespace(ctx, client, ns)
+			return model.DeploymentResponse{Status: "failed", RuntimeProvider: "kubernetes", Events: events, Error: &msg}
+		}
 		cmd := nodeconfig.ResolveContainerCommand(pn, img)
 		ports := nodeconfig.EffectivePorts(pn)
 		portNum := nodeconfig.PrimaryPort(pn)

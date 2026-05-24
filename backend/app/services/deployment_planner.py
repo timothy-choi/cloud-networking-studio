@@ -10,7 +10,7 @@ from app.services.network_allocation import (
     DEFAULT_NETWORK_ALLOCATION_MODE,
     resolve_network_allocation_mode,
 )
-from app.services.node_runtime_config import NodeRuntimeConfig, extract_node_runtime_config
+from app.services.node_runtime_config import NodeRuntimeConfig, extract_node_runtime_config, resolve_deploy_node_image
 from app.services.segmented_topology import topology_is_segmented_multinet
 
 # Ordered orchestration phases — providers map these to concrete actions later.
@@ -184,12 +184,13 @@ def _build_plan_from_effective_config(
         )
 
     def _plan_node_from_snap(raw: dict) -> PlanNode:
+        node_type = raw.get("node_type", NodeType.GENERIC.value)
         return PlanNode(
             id=UUID(str(raw["id"])),
             name=raw["name"],
-            image=raw.get("image"),
+            image=resolve_deploy_node_image(raw.get("image"), node_type),
             ip_address=raw.get("ip_address"),
-            node_type=raw.get("node_type", NodeType.GENERIC.value),
+            node_type=node_type,
             runtime_config=extract_node_runtime_config(raw.get("config")),
         )
 
@@ -301,7 +302,7 @@ def build_deployment_plan(
         return PlanNode(
             id=n.id,
             name=n.name,
-            image=n.image,
+            image=resolve_deploy_node_image(n.image, n.node_type.value),
             ip_address=n.ip_address,
             node_type=n.node_type.value,
             runtime_config=extract_node_runtime_config(n.config),

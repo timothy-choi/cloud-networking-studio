@@ -12,6 +12,7 @@ import (
 	docker "github.com/fsouza/go-dockerclient"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/runtime/nodeconfig"
 )
 
 func TopologyNetworkName(topologyID string) string {
@@ -64,15 +65,16 @@ func nodeLabels(req *model.DeploymentRequest, nodeID, forwardingRole string) map
 	return m
 }
 
-func resolveImage(img *string) string {
-	if img == nil {
-		return "alpine:latest"
-	}
-	s := strings.TrimSpace(*img)
-	if s == "" {
-		return "alpine:latest"
-	}
-	return s
+func DefaultImageForNodeType(nodeType string) string {
+	return nodeconfig.DefaultImageForNodeType(nodeType)
+}
+
+func ResolveImage(img *string, nodeType string) (string, error) {
+	return nodeconfig.ResolveImage(img, nodeType)
+}
+
+func resolveImage(img *string, nodeType string) (string, error) {
+	return nodeconfig.ResolveImage(img, nodeType)
 }
 
 func enrichContainerNetworkMeta(
@@ -377,7 +379,12 @@ func DeploySimple(ctx context.Context, cli *docker.Client, req *model.Deployment
 
 	for _, pn := range req.Nodes {
 		cname := ContainerName(pn.ID, pn.Name)
-		imageRef := resolveImage(pn.Image)
+		imageRef, imgErr := resolveImage(pn.Image, pn.NodeType)
+		if imgErr != nil {
+			msg := fmt.Sprintf("container create failed (%s): %v", cname, imgErr)
+			events = append(events, ev("error", msg))
+			return model.DeploymentResponse{Status: "failed", RuntimeProvider: "docker", Events: events, Error: &msg}
+		}
 		role := resolveForwardingRole(pn)
 		labels := nodeLabels(req, pn.ID, role)
 

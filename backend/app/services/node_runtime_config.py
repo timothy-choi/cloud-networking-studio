@@ -190,6 +190,62 @@ class NodeConfigValidationError(ValueError):
     """Raised when freeform node config fails API validation."""
 
 
+DEFAULT_SERVICE_NODE_IMAGE = "nginx:alpine"
+DEFAULT_HOST_NODE_IMAGE = "alpine:latest"
+
+
+def default_image_for_node_type(node_type: str | None) -> str:
+    """Backward-compatible deploy defaults when topology nodes omit ``image``."""
+    nt = (node_type or "").lower().strip()
+    if nt in ("generic", "service"):
+        return DEFAULT_SERVICE_NODE_IMAGE
+    return DEFAULT_HOST_NODE_IMAGE
+
+
+def resolve_deploy_node_image(image: str | None, node_type: str | None) -> str:
+    """
+    Resolve the container image sent to runtime providers.
+
+    * ``None`` (legacy nodes) → role-based default.
+    * Blank/whitespace explicit value → validation error (400 at deploy).
+    * Non-empty value → validated reference (unchanged when valid).
+    """
+    if image is None:
+        return default_image_for_node_type(node_type)
+    s = str(image).strip()
+    if not s:
+        raise NodeConfigValidationError("Node image is required")
+    validated = validate_image_reference(s)
+    assert validated is not None
+    return validated
+
+
+def validate_deploy_node_images_for_topology(topology: Topology) -> list[str]:
+    """Pre-deploy image checks; blank explicit images and invalid refs become 400, not runtime 500."""
+    errors: list[str] = []
+    for node in topology.nodes:
+        try:
+            resolve_deploy_node_image(node.image, node.node_type.value)
+        except NodeConfigValidationError as exc:
+            errors.append(f"Node {node.name!r}: {exc}")
+    return errors
+
+
+def validate_deploy_node_images_from_snapshot(nodes: list[dict] | None) -> list[str]:
+    """Validate node images from an effective-config or version snapshot."""
+    errors: list[str] = []
+    for raw in nodes or []:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "?")
+        node_type = str(raw.get("node_type") or "generic")
+        try:
+            resolve_deploy_node_image(raw.get("image"), node_type)
+        except NodeConfigValidationError as exc:
+            errors.append(f"Node {name!r}: {exc}")
+    return errors
+
+
 _HEALTH_CHECK_TYPES = frozenset({"runtime", "tcp", "http", "command", "none"})
 
 

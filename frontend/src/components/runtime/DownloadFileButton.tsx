@@ -1,22 +1,6 @@
 import { useState } from 'react';
-import { ApiError, getApiBase, getStoredAccessToken } from '../../api/client';
 
-async function fetchAuthenticatedBlob(url: string): Promise<Blob> {
-  const token = getStoredAccessToken();
-  const res = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!res.ok) {
-    let detail: unknown = await res.text();
-    try {
-      detail = JSON.parse(String(detail));
-    } catch {
-      /* plain text error */
-    }
-    throw new ApiError(res.status, res.statusText, detail);
-  }
-  return res.blob();
-}
+import { ApiError, apiFetchBlob, formatApiError, resolveApiUrl } from '../../api/client';
 
 export function triggerBlobDownload(blob: Blob, filename: string) {
   const href = URL.createObjectURL(blob);
@@ -28,20 +12,24 @@ export function triggerBlobDownload(blob: Blob, filename: string) {
 }
 
 export function integrationOutputFileDownloadUrl(deploymentId: string, fileName: string) {
-  return `${getApiBase()}/deployments/${deploymentId}/integration-outputs/files/${encodeURIComponent(fileName)}`;
+  return resolveApiUrl(
+    `/deployments/${deploymentId}/integration-outputs/files/${encodeURIComponent(fileName)}`,
+  );
 }
 
 export function integrationOutputArchiveDownloadUrl(deploymentId: string) {
-  return `${getApiBase()}/deployments/${deploymentId}/integration-outputs/archive`;
+  return resolveApiUrl(`/deployments/${deploymentId}/integration-outputs/archive`);
 }
 
 export async function downloadIntegrationOutputFile(deploymentId: string, fileName: string) {
-  const blob = await fetchAuthenticatedBlob(integrationOutputFileDownloadUrl(deploymentId, fileName));
+  const blob = await apiFetchBlob(
+    `/deployments/${deploymentId}/integration-outputs/files/${encodeURIComponent(fileName)}`,
+  );
   triggerBlobDownload(blob, fileName);
 }
 
 export async function downloadIntegrationOutputArchive(deploymentId: string) {
-  const blob = await fetchAuthenticatedBlob(integrationOutputArchiveDownloadUrl(deploymentId));
+  const blob = await apiFetchBlob(`/deployments/${deploymentId}/integration-outputs/archive`);
   triggerBlobDownload(blob, 'cns-integration-outputs.zip');
 }
 
@@ -63,7 +51,7 @@ export function DownloadFileButton({
     try {
       await downloadIntegrationOutputFile(deploymentId, fileName);
     } catch (e) {
-      setErr(e instanceof ApiError ? `${e.status} ${e.statusText}` : 'Download failed');
+      setErr(e instanceof ApiError ? `${e.status} ${e.statusText}` : formatApiError(e));
     } finally {
       setBusy(false);
     }

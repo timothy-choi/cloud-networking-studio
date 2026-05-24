@@ -1,4 +1,4 @@
-import { apiFetch, getApiBase, getStoredAccessToken } from './client';
+import { apiFetch, getStoredAccessToken, resolveApiWebSocketUrl } from './client';
 
 export type TerminalSessionCreateResponse = {
   session_id: string;
@@ -28,10 +28,8 @@ export function closeTerminalSession(sessionId: string) {
 }
 
 export function terminalWebSocketUrl(websocketPath: string): string {
-  const base = getApiBase().replace(/\/$/, '');
-  const wsBase = base.replace(/^http/, 'ws');
   const path = websocketPath.startsWith('/') ? websocketPath : `/${websocketPath}`;
   const token = getStoredAccessToken();
   const q = token ? `?token=${encodeURIComponent(token)}` : '';
-  return `${wsBase}${path}${q}`;
+  return resolveApiWebSocketUrl(`${path}${q}`);
 }

@@ -1,4 +1,4 @@
-import { getApiBase, getStoredAccessToken, ApiError, apiFetch } from './client';
+import { apiFetchBlob, apiFetch, resolveApiUrl } from './client';
 
 export type TopologyIacExportKind =
   | 'docker-compose'
@@ -60,24 +60,11 @@ export const IAC_EXPORT_OPTIONS: IaCExportOption[] = [
 ];
 
 export function topologyIacExportUrl(topologyId: string, kind: TopologyIacExportKind) {
-  return `${getApiBase()}/topologies/${topologyId}/exports/${kind}`;
+  return resolveApiUrl(`/topologies/${topologyId}/exports/${kind}`);
 }
 
 export async function downloadTopologyIacExport(topologyId: string, kind: TopologyIacExportKind) {
-  const token = getStoredAccessToken();
-  const res = await fetch(topologyIacExportUrl(topologyId, kind), {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!res.ok) {
-    let detail: unknown = await res.text();
-    try {
-      detail = JSON.parse(String(detail));
-    } catch {
-      /* plain text */
-    }
-    throw new ApiError(res.status, res.statusText, detail);
-  }
-  const blob = await res.blob();
+  const blob = await apiFetchBlob(`/topologies/${topologyId}/exports/${kind}`);
   const opt = IAC_EXPORT_OPTIONS.find((o) => o.kind === kind);
   const filename = opt?.filename ?? 'cns-export.bin';
   const href = URL.createObjectURL(blob);

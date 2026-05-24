@@ -1,6 +1,6 @@
 """Add topology versions and deployment profiles (Step 56).
 
-Revision ID: 20260525_topology_versions_profiles
+Revision ID: 20260525_topo_versions
 Revises: 20260524_project_invitations
 """
 
@@ -11,7 +11,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "20260525_topology_versions_profiles"
+revision: str = "20260525_topo_versions"
 down_revision: Union[str, None] = "20260524_project_invitations"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

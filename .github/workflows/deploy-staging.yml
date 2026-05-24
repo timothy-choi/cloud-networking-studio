@@ -240,13 +240,16 @@ jobs:
             echo "::warning::VERCEL_TOKEN not set — skipping Vercel staging frontend deploy."
             exit 0
           fi
-          cd frontend
-          npm ci
-          VITE_API_BASE_URL="${VITE_API_BASE_URL}" npm run build
+          echo "=== pwd ==="
+          pwd
+          npm ci --prefix frontend
           npx vercel@54.0.0 pull --yes --environment=preview --token "${VERCEL_TOKEN}"
-          cp vercel.json dist/vercel.json
-          cd ..
-          npx vercel@54.0.0 deploy frontend/dist --yes --token "${VERCEL_TOKEN}"
+          VITE_API_BASE_URL="${VITE_API_BASE_URL}" npm run build --prefix frontend
+          echo "=== ls -la frontend ==="
+          ls -la frontend
+          echo "=== ls -la frontend/dist ==="
+          ls -la frontend/dist
+          npx vercel@54.0.0 deploy --yes --token "${VERCEL_TOKEN}"
           echo "Vercel preview deployed (point app-staging DNS or use the preview URL in CNS_STAGING_CORS_ORIGINS)."
 
       - name: Print staging URLs

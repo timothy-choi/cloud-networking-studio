@@ -23,6 +23,9 @@ export interface DeploymentResponse {
   topology_id: string;
   status: DeploymentStatus;
   runtime_target: string;
+  topology_version_id?: string | null;
+  deployment_profile_id?: string | null;
+  effective_config_json?: Record<string, unknown> | null;
   started_at: string | null;
   finished_at: string | null;
   created_at: string;

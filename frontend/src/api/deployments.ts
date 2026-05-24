@@ -7,19 +7,23 @@ import type { HealingResponse, ReconciliationResponse } from '../types/runtime';
 
 export type DeployTopologyOptions = {
   network_allocation_mode?: NetworkAllocationMode;
+  profile_id?: string;
+  topology_version_id?: string;
 };
 
 export async function deployTopology(
   topologyId: string,
   options?: DeployTopologyOptions,
 ): Promise<DeploymentResponse> {
-  const body =
-    options?.network_allocation_mode != null
-      ? { network_allocation_mode: options.network_allocation_mode }
-      : undefined;
+  const body: Record<string, string> = {};
+  if (options?.network_allocation_mode != null) {
+    body.network_allocation_mode = options.network_allocation_mode;
+  }
+  if (options?.profile_id) body.profile_id = options.profile_id;
+  if (options?.topology_version_id) body.topology_version_id = options.topology_version_id;
   return apiFetch<DeploymentResponse>(`/topologies/${topologyId}/deploy`, {
     method: 'POST',
-    body: body ? JSON.stringify(body) : undefined,
+    body: Object.keys(body).length ? JSON.stringify(body) : undefined,
   });
 }
 

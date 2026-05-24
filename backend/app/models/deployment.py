@@ -37,6 +37,14 @@ class TopologySyncStatus(str, enum.Enum):
     OUT_OF_SYNC = "out_of_sync"
 
 
+class DeploymentCleanupStatus(str, enum.Enum):
+    """Result of tearing down runtime resources for a deployment."""
+
+    NONE = "none"
+    CLEAN = "clean"
+    PARTIAL_FAILED = "partial_failed"
+
+
 class DeploymentEventLevel(str, enum.Enum):
     """Severity for deployment log lines stored as relational events."""
 
@@ -90,6 +98,11 @@ class Deployment(Base):
     topology_sync_status: Mapped[TopologySyncStatus] = mapped_column(
         _enum_column(TopologySyncStatus),
         default=TopologySyncStatus.IN_SYNC,
+        index=True,
+    )
+    cleanup_status: Mapped[DeploymentCleanupStatus] = mapped_column(
+        _enum_column(DeploymentCleanupStatus),
+        default=DeploymentCleanupStatus.NONE,
         index=True,
     )
 

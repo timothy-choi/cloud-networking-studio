@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.deployment import DeploymentEventLevel, DeploymentStatus, TopologySyncStatus
+from app.models.deployment import DeploymentEventLevel, DeploymentStatus, TopologySyncStatus, DeploymentCleanupStatus
 
 
 class DeploymentEventResponse(BaseModel):
@@ -72,6 +72,10 @@ class DeploymentResponse(BaseModel):
     topology_sync_status: TopologySyncStatus | None = Field(
         default=None,
         description="Whether this deployment still matches the topology definition.",
+    )
+    cleanup_status: DeploymentCleanupStatus | None = Field(
+        default=None,
+        description="Result of runtime resource teardown for this deployment.",
     )
     started_at: datetime | None
     finished_at: datetime | None

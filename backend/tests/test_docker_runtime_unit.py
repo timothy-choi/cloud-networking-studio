@@ -509,3 +509,57 @@ def test_fake_provider_returns_tuple_events():
     plan = _sample_plan()
     rows = fp.deploy(plan).events
     assert rows and all(isinstance(r, tuple) and len(r) == 2 for r in rows)
+
+
+def test_deployment_teardown_uses_deployment_and_legacy_node_labels():
+    from app.providers.docker_runtime_provider import (
+        DockerRuntimeProvider,
+        list_containers_for_cns_deployment_teardown,
+    )
+
+    tid = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    dep_id = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    client_id = uuid.UUID("11111111-1111-1111-1111-111111111111")
+    server_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+    client_ctr = MagicMock()
+    client_ctr.id = "client-id"
+    client_ctr.name = "cns-client"
+    server_ctr = MagicMock()
+    server_ctr.id = "server-id"
+    server_ctr.name = "cns-server"
+
+    def list_side_effect(*, all=True, filters=None):
+        _ = all
+        labels = filters.get("label") or []
+        label_set = set(labels)
+        if f"cns.deployment_id={dep_id}" in label_set:
+            return [client_ctr]
+        if {
+            f"cns.topology_id={tid}",
+            f"cns.node_id={server_id}",
+        } <= label_set:
+            return [server_ctr]
+        return []
+
+    mock_client = MagicMock()
+    mock_client.containers.list.side_effect = list_side_effect
+
+    found = list_containers_for_cns_deployment_teardown(
+        mock_client,
+        tid,
+        dep_id,
+        legacy_node_ids=frozenset({client_id, server_id}),
+    )
+    assert {getattr(c, "name", "") for c in found} == {"cns-client", "cns-server"}
+
+    provider = DockerRuntimeProvider(client=mock_client)
+    events = provider.destroy(
+        tid,
+        dep_id,
+        legacy_node_ids=frozenset({client_id, server_id}),
+    )
+    assert any("Removed container: cns-client" in msg for _lvl, msg in events)
+    assert any("Removed container: cns-server" in msg for _lvl, msg in events)
+    client_ctr.stop.assert_called_once()
+    server_ctr.stop.assert_called_once()

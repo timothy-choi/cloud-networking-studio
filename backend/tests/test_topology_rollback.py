@@ -6,8 +6,14 @@ import uuid
 from uuid import UUID
 
 from app.db.session import SessionLocal
-from app.models.deployment import Deployment, DeploymentStatus, TopologySyncStatus
+from app.models.deployment import (
+    Deployment,
+    DeploymentCleanupStatus,
+    DeploymentStatus,
+    TopologySyncStatus,
+)
 from app.models.topology import NodeType
+from app.providers.docker_runtime_provider import fake_remaining_containers
 
 TOPO_BODY = {
     "name": "Rollback Lab",
@@ -26,6 +32,43 @@ def _register(client_strict, prefix: str = "rb") -> dict[str, str]:
     assert r.status_code == 201, r.text
     tok = r.json()["access_token"]
     return {"Authorization": f"Bearer {tok}"}
+
+
+def _client_server_topology(client, headers) -> tuple[str, dict]:
+    """Topology with client+server nodes and an empty baseline version."""
+    tid = client.post("/topologies", headers=headers, json=TOPO_BODY).json()["id"]
+    v_empty = client.post(
+        f"/topologies/{tid}/versions", headers=headers, json={"name": "empty"}
+    ).json()
+    client_node = client.post(
+        f"/topologies/{tid}/nodes",
+        headers=headers,
+        json={
+            "name": "client",
+            "node_type": NodeType.GENERIC.value,
+            "image": "nginx:latest",
+        },
+    ).json()
+    server_node = client.post(
+        f"/topologies/{tid}/nodes",
+        headers=headers,
+        json={
+            "name": "server",
+            "node_type": NodeType.HOST.value,
+            "image": "nginx:latest",
+        },
+    ).json()
+    client.post(
+        f"/topologies/{tid}/links",
+        headers=headers,
+        json={
+            "source_node_id": client_node["id"],
+            "target_node_id": server_node["id"],
+            "network_name": "net0",
+            "cidr": "10.9.0.0/24",
+        },
+    )
+    return tid, v_empty
 
 
 def _empty_version_then_populated(client, headers) -> tuple[str, dict]:
@@ -134,6 +177,64 @@ def test_rollback_and_destroy_stops_active_deployments(client_strict):
 
     dep = _load_deployment(dep_id)
     assert dep.status == DeploymentStatus.STOPPED
+    assert dep.cleanup_status == DeploymentCleanupStatus.CLEAN
+
+
+def test_rollback_and_destroy_removes_all_client_server_containers(client_strict):
+    h = _register(client_strict)
+    tid, v_empty = _client_server_topology(client_strict, h)
+    dep_id = _deploy(client_strict, h, tid)
+
+    assert fake_remaining_containers(UUID(dep_id)) == {"cns-client", "cns-server"}
+
+    rb = client_strict.post(
+        f"/topologies/{tid}/versions/{v_empty['id']}/rollback",
+        headers=h,
+        json={"mode": "rollback_and_destroy"},
+    )
+    assert rb.status_code == 200, rb.text
+
+    assert fake_remaining_containers(UUID(dep_id)) == set()
+
+    dep = _load_deployment(dep_id)
+    assert dep.status == DeploymentStatus.STOPPED
+    assert dep.cleanup_status == DeploymentCleanupStatus.CLEAN
+
+    nodes = client_strict.get(f"/topologies/{tid}/nodes", headers=h).json()
+    assert len(nodes) == 0
+
+
+def test_rollback_destroy_runs_before_topology_mutation(client_strict, monkeypatch):
+    h = _register(client_strict)
+    tid, v_empty = _empty_version_then_populated(client_strict, h)
+    _deploy(client_strict, h, tid)
+
+    call_order: list[str] = []
+
+    import app.services.topology_rollback_service as rb_svc
+    import app.services.topology_version_service as version_svc
+
+    original_rollback = version_svc.rollback_topology_to_version
+    original_destroy = rb_svc.destroy_deployment_record
+
+    def track_destroy(*args, **kwargs):
+        call_order.append("destroy")
+        return original_destroy(*args, **kwargs)
+
+    def track_rollback(*args, **kwargs):
+        call_order.append("rollback")
+        return original_rollback(*args, **kwargs)
+
+    monkeypatch.setattr(rb_svc, "destroy_deployment_record", track_destroy)
+    monkeypatch.setattr(version_svc, "rollback_topology_to_version", track_rollback)
+
+    rb = client_strict.post(
+        f"/topologies/{tid}/versions/{v_empty['id']}/rollback",
+        headers=h,
+        json={"mode": "rollback_and_destroy"},
+    )
+    assert rb.status_code == 200, rb.text
+    assert call_order == ["destroy", "rollback"]
 
 
 def test_rollback_and_redeploy_recreates_for_non_empty_topology(client_strict):

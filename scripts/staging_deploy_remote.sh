@@ -109,30 +109,25 @@ if [[ -n "${CNS_ENVIRONMENT:-}" ]] && [[ "${CNS_ENVIRONMENT}" == "production" ]]
   exit 1
 fi
 
-ensure_docker() {
-  if command -v docker >/dev/null 2>&1; then
-    :
-  else
-    export DEBIAN_FRONTEND=noninteractive
-    sudo apt-get update -y
-    sudo apt-get install -y ca-certificates curl gnupg git jq openssl
-    sudo install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
-    sudo chmod a+r /etc/apt/keyrings/docker.gpg
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-    sudo apt-get update -y
-    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    sudo systemctl enable docker
-    sudo systemctl start docker
-    sudo usermod -aG docker "${USER}" || true
+run_ec2_bootstrap_host() {
+  local script=""
+  if [[ -f "${REPO_DIR}/scripts/ec2_bootstrap_docker.sh" ]]; then
+    script="${REPO_DIR}/scripts/ec2_bootstrap_docker.sh"
+  elif [[ -n "${GITHUB_TOKEN:-}" ]] && [[ -n "${GITHUB_REPOSITORY:-}" ]] && [[ -n "${CHECKOUT_REF:-}" ]]; then
+    script="/tmp/ec2_bootstrap_docker.sh"
+    if ! curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${CHECKOUT_REF}/scripts/ec2_bootstrap_docker.sh" \
+      -o "${script}"; then
+      script=""
+    fi
   fi
-  if ! command -v openssl >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    sudo apt-get update -y
-    sudo apt-get install -y openssl
+  if [[ -z "${script}" ]] || [[ ! -f "${script}" ]]; then
+    echo "::error::Could not load scripts/ec2_bootstrap_docker.sh for host bootstrap."
+    exit 1
   fi
+  # shellcheck source=/dev/null
+  source "${script}"
+  ec2_bootstrap_host
 }
 
 gen_secret_hex() {
@@ -200,13 +195,7 @@ run_compose() {
   "${COMPOSE[@]}" "$@"
 }
 
-sudo cloud-init status --wait || true
-echo "=== cloud-init status ==="
-sudo cloud-init status || true
-
-ensure_docker
-docker --version 2>/dev/null || sudo docker --version
-docker compose version 2>/dev/null || sudo docker compose version
+run_ec2_bootstrap_host
 
 set +x
 echo "=== git clone / fetch / checkout (staging dir; xtrace off — token in clone URL) ==="

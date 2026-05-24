@@ -119,3 +119,23 @@ variable "public_subnet_b_cidr" {
   description = "Second public subnet CIDR (different AZ) for RDS DB subnet group when rds_enabled."
   default     = "10.0.2.0/24"
 }
+
+# --- Staging EC2 bootstrap (environment=staging only) ---
+
+variable "staging_cors_origins" {
+  type        = string
+  description = "Default CNS_CORS_ORIGINS written to ~/cloud-networking-studio-staging/.env.staging on first boot and merged on deploy."
+  default     = "https://app-staging.cloudnetstudio.com,https://cloud-networking-studio.vercel.app"
+}
+
+variable "staging_api_host" {
+  type        = string
+  description = "Staging API hostname for Caddy/TLS bootstrap (no scheme)."
+  default     = "api-staging.cloudnetstudio.com"
+}
+
+variable "staging_app_url" {
+  type        = string
+  description = "Staging SPA origin URL for CNS_FRONTEND_APP_URL bootstrap."
+  default     = "https://app-staging.cloudnetstudio.com"
+}

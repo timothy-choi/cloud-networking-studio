@@ -2,7 +2,7 @@
 #
 # Usage on EC2:
 #   docker compose -f docker-compose.prod.yml -f docker-compose.caddy-https.yml \
-#     -f docker-compose.staging.yml --env-file .env up -d --build
+#     -f docker-compose.staging.yml --env-file .env.staging up -d --build
 #
 # Containers/volumes/networks use project name **cns-staging** (never cns-prod).
 # Staging always uses the local Compose Postgres service unless STAGING_DATABASE_URL is set explicitly.

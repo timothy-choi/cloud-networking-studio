@@ -57,11 +57,12 @@ docker compose \
   -f docker-compose.prod.yml \
   -f docker-compose.caddy-https.yml \
   -f docker-compose.staging.yml \
-  --env-file .env \
+  --env-file .env.staging \
   up -d --build
 ```
 
 - **`docker-compose.staging.yml`** sets project name **`cns-staging`**, `CNS_ENVIRONMENT=staging`, staging Caddyfile, and optional host port offsets.
+- **`~/cloud-networking-studio-staging/.env.staging`** — staging secrets and **`CNS_CORS_ORIGINS`** (seeded by Terraform user_data on first boot when using `CNS_STAGING_TERRAFORM_ENABLED=true`; merged on each deploy).
 - **`deploy/Caddyfile.staging-https`** — TLS site for `api-staging.cloudnetstudio.com`.
 - Volumes are prefixed by project name (`cns-staging_postgres_data`, `cns-staging_caddy_data`, …) — **never** shared with `cns-prod_*`.
 
@@ -76,7 +77,7 @@ The staging deploy script **refuses** to:
 - Point at a non-local `DATABASE_URL` unless **`STAGING_DATABASE_URL`** is explicitly provided
 - Run `docker compose down -v` when `CNS_CADDY_AUTO_HTTPS=on` (protects staging TLS volumes)
 
-It **never reads** `~/cloud-networking-studio/.env` for secrets. Production workflow **never** writes to `~/cloud-networking-studio-staging`.
+It **never reads** `~/cloud-networking-studio/.env` for secrets. Production workflow **never** writes to `~/cloud-networking-studio-staging`. Each deploy writes **`~/cloud-networking-studio-staging/.env.staging`**, preserving existing auth/DB secrets and merging required CORS origins (reruns do not drop `https://app-staging.cloudnetstudio.com`).
 
 ## GitHub configuration
 
@@ -99,10 +100,11 @@ It **never reads** `~/cloud-networking-studio/.env` for secrets. Production work
 | **`STAGING_AUTH_SECRET_KEY`** | Staging JWT secret (≥32 chars). If unset, generated/stored in staging `.env` only. |
 | **`STAGING_POSTGRES_PASSWORD`** | Staging Postgres password. If unset, generated on first deploy. |
 | **`STAGING_DATABASE_URL`** | Explicit DSN — **do not** point at production RDS unless intentional. |
-| **`CNS_STAGING_CORS_ORIGINS`** | Extra browser origins (Vercel preview URLs, etc.) |
+| **`CNS_STAGING_CORS_ORIGINS`** | Secret or variable; extra browser origins merged with required defaults (`https://app-staging.cloudnetstudio.com`, `https://cloud-networking-studio.vercel.app`, staging API, localhost). |
 | **`CNS_STAGING_API_HOST`** | Variable; default `api-staging.cloudnetstudio.com` |
 | **`CNS_STAGING_APP_URL`** | Variable; default `https://app-staging.cloudnetstudio.com` |
 | **`CNS_STAGING_TF_STATE_KEY`** | Variable; default `cloud-networking-studio/staging/terraform.tfstate` |
+| **`staging_cors_origins`** (Terraform) | Passed as `TF_VAR_staging_cors_origins` from the workflow; seeds `.env.staging` on first EC2 boot |
 
 ### Vercel (optional frontend)
 

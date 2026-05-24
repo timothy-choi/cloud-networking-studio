@@ -13,7 +13,7 @@
 #   STAGING_AUTH_SECRET_KEY
 #   STAGING_POSTGRES_PASSWORD
 #   STAGING_DATABASE_URL  explicit DSN (never production RDS unless you intend to)
-#   CNS_STAGING_CORS_ORIGINS
+#   CNS_STAGING_CORS_ORIGINS  extra browser origins (merged with required staging defaults)
 #   CNS_STAGING_CADDY_HTTP_PORT / CNS_STAGING_CADDY_HTTPS_PORT (co-located hosts)
 #   CNS_STAGING_POSTGRES_HOST_PORT
 
@@ -21,8 +21,10 @@ set -euo pipefail
 
 REPO_DIR="${HOME}/cloud-networking-studio-staging"
 PROD_DIR="${HOME}/cloud-networking-studio"
+ENV_FILE=".env.staging"
+LEGACY_ENV_FILE=".env"
 COMPOSE=(sudo docker compose)
-C_ARGS=(-f docker-compose.prod.yml -f docker-compose.caddy-https.yml -f docker-compose.staging.yml --env-file .env)
+C_ARGS=(-f docker-compose.prod.yml -f docker-compose.caddy-https.yml -f docker-compose.staging.yml --env-file "${ENV_FILE}")
 
 STAGING_API_HOST="$(printf '%s' "${CNS_STAGING_API_HOST:-api-staging.cloudnetstudio.com}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 STAGING_API_HOST="${STAGING_API_HOST#https://}"
@@ -143,6 +145,41 @@ gen_secret_hex() {
   fi
 }
 
+read_env_value() {
+  local key="$1"
+  local file="$2"
+  local line val
+  [[ -f "${file}" ]] || return 1
+  line="$(grep -E "^${key}=" "${file}" | tail -n1 || true)"
+  [[ -n "${line}" ]] || return 1
+  val="${line#*=}"
+  printf '%s' "${val}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+merge_cors_origins() {
+  local merged="" part
+  declare -A seen=()
+  local chunk
+  for chunk in "$@"; do
+    [[ -z "${chunk}" ]] && continue
+    local IFS=','
+    read -ra PARTS <<< "${chunk}"
+    for part in "${PARTS[@]}"; do
+      part="$(printf '%s' "${part}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      [[ -z "${part}" ]] && continue
+      if [[ -z "${seen[${part}]:-}" ]]; then
+        seen["${part}"]=1
+        if [[ -z "${merged}" ]]; then
+          merged="${part}"
+        else
+          merged="${merged},${part}"
+        fi
+      fi
+    done
+  done
+  printf '%s' "${merged}"
+}
+
 run_compose() {
   if [[ "${CNS_CADDY_AUTO_HTTPS:-}" == "on" ]]; then
     local saw_down=0 arg
@@ -189,7 +226,16 @@ fi
 print_git_diagnostics
 git rev-parse HEAD
 
-echo "=== write staging .env (values not printed) ==="
+echo "=== write staging ${ENV_FILE} (values not printed) ==="
+
+ENV_PATH="${REPO_DIR}/${ENV_FILE}"
+LEGACY_PATH="${REPO_DIR}/${LEGACY_ENV_FILE}"
+EXISTING_ENV=""
+if [[ -f "${ENV_PATH}" ]]; then
+  EXISTING_ENV="${ENV_PATH}"
+elif [[ -f "${LEGACY_PATH}" ]]; then
+  EXISTING_ENV="${LEGACY_PATH}"
+fi
 
 gen_pg_hex() {
   if command -v openssl >/dev/null 2>&1; then
@@ -202,9 +248,8 @@ gen_pg_hex() {
 }
 
 AUTH_SECRET_KEY="$(printf '%s' "${STAGING_AUTH_SECRET_KEY:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-if [[ -z "${AUTH_SECRET_KEY}" ]] && [[ -f .env ]]; then
-  AUTH_SECRET_KEY="$(grep -E '^AUTH_SECRET_KEY=' .env | tail -n1 | cut -d= -f2- || true)"
-  AUTH_SECRET_KEY="$(printf '%s' "${AUTH_SECRET_KEY}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+if [[ -z "${AUTH_SECRET_KEY}" ]] && [[ -n "${EXISTING_ENV}" ]]; then
+  AUTH_SECRET_KEY="$(read_env_value AUTH_SECRET_KEY "${EXISTING_ENV}" || true)"
 fi
 CNS_DEV_AUTH_DEFAULT="local-dev-only-change-AUTH_SECRET_KEY-in-production-min-32-chars"
 if [[ -z "${AUTH_SECRET_KEY}" ]] || [[ "${AUTH_SECRET_KEY}" == "${CNS_DEV_AUTH_DEFAULT}" ]]; then
@@ -216,9 +261,8 @@ if [[ -z "${AUTH_SECRET_KEY}" ]] || [[ ${#AUTH_SECRET_KEY} -lt 32 ]]; then
 fi
 
 POSTGRES_PASSWORD="$(printf '%s' "${STAGING_POSTGRES_PASSWORD:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-if [[ -z "${POSTGRES_PASSWORD}" ]] && [[ -f .env ]]; then
-  POSTGRES_PASSWORD="$(grep -E '^POSTGRES_PASSWORD=' .env | tail -n1 | cut -d= -f2- || true)"
-  POSTGRES_PASSWORD="$(printf '%s' "${POSTGRES_PASSWORD}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+if [[ -z "${POSTGRES_PASSWORD}" ]] && [[ -n "${EXISTING_ENV}" ]]; then
+  POSTGRES_PASSWORD="$(read_env_value POSTGRES_PASSWORD "${EXISTING_ENV}" || true)"
 fi
 if [[ -z "${POSTGRES_PASSWORD}" ]]; then
   POSTGRES_PASSWORD="$(gen_pg_hex)"
@@ -235,16 +279,17 @@ if [[ -z "${STAGING_DATABASE_URL:-}" ]] && [[ "${DATABASE_URL}" != *"@postgres:"
   exit 1
 fi
 
-CNS_CORS_ORIGINS="$(printf '%s' "${CNS_STAGING_CORS_ORIGINS:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+DEFAULT_STAGING_CORS_ORIGINS="https://app-staging.cloudnetstudio.com,https://cloud-networking-studio.vercel.app"
+EXTRA_CORS="$(printf '%s' "${CNS_STAGING_CORS_ORIGINS:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+EXISTING_CORS=""
+if [[ -n "${EXISTING_ENV}" ]]; then
+  EXISTING_CORS="$(read_env_value CNS_CORS_ORIGINS "${EXISTING_ENV}" || true)"
+fi
 APP_HOST="${STAGING_APP_URL#https://}"
 APP_HOST="${APP_HOST#http://}"
 APP_HOST="${APP_HOST%%/*}"
 BASE_CORS="https://${APP_HOST},http://${STAGING_API_HOST},https://${STAGING_API_HOST},http://127.0.0.1,http://localhost"
-if [[ -z "${CNS_CORS_ORIGINS}" ]]; then
-  CNS_CORS_ORIGINS="${BASE_CORS}"
-else
-  CNS_CORS_ORIGINS="${CNS_CORS_ORIGINS},${BASE_CORS}"
-fi
+CNS_CORS_ORIGINS="$(merge_cors_origins "${DEFAULT_STAGING_CORS_ORIGINS}" "${EXTRA_CORS}" "${EXISTING_CORS}" "${BASE_CORS}")"
 
 CNS_CADDY_SITE_ADDRESS="${STAGING_API_HOST}"
 CNS_CADDY_AUTO_HTTPS="${CNS_CADDY_AUTO_HTTPS:-on}"
@@ -278,10 +323,12 @@ umask 077
   if [[ -n "${CNS_STAGING_CADDY_HTTPS_PORT:-}" ]]; then
     printf '%s\n' "CNS_STAGING_CADDY_HTTPS_PORT=${CNS_STAGING_CADDY_HTTPS_PORT}"
   fi
-} > .env
+} > "${ENV_FILE}"
 
-echo "=== staging .env written (keys only) ==="
-cut -d= -f1 .env
+echo "=== staging ${ENV_FILE} written (keys only) ==="
+cut -d= -f1 "${ENV_FILE}"
+echo "=== staging CNS_CORS_ORIGINS (safe debug) ==="
+grep -E '^CNS_CORS_ORIGINS=' "${ENV_FILE}" || true
 
 unset TOKEN CLONE_URL POSTGRES_PASSWORD AUTH_SECRET_KEY DATABASE_URL STAGING_AUTH_SECRET_KEY STAGING_POSTGRES_PASSWORD STAGING_DATABASE_URL || true
 set -x
@@ -300,6 +347,12 @@ echo "=== docker compose up -d --build --remove-orphans (cns-staging) ==="
 if ! run_compose "${C_ARGS[@]}" up -d --build --remove-orphans; then
   run_compose "${C_ARGS[@]}" ps -a || true
   run_compose "${C_ARGS[@]}" logs --tail=120 || true
+  exit 1
+fi
+
+echo "=== restart staging backend (reload ${ENV_FILE}) ==="
+if ! run_compose "${C_ARGS[@]}" up -d --force-recreate --no-deps backend; then
+  run_compose "${C_ARGS[@]}" logs backend --tail=120 || true
   exit 1
 fi
 

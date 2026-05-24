@@ -380,12 +380,13 @@ def test_docker_destroy_removes_labeled_resources():
     ctr = MagicMock()
     ctr.id = "cid-1"
     ctr.name = "/cns-node-test"
+    did = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
     def _ctr_list(*_a, **_kw):
         fl = (_kw.get("filters") or {}).get("label") or []
-        if any("cns.deployment_id=" in x for x in fl):
-            return []
-        return [ctr]
+        if any(f"cns.deployment_id={did}" in x for x in fl):
+            return [ctr]
+        return []
 
     mock_client.containers.list.side_effect = _ctr_list
 
@@ -409,7 +410,6 @@ def test_docker_destroy_removes_labeled_resources():
 
     provider = DockerRuntimeProvider(client=mock_client)
     tid = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-    did = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
     events = provider.destroy(tid, did)
 

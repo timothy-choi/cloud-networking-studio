@@ -104,6 +104,21 @@ jobs:
           echo "https_origin=https://${H}" >> "$GITHUB_OUTPUT"
           echo "app_url=${APP}" >> "$GITHUB_OUTPUT"
 
+      - name: Set staging CORS defaults
+        id: staging_cors
+        run: |
+          set -euo pipefail
+          DEFAULT="https://app-staging.cloudnetstudio.com,https://cloud-networking-studio.vercel.app"
+          ORIGINS="${{ secrets.CNS_STAGING_CORS_ORIGINS }}"
+          if [[ -z "${ORIGINS}" ]]; then
+            ORIGINS="${{ vars.CNS_STAGING_CORS_ORIGINS }}"
+          fi
+          if [[ -z "${ORIGINS}" ]]; then
+            ORIGINS="${DEFAULT}"
+          fi
+          echo "origins=${ORIGINS}" >> "$GITHUB_OUTPUT"
+          echo "Staging CORS origins configured (count: $(printf '%s' "${ORIGINS}" | tr ',' '\n' | wc -l | tr -d ' '))"
+
       - name: Set up Terraform (optional staging EC2)
         if: vars.CNS_STAGING_TERRAFORM_ENABLED == 'true'
         uses: hashicorp/setup-terraform@v3
@@ -125,6 +140,9 @@ jobs:
           TF_VAR_key_name: ${{ secrets.TF_VAR_KEY_NAME }}
           TF_VAR_ssh_allowed_cidr: ${{ secrets.TF_VAR_SSH_ALLOWED_CIDR }}
           TF_VAR_rds_enabled: "false"
+          TF_VAR_staging_cors_origins: ${{ steps.staging_cors.outputs.origins }}
+          TF_VAR_staging_api_host: ${{ steps.staging_api.outputs.api_host }}
+          TF_VAR_staging_app_url: ${{ steps.staging_api.outputs.app_url }}
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_DYNAMODB_TABLE: ${{ secrets.TF_STATE_DYNAMODB_TABLE }}
           TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
@@ -198,7 +216,7 @@ jobs:
           STAGING_AUTH_SECRET_KEY: ${{ secrets.STAGING_AUTH_SECRET_KEY }}
           STAGING_POSTGRES_PASSWORD: ${{ secrets.STAGING_POSTGRES_PASSWORD }}
           STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
-          CNS_STAGING_CORS_ORIGINS: ${{ secrets.CNS_STAGING_CORS_ORIGINS }}
+          CNS_STAGING_CORS_ORIGINS: ${{ steps.staging_cors.outputs.origins }}
           CNS_STAGING_CADDY_HTTP_PORT: ${{ vars.CNS_STAGING_CADDY_HTTP_PORT }}
           CNS_STAGING_CADDY_HTTPS_PORT: ${{ vars.CNS_STAGING_CADDY_HTTPS_PORT }}
           CNS_STAGING_POSTGRES_HOST_PORT: ${{ vars.CNS_STAGING_POSTGRES_HOST_PORT }}

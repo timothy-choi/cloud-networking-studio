@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { formatApiError } from '../api/client';
 import {
-  inviteProjectMember,
+  createProjectInvitation,
+  listProjectInvitations,
   listProjectMembers,
   patchProjectMemberRole,
   removeProjectMember,
+  revokeProjectInvitation,
+  transferProjectOwnership,
+  type ProjectInvitationResponse,
   type ProjectMemberResponse,
   type ProjectMemberRole,
 } from '../api/projectMembers';
@@ -20,6 +24,12 @@ function roleBadgeClass(role: ProjectMemberRole): string {
   }
 }
 
+function inviteStatusClass(status: string): string {
+  if (status === 'pending') return 'text-amber-800 dark:text-amber-200';
+  if (status === 'accepted') return 'text-emerald-700 dark:text-emerald-300';
+  return 'text-zinc-500 dark:text-zinc-400';
+}
+
 export function ProjectMembersPanel(props: {
   projectId: string | null;
   myRole: ProjectMemberRole | null | undefined;
@@ -27,22 +37,30 @@ export function ProjectMembersPanel(props: {
 }) {
   const { projectId, myRole, onChanged } = props;
   const [members, setMembers] = useState<ProjectMemberResponse[]>([]);
+  const [invitations, setInvitations] = useState<ProjectInvitationResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'member' | 'viewer'>('member');
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteErr, setInviteErr] = useState<string | null>(null);
+  const [inviteOk, setInviteOk] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!projectId) return;
     setLoading(true);
     setErr(null);
     try {
-      setMembers(await listProjectMembers(projectId));
+      const [m, inv] = await Promise.all([
+        listProjectMembers(projectId),
+        listProjectInvitations(projectId),
+      ]);
+      setMembers(m);
+      setInvitations(inv);
     } catch (e) {
       setErr(formatApiError(e));
       setMembers([]);
+      setInvitations([]);
     } finally {
       setLoading(false);
     }
@@ -56,10 +74,13 @@ export function ProjectMembersPanel(props: {
 
   if (!projectId) return null;
 
+  const pending = invitations.filter((i) => i.status === 'pending');
+  const inactive = invitations.filter((i) => i.status !== 'pending');
+
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Project members</h2>
+        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Team &amp; members</h2>
         {myRole ? (
           <span
             className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${roleBadgeClass(myRole)}`}
@@ -70,7 +91,7 @@ export function ProjectMembersPanel(props: {
       </div>
       <p className="mt-1 text-xs text-cns-muted">
         {isOwner
-          ? 'Invite teammates by email. Owners manage roles and membership.'
+          ? 'Invite teammates by email. They receive a link to accept. Owners manage roles, invites, and ownership.'
           : 'People with access to this workspace. Only owners can invite or change roles.'}
       </p>
 
@@ -110,9 +131,11 @@ export function ProjectMembersPanel(props: {
                 }
                 setInviteBusy(true);
                 setInviteErr(null);
+                setInviteOk(null);
                 try {
-                  await inviteProjectMember(projectId, { email: em, role: inviteRole });
+                  await createProjectInvitation(projectId, { email: em, role: inviteRole });
                   setInviteEmail('');
+                  setInviteOk('Invitation sent. The invitee will receive an email with an accept link.');
                   await load();
                   onChanged?.();
                 } catch (e) {
@@ -124,14 +147,49 @@ export function ProjectMembersPanel(props: {
             }}
             className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
           >
-            {inviteBusy ? 'Inviting…' : 'Invite'}
+            {inviteBusy ? 'Sending…' : 'Send invite'}
           </button>
         </div>
       ) : null}
       {inviteErr ? <p className="mt-2 text-xs text-red-600 dark:text-red-400">{inviteErr}</p> : null}
+      {inviteOk ? <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">{inviteOk}</p> : null}
 
       {err ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{err}</p> : null}
-      {loading ? <p className="mt-3 text-xs text-cns-muted">Loading members…</p> : null}
+      {loading ? <p className="mt-3 text-xs text-cns-muted">Loading team…</p> : null}
+
+      {!loading && isOwner && pending.length > 0 ? (
+        <div className="mt-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-cns-label">Pending invites</h3>
+          <ul className="mt-2 divide-y divide-zinc-100 dark:divide-zinc-800">
+            {pending.map((inv) => (
+              <li key={inv.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                <div>
+                  <div className="font-mono text-xs">{inv.email}</div>
+                  <div className={`text-[11px] ${inviteStatusClass(inv.status)}`}>
+                    {inv.status} · {inv.role} · expires {new Date(inv.expires_at).toLocaleString()}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="text-xs text-red-700 hover:underline dark:text-red-400"
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await revokeProjectInvitation(projectId, inv.id);
+                        await load();
+                      } catch (e) {
+                        alert(formatApiError(e));
+                      }
+                    })();
+                  }}
+                >
+                  Revoke
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {!loading && members.length <= 1 ? (
         <p className="mt-4 rounded-lg border border-dashed border-zinc-200 bg-zinc-50/80 px-4 py-6 text-center text-sm text-cns-muted dark:border-zinc-700 dark:bg-zinc-950/40">
@@ -140,67 +198,103 @@ export function ProjectMembersPanel(props: {
       ) : null}
 
       {!loading && members.length > 0 ? (
-        <ul className="mt-4 divide-y divide-zinc-100 dark:divide-zinc-800">
-          {members.map((m) => (
-            <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0">
-              <div className="min-w-0">
-                <div className="font-medium text-zinc-900 dark:text-zinc-100">{m.display_name}</div>
-                <div className="truncate font-mono text-xs text-cns-muted">{m.email}</div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {isOwner ? (
-                  <select
-                    className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
-                    value={m.role}
-                    onChange={(e) => {
-                      const next = e.target.value as ProjectMemberRole;
-                      void (async () => {
-                        try {
-                          await patchProjectMemberRole(projectId, m.id, { role: next });
-                          await load();
-                          onChanged?.();
-                        } catch (ex) {
-                          alert(formatApiError(ex));
-                          await load();
-                        }
-                      })();
-                    }}
-                  >
-                    <option value="viewer">viewer</option>
-                    <option value="member">member</option>
-                    <option value="owner">owner</option>
-                  </select>
-                ) : (
-                  <span
-                    className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${roleBadgeClass(m.role)}`}
-                  >
-                    {m.role}
-                  </span>
-                )}
-                {isOwner ? (
-                  <button
-                    type="button"
-                    className="text-xs font-medium text-red-700 hover:underline dark:text-red-400"
-                    onClick={() => {
-                      if (!window.confirm(`Remove ${m.display_name} from this project?`)) return;
-                      void (async () => {
-                        try {
-                          await removeProjectMember(projectId, m.id);
-                          await load();
-                          onChanged?.();
-                        } catch (ex) {
-                          alert(formatApiError(ex));
-                        }
-                      })();
-                    }}
-                  >
-                    Remove
-                  </button>
-                ) : null}
-              </div>
-            </li>
-          ))}
-        </ul>
+        <div className="mt-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-cns-label">Active members</h3>
+          <ul className="mt-2 divide-y divide-zinc-100 dark:divide-zinc-800">
+            {members.map((m) => (
+              <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0">
+                <div className="min-w-0">
+                  <div className="font-medium text-zinc-900 dark:text-zinc-100">{m.display_name}</div>
+                  <div className="truncate font-mono text-xs text-cns-muted">{m.email}</div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {isOwner ? (
+                    <select
+                      className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                      value={m.role}
+                      onChange={(e) => {
+                        const next = e.target.value as ProjectMemberRole;
+                        void (async () => {
+                          try {
+                            await patchProjectMemberRole(projectId, m.id, { role: next });
+                            await load();
+                            onChanged?.();
+                          } catch (ex) {
+                            alert(formatApiError(ex));
+                            await load();
+                          }
+                        })();
+                      }}
+                    >
+                      <option value="viewer">viewer</option>
+                      <option value="member">member</option>
+                      <option value="owner">owner</option>
+                    </select>
+                  ) : (
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${roleBadgeClass(m.role)}`}
+                    >
+                      {m.role}
+                    </span>
+                  )}
+                  {isOwner && m.role !== 'owner' ? (
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-violet-700 hover:underline dark:text-violet-300"
+                      onClick={() => {
+                        if (!window.confirm(`Transfer ownership to ${m.display_name}?`)) return;
+                        void (async () => {
+                          try {
+                            await transferProjectOwnership(projectId, m.id);
+                            await load();
+                            onChanged?.();
+                          } catch (ex) {
+                            alert(formatApiError(ex));
+                          }
+                        })();
+                      }}
+                    >
+                      Make owner
+                    </button>
+                  ) : null}
+                  {isOwner ? (
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-red-700 hover:underline dark:text-red-400"
+                      onClick={() => {
+                        if (!window.confirm(`Remove ${m.display_name} from this project?`)) return;
+                        void (async () => {
+                          try {
+                            await removeProjectMember(projectId, m.id);
+                            await load();
+                            onChanged?.();
+                          } catch (ex) {
+                            alert(formatApiError(ex));
+                          }
+                        })();
+                      }}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {!loading && isOwner && inactive.length > 0 ? (
+        <div className="mt-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-cns-label">Past invites</h3>
+          <ul className="mt-2 space-y-1 text-xs text-cns-muted">
+            {inactive.map((inv) => (
+              <li key={inv.id}>
+                {inv.email} · {inv.status} · {inv.role}
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
     </div>
   );

@@ -49,6 +49,30 @@ def api_token_revoked(*, token_name: str) -> tuple[str, str, str]:
     return subject, text, html
 
 
+def project_invitation(
+    *,
+    project_name: str,
+    inviter: str,
+    role: str,
+    accept_url: str,
+    expires_at,
+) -> tuple[str, str, str]:
+    exp = expires_at.strftime("%Y-%m-%d %H:%M UTC") if hasattr(expires_at, "strftime") else str(expires_at)
+    subject = f"You're invited to {project_name} on Cloud Networking Studio"
+    text = (
+        f"{inviter} invited you to join project \"{project_name}\" as {role}.\n\n"
+        f"Accept invitation:\n{accept_url}\n\n"
+        f"This link expires on {exp}.\n"
+    )
+    html = (
+        f"<p><strong>{inviter}</strong> invited you to join project "
+        f"<strong>{project_name}</strong> as <strong>{role}</strong>.</p>"
+        f'<p><a href="{accept_url}">Accept invitation</a></p>'
+        f"<p><small>Expires {exp}</small></p>"
+    )
+    return subject, text, html
+
+
 def project_invitation_placeholder(*, project_name: str, inviter: str) -> tuple[str, str, str]:
     subject = f"Project invitation (preview): {project_name}"
     text = (

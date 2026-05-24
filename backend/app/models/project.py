@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 
 if TYPE_CHECKING:
+    from app.models.project_invitation import ProjectInvitation
     from app.models.project_membership import ProjectMembership
     from app.models.topology import Topology
     from app.models.user import User
@@ -53,6 +54,11 @@ class Project(Base):
         passive_deletes=True,
     )
     topologies: Mapped[list["Topology"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    invitations: Mapped[list["ProjectInvitation"]] = relationship(
         back_populates="project",
         cascade="all, delete-orphan",
         passive_deletes=True,

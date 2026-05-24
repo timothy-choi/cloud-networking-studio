@@ -42,6 +42,11 @@ def _relax_platform_limits_for_tests(monkeypatch):
     monkeypatch.setattr(settings, "rate_limit_terminal_per_user", 100_000)
     monkeypatch.setattr(settings, "rate_limit_exec_per_user", 100_000)
     monkeypatch.setattr(settings, "rate_limit_download_per_user", 100_000)
+    monkeypatch.setattr(settings, "rate_limit_invite_per_user", 100_000)
+    monkeypatch.setattr(
+        "app.services.project_invitation_service.send_email",
+        lambda *a, **k: True,
+    )
     yield
     reset_rate_limits_for_tests()
 

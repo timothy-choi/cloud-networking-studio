@@ -179,6 +179,23 @@ class Settings(BaseSettings):
     smtp_password: str = Field(default="", validation_alias="SMTP_PASSWORD")
     smtp_from_email: str = Field(default="cns@localhost", validation_alias="SMTP_FROM_EMAIL")
     smtp_use_tls: bool = Field(default=True, validation_alias="SMTP_USE_TLS")
+    # --- Step 54B: team invitations ---
+    frontend_app_url: str = Field(
+        default="https://app.cloudnetstudio.com",
+        validation_alias="CNS_FRONTEND_APP_URL",
+    )
+    invitation_expire_days: int = Field(
+        default=7,
+        ge=1,
+        le=90,
+        validation_alias="CNS_INVITATION_EXPIRE_DAYS",
+    )
+    rate_limit_invite_per_user: int = Field(
+        default=20,
+        ge=1,
+        le=500,
+        validation_alias="CNS_RATE_LIMIT_INVITE_PER_USER",
+    )
 
 
 settings = Settings()

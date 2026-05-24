@@ -136,6 +136,45 @@ def test_alembic_skips_when_api_tokens_table_missing(engine_db):
     assert "api_tokens" not in insp.get_table_names()
 
 
+def test_alembic_skips_project_invitations_when_core_tables_missing(engine_db):
+    from alembic import command
+    from alembic.config import Config
+    from app.db.session import Base, engine
+    from app.db.startup_schema import import_all_orm_modules
+
+    import_all_orm_modules()
+    Base.metadata.drop_all(bind=engine)
+    _reset_alembic_revision(engine)
+
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("script_location", "alembic")
+    command.upgrade(cfg, "head")
+
+    insp = inspect(engine)
+    assert "project_invitations" not in insp.get_table_names()
+
+
+def test_alembic_adds_project_invitations_when_core_tables_exist(engine_db):
+    from alembic import command
+    from alembic.config import Config
+    from app.db.session import Base, engine
+    from app.db.startup_schema import import_all_orm_modules, verify_core_schema
+
+    import_all_orm_modules()
+    Base.metadata.create_all(bind=engine)
+    verify_core_schema(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS project_invitations CASCADE"))
+    _reset_alembic_revision(engine)
+
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("script_location", "alembic")
+    command.upgrade(cfg, "head")
+
+    tables = inspect(engine).get_table_names()
+    assert "project_invitations" in tables
+
+
 def test_alembic_adds_scopes_json_column(client_strict, engine_db):
     from alembic import command
     from alembic.config import Config

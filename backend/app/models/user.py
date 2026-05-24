@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.api_token import ApiToken
     from app.models.notification import Notification
     from app.models.project import Project
+    from app.models.project_invitation import ProjectInvitation
     from app.models.project_membership import ProjectMembership
     from app.models.user_onboarding import UserOnboarding
 
@@ -62,5 +63,16 @@ class User(Base):
     notifications: Mapped[list["Notification"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    sent_project_invitations: Mapped[list["ProjectInvitation"]] = relationship(
+        back_populates="invited_by",
+        foreign_keys="ProjectInvitation.invited_by_user_id",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    accepted_project_invitations: Mapped[list["ProjectInvitation"]] = relationship(
+        back_populates="accepted_by",
+        foreign_keys="ProjectInvitation.accepted_by_user_id",
         passive_deletes=True,
     )

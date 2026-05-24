@@ -23,7 +23,7 @@
 #   AUTH_SMOKE                     default 1; set 0 for health-only
 #   CNS_SMOKE_UNAUTH_TOPOLOGY_CHECK  default 1; set 0 to skip POST /api/topologies without Bearer
 #                                      (e.g. backend AUTH_REQUIRE_LOGIN=false — legacy dev mode)
-#   CNS_SMOKE_DEBUG                set 1 to print extra auth/project context
+#   CNS_EXPECT_ENVIRONMENT       if set, require GET /api/health JSON .environment to match (e.g. staging)
 #
 # Requires: curl, jq.
 
@@ -216,6 +216,14 @@ if bash "$SCRIPT_DIR/wait_caddy_edge.sh" "${WAIT_EDGE_ARGS[@]}"; then
   health_raw="$(cat "$BODY")"
   preview="$(printf '%s' "$health_raw" | tr -d '\n' | head -c 120)"
   echo "       ${preview}…"
+  if [[ -n "${CNS_EXPECT_ENVIRONMENT:-}" ]]; then
+    actual_env="$(printf '%s' "$health_raw" | jq -r '.environment // empty')"
+    if [[ "$actual_env" != "$CNS_EXPECT_ENVIRONMENT" ]]; then
+      bad "GET /api/health environment expected '${CNS_EXPECT_ENVIRONMENT}', got '${actual_env:-<empty>}'"
+    else
+      ok "GET /api/health environment=${actual_env}"
+    fi
+  fi
   http_rs="$(smoke_curl_http "${BASE}/api/runtime/status")"
   if [[ "$http_rs" == "200" ]] && jq -e '.status and .runtime_provider' "$BODY" >/dev/null 2>&1; then
     if [[ "$API_ONLY" -eq 1 ]]; then

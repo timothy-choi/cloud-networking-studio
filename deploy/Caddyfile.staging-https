@@ -1,0 +1,25 @@
+# Staging HTTPS reverse proxy (Let's Encrypt) for api-staging.cloudnetstudio.com.
+# Use with docker-compose.prod.yml + docker-compose.caddy-https.yml + docker-compose.staging.yml.
+#
+# Set in staging `.env`:
+#   CNS_CADDY_SITE_ADDRESS=api-staging.cloudnetstudio.com
+#   SSLIP_HOST=api-staging.cloudnetstudio.com
+#   CNS_SSLIP_HOST=api-staging.cloudnetstudio.com
+#   CADDYFILE_CADDY=./deploy/Caddyfile.staging-https
+#
+# ACME state persists in Compose volumes **cns-staging_caddy_data** / **cns-staging_caddy_config**
+# (project name cns-staging — separate from production cns-prod volumes).
+
+{
+	admin off
+}
+
+{$CNS_CADDY_SITE_ADDRESS} {
+	encode gzip
+	handle_path /api/* {
+		reverse_proxy backend:8000
+	}
+	handle {
+		reverse_proxy frontend:80
+	}
+}

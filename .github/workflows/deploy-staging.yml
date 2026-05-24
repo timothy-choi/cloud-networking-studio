@@ -1,0 +1,248 @@
+# Staging: manual deploy from any branch (Step 55).
+# Isolated Compose project (cns-staging), directory, DB volume, and secrets from production.
+# Production deploy remains .github/workflows/deploy-production.yml (manual; do not auto-run on push).
+#
+# See docs/STAGING_DEPLOYMENT.md
+
+name: Deploy staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: Branch, tag, or SHA to deploy (default = branch selected in Actions UI)
+        required: false
+        type: string
+        default: ""
+      skip_vercel:
+        description: Skip Vercel frontend deploy
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-staging-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "1"
+
+jobs:
+  deploy-staging:
+    name: Deploy staging stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref || github.ref }}
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Resolve checkout ref
+        id: ref
+        run: |
+          set -euo pipefail
+          R="${{ inputs.git_ref || github.ref }}"
+          echo "ref=${R}" >> "$GITHUB_OUTPUT"
+          echo "Deploying git ref: ${R}"
+
+      - name: Validate staging compose files
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.prod.yml config --quiet
+          CNS_CADDY_SITE_ADDRESS=api-staging.cloudnetstudio.com \
+            SSLIP_HOST=api-staging.cloudnetstudio.com \
+            CNS_SSLIP_HOST=api-staging.cloudnetstudio.com \
+            CADDYFILE_CADDY=./deploy/Caddyfile.staging-https \
+            docker compose -f docker-compose.prod.yml -f docker-compose.caddy-https.yml -f docker-compose.staging.yml config --quiet
+
+      - name: Require staging deploy secrets
+        env:
+          STAGING_HOST: ${{ secrets.CNS_STAGING_EC2_HOST }}
+          TF_ENABLED: ${{ vars.CNS_STAGING_TERRAFORM_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [[ "${TF_ENABLED:-}" == "true" ]]; then
+            echo "CNS_STAGING_TERRAFORM_ENABLED=true — will apply staging Terraform before deploy."
+            exit 0
+          fi
+          if [[ -z "${STAGING_HOST:-}" ]]; then
+            echo "::error::Set repository secret CNS_STAGING_EC2_HOST (staging EC2 Elastic IP), or set repository variable CNS_STAGING_TERRAFORM_ENABLED=true. See docs/STAGING_DEPLOYMENT.md"
+            exit 1
+          fi
+          echo "CNS_STAGING_EC2_HOST is set (value not printed)."
+
+      - name: Set staging API host defaults
+        id: staging_api
+        run: |
+          set -euo pipefail
+          H="api-staging.cloudnetstudio.com"
+          if [[ -n "${{ vars.CNS_STAGING_API_HOST }}" ]]; then
+            H="${{ vars.CNS_STAGING_API_HOST }}"
+          fi
+          H="${H#https://}"
+          H="${H#http://}"
+          H="${H%%/*}"
+          APP="https://app-staging.cloudnetstudio.com"
+          if [[ -n "${{ vars.CNS_STAGING_APP_URL }}" ]]; then
+            APP="${{ vars.CNS_STAGING_APP_URL }}"
+          fi
+          echo "api_host=${H}" >> "$GITHUB_OUTPUT"
+          echo "https_origin=https://${H}" >> "$GITHUB_OUTPUT"
+          echo "app_url=${APP}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Terraform (optional staging EC2)
+        if: vars.CNS_STAGING_TERRAFORM_ENABLED == 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Terraform apply staging infrastructure
+        id: tf_staging
+        if: vars.CNS_STAGING_TERRAFORM_ENABLED == 'true'
+        working-directory: infra/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
+          TF_VAR_project_name: cns
+          TF_VAR_environment: staging
+          TF_VAR_key_name: ${{ secrets.TF_VAR_KEY_NAME }}
+          TF_VAR_ssh_allowed_cidr: ${{ secrets.TF_VAR_SSH_ALLOWED_CIDR }}
+          TF_VAR_rds_enabled: "false"
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TF_STATE_DYNAMODB_TABLE: ${{ secrets.TF_STATE_DYNAMODB_TABLE }}
+          TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
+        run: |
+          set -euo pipefail
+          terraform version
+          rm -rf .terraform
+          if [[ -z "${TF_STATE_BUCKET:-}" ]]; then
+            echo "::error::Set TF_STATE_BUCKET for staging Terraform."
+            exit 1
+          fi
+          KEY="cloud-networking-studio/staging/terraform.tfstate"
+          if [[ -n "${{ vars.CNS_STAGING_TF_STATE_KEY }}" ]]; then
+            KEY="${{ vars.CNS_STAGING_TF_STATE_KEY }}"
+          fi
+          {
+            echo "bucket  = \"${TF_STATE_BUCKET}\""
+            echo "key     = \"${KEY}\""
+            echo "region  = \"${AWS_REGION}\""
+            echo "encrypt = true"
+          } > backend.ci.hcl
+          if [[ -n "${TF_STATE_DYNAMODB_TABLE:-}" ]]; then
+            echo "dynamodb_table = \"${TF_STATE_DYNAMODB_TABLE}\"" >> backend.ci.hcl
+          fi
+          terraform init -input=false -reconfigure
+          terraform validate
+          terraform plan -input=false -out=tfplan
+          terraform apply -input=false -auto-approve tfplan
+          echo "public_ip=$(terraform output -raw public_ip)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve staging EC2 host
+        id: host
+        run: |
+          set -euo pipefail
+          if [[ "${{ vars.CNS_STAGING_TERRAFORM_ENABLED }}" == "true" ]]; then
+            IP="${{ steps.tf_staging.outputs.public_ip }}"
+          else
+            IP="${{ secrets.CNS_STAGING_EC2_HOST }}"
+          fi
+          IP="$(printf '%s' "${IP}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          if [[ -z "${IP}" ]]; then
+            echo "::error::Staging EC2 host/IP is empty."
+            exit 1
+          fi
+          echo "ip=${IP}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for SSH
+        env:
+          IP: ${{ steps.host.outputs.ip }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if (command -v nc >/dev/null 2>&1 && nc -zvw2 "$IP" 22) || timeout 3 bash -c "echo >/dev/tcp/${IP}/22" 2>/dev/null; then
+              echo "SSH ready"
+              exit 0
+            fi
+            echo "Waiting for SSH... (${i}/30)"
+            sleep 10
+          done
+          echo "::error::SSH did not become ready on staging host"
+          exit 1
+
+      - name: Deploy staging Docker stack on EC2
+        uses: appleboy/ssh-action@v1.1.0
+        env:
+          CHECKOUT_REF: ${{ steps.ref.outputs.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CNS_STAGING_API_HOST: ${{ steps.staging_api.outputs.api_host }}
+          CNS_STAGING_APP_URL: ${{ steps.staging_api.outputs.app_url }}
+          STAGING_AUTH_SECRET_KEY: ${{ secrets.STAGING_AUTH_SECRET_KEY }}
+          STAGING_POSTGRES_PASSWORD: ${{ secrets.STAGING_POSTGRES_PASSWORD }}
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          CNS_STAGING_CORS_ORIGINS: ${{ secrets.CNS_STAGING_CORS_ORIGINS }}
+          CNS_STAGING_CADDY_HTTP_PORT: ${{ vars.CNS_STAGING_CADDY_HTTP_PORT }}
+          CNS_STAGING_CADDY_HTTPS_PORT: ${{ vars.CNS_STAGING_CADDY_HTTPS_PORT }}
+          CNS_STAGING_POSTGRES_HOST_PORT: ${{ vars.CNS_STAGING_POSTGRES_HOST_PORT }}
+        with:
+          host: ${{ steps.host.outputs.ip }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          envs: CHECKOUT_REF,GITHUB_REPOSITORY,GITHUB_TOKEN,CNS_STAGING_API_HOST,CNS_STAGING_APP_URL,STAGING_AUTH_SECRET_KEY,STAGING_POSTGRES_PASSWORD,STAGING_DATABASE_URL,CNS_STAGING_CORS_ORIGINS,CNS_STAGING_CADDY_HTTP_PORT,CNS_STAGING_CADDY_HTTPS_PORT,CNS_STAGING_POSTGRES_HOST_PORT
+          script_stop: true
+          script: |
+            set -euo pipefail
+            APP_DIR="${HOME}/cloud-networking-studio-staging"
+            if [[ ! -f "${APP_DIR}/scripts/staging_deploy_remote.sh" ]]; then
+              CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+              git clone "${CLONE_URL}" "${APP_DIR}"
+            fi
+            bash "${APP_DIR}/scripts/staging_deploy_remote.sh"
+
+      - name: Staging smoke (HTTPS API, environment=staging)
+        env:
+          CNS_BASE_URL: ${{ steps.staging_api.outputs.https_origin }}
+          CNS_SMOKE_API_ONLY: "1"
+          CNS_EXPECT_ENVIRONMENT: staging
+          AUTH_SMOKE: "0"
+        run: bash scripts/prod_smoke_test.sh
+
+      - name: Deploy frontend to Vercel (preview / staging)
+        if: ${{ !inputs.skip_vercel }}
+        continue-on-error: true
+        shell: bash
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VITE_API_BASE_URL: ${{ steps.staging_api.outputs.https_origin }}/api
+        run: |
+          set -euo pipefail
+          if [[ -z "${VERCEL_TOKEN:-}" ]]; then
+            echo "::warning::VERCEL_TOKEN not set — skipping Vercel staging frontend deploy."
+            exit 0
+          fi
+          cd frontend
+          npm ci
+          VITE_API_BASE_URL="${VITE_API_BASE_URL}" npm run build
+          npx vercel@54.0.0 pull --yes --environment=preview --token "${VERCEL_TOKEN}"
+          cp vercel.json dist/vercel.json
+          cd ..
+          npx vercel@54.0.0 deploy frontend/dist --yes --token "${VERCEL_TOKEN}"
+          echo "Vercel preview deployed (point app-staging DNS or use the preview URL in CNS_STAGING_CORS_ORIGINS)."
+
+      - name: Print staging URLs
+        run: |
+          echo "Staging API: ${{ steps.staging_api.outputs.https_origin }}"
+          echo "Staging app (configure DNS or Vercel): ${{ steps.staging_api.outputs.app_url }}"
+          echo "Health: ${{ steps.staging_api.outputs.https_origin }}/api/health (expect environment=staging)"

@@ -55,7 +55,13 @@ class DeploymentEventLevel(str, enum.Enum):
 
 
 def _enum_column(enum_cls: type[enum.Enum]) -> Enum:
-    return Enum(enum_cls, native_enum=False, length=32)
+    """Persist/load ``str`` enum **values** (e.g. ``none``), not member names (``NONE``)."""
+    return Enum(
+        enum_cls,
+        native_enum=False,
+        length=32,
+        values_callable=lambda members: [member.value for member in members],
+    )
 
 
 def _utc_now() -> datetime:

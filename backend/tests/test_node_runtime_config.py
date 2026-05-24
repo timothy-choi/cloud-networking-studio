@@ -90,3 +90,22 @@ def test_runtime_metadata_includes_env():
     rc = extract_node_runtime_config({"env": {"LAB": "1"}})
     meta = runtime_metadata_from_node(image="alpine:latest", ip_address=None, runtime=rc)
     assert '"LAB"' in meta.get("env", "")
+
+
+def test_resolve_deploy_node_image_defaults():
+    from app.services.node_runtime_config import resolve_deploy_node_image
+
+    assert resolve_deploy_node_image(None, "generic") == "nginx:alpine"
+    assert resolve_deploy_node_image(None, "host") == "alpine:latest"
+    assert resolve_deploy_node_image("busybox:latest", "host") == "busybox:latest"
+
+
+def test_resolve_deploy_node_image_rejects_blank():
+    import pytest
+
+    from app.services.node_runtime_config import NodeConfigValidationError, resolve_deploy_node_image
+
+    with pytest.raises(NodeConfigValidationError, match="Node image is required"):
+        resolve_deploy_node_image("", "host")
+    with pytest.raises(NodeConfigValidationError, match="Node image is required"):
+        resolve_deploy_node_image("   ", "host")

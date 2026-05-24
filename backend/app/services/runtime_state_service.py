@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLevel
+from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLevel, DeploymentStatus, TopologySyncStatus
 from app.models.topology import Topology, TopologyNode
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
 from app.services.deployment_queries import latest_deployment_for_topology
@@ -185,6 +185,102 @@ def record_stats_requested_event(
     )
 
 
+def _enum_str(val: object | None) -> str | None:
+    if val is None:
+        return None
+    if hasattr(val, "value"):
+        return str(getattr(val, "value"))
+    return str(val)
+
+
+def _empty_topology_runtime_response(
+    *,
+    topology_id: UUID,
+    runtime_provider: str,
+    status: str,
+    latest: Deployment | None = None,
+    resources: list[dict] | None = None,
+    warning: str | None = None,
+) -> RuntimeTopologyResponse:
+    return RuntimeTopologyResponse(
+        topology_id=topology_id,
+        status=status,
+        resources=list(resources or []),
+        warning=warning,
+        deployment_status=latest.status if latest else None,
+        latest_deployment_id=latest.id if latest else None,
+        topology_sync_status=_enum_str(latest.topology_sync_status) if latest else None,
+        runtime_provider=runtime_provider or "docker",
+        networks=[],
+        containers=[],
+        node_runtime_mapping={},
+        container_states={},
+    )
+
+
+def _resolve_topology_runtime_status(
+    latest: Deployment,
+    snap: ProviderRuntimeSnapshot,
+    resources: list[dict],
+    *,
+    provider_warning: str | None = None,
+) -> tuple[str, str | None]:
+    sync_status = _enum_str(latest.topology_sync_status)
+    warning = provider_warning
+
+    if latest.status == DeploymentStatus.STOPPED:
+        return "destroyed", warning
+
+    if latest.status == DeploymentStatus.FAILED:
+        return "failed", warning
+
+    if latest.status in (
+        DeploymentStatus.PENDING,
+        DeploymentStatus.DEPLOYING,
+        DeploymentStatus.STOPPING,
+    ):
+        return "pending", warning
+
+    if sync_status == TopologySyncStatus.OUT_OF_SYNC.value:
+        drift = (
+            "Topology definition changed since the last deploy; "
+            "runtime may not match current intent."
+        )
+        warning = f"{warning} {drift}".strip() if warning else drift
+        if not snap.containers and not snap.networks and not resources:
+            return "out_of_sync", warning
+        return "out_of_sync", warning
+
+    if latest.status == DeploymentStatus.SUCCEEDED:
+        if not snap.containers and not snap.networks and not resources:
+            missing = "No live or persisted runtime resources found for the active deployment."
+            warning = f"{warning} {missing}".strip() if warning else missing
+            return "no_runtime_resources", warning
+        if provider_warning:
+            return "degraded", warning
+        return "running", warning
+
+    return "degraded", warning
+
+
+def _inspect_topology_runtime_safe(
+    runtime_target: str | None,
+    topology_id: UUID,
+) -> tuple[ProviderRuntimeSnapshot, str | None]:
+    try:
+        provider = runtime_provider_for_topology(runtime_target or "docker")
+    except Exception as exc:  # noqa: BLE001 — provider selection must not 500 the API
+        return ProviderRuntimeSnapshot(), f"Runtime provider unavailable: {exc}"
+    try:
+        snap = provider.inspect_topology_runtime(topology_id)
+    except Exception as exc:  # noqa: BLE001 — live inspection is best-effort
+        return ProviderRuntimeSnapshot(), f"Runtime inspection failed: {exc}"
+    client_error = getattr(getattr(provider, "_docker", provider), "_client_error", None)
+    if client_error and not snap.containers and not snap.networks:
+        return snap, f"Docker engine unavailable: {client_error}"
+    return snap, None
+
+
 def build_topology_runtime(
     session: Session,
     topology_id: UUID,
@@ -194,29 +290,54 @@ def build_topology_runtime(
     topo = session.get(Topology, topology_id)
     if topo is None:
         raise ValueError("topology not found")
-    provider = runtime_provider_for_topology(topo.runtime_target)
-    snap = provider.inspect_topology_runtime(topology_id)
+
+    runtime_provider = topo.runtime_target or "docker"
+    latest = latest_deployment_for_topology(session, topology_id)
+    if latest is None:
+        return _empty_topology_runtime_response(
+            topology_id=topology_id,
+            runtime_provider=runtime_provider,
+            status="not_deployed",
+        )
+
+    if latest.status == DeploymentStatus.STOPPED:
+        return _empty_topology_runtime_response(
+            topology_id=topology_id,
+            runtime_provider=runtime_provider,
+            status="destroyed",
+            latest=latest,
+        )
+
+    resources = [
+        resource_row_to_public_dict(r)
+        for r in list_runtime_resources(session, latest.id)
+    ]
+    snap, provider_warning = _inspect_topology_runtime_safe(runtime_provider, topology_id)
     nodes = list(
         session.scalars(
             select(TopologyNode).where(TopologyNode.topology_id == topology_id)
         ).all()
     )
-    latest = latest_deployment_for_topology(session, topology_id)
     mapping, states = _node_mappings(nodes, snap)
+    coarse_status, warning = _resolve_topology_runtime_status(
+        latest,
+        snap,
+        resources,
+        provider_warning=provider_warning,
+    )
     if emit_inspection_event:
         record_runtime_inspection_event(
             session, topology_id, snap, "GET /topologies/{id}/runtime"
         )
     return RuntimeTopologyResponse(
         topology_id=topology_id,
-        deployment_status=latest.status if latest else None,
-        latest_deployment_id=latest.id if latest else None,
-        topology_sync_status=(
-            latest.topology_sync_status.value
-            if latest and hasattr(latest.topology_sync_status, "value")
-            else (str(latest.topology_sync_status) if latest else None)
-        ),
-        runtime_provider=topo.runtime_target,
+        status=coarse_status,
+        resources=resources,
+        warning=warning,
+        deployment_status=latest.status,
+        latest_deployment_id=latest.id,
+        topology_sync_status=_enum_str(latest.topology_sync_status),
+        runtime_provider=runtime_provider,
         networks=_snapshot_to_networks(snap),
         containers=_snapshot_to_containers(
             snap,

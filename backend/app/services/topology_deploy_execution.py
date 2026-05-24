@@ -32,6 +32,7 @@ from app.services.audit_service import record_audit
 from app.services.deployment_timeline_helpers import timeline_from_runner_message
 from app.services.deployment_timeline_service import record_timeline_event
 from app.services.deployment_validation import validate_topology_for_deploy
+from app.services.node_runtime_config import validate_deploy_node_images_from_snapshot
 from app.services.quota_service import ensure_can_deploy_project, ensure_topology_node_quota
 from app.core.config import settings
 from app.core.secret_masking import scrub_sensitive_dict
@@ -283,6 +284,7 @@ def execute_topology_deploy(
     _append_event(db, deployment.id, "Deployment pending — record created.")
 
     val_errors = validate_topology_for_deploy(topo, network_allocation_mode=alloc_mode)
+    val_errors.extend(validate_deploy_node_images_from_snapshot(effective.get("nodes")))
     rt = (topo.runtime_target or "").lower().strip()
     if is_intent_mode(alloc_mode) and rt != "docker":
         val_errors.append(INTENT_UNSUPPORTED_RUNTIME_MESSAGE)

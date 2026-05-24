@@ -8,6 +8,28 @@ import (
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
 )
 
+func DefaultImageForNodeType(nodeType string) string {
+	switch strings.ToLower(strings.TrimSpace(nodeType)) {
+	case "generic", "service":
+		return "nginx:alpine"
+	default:
+		return "alpine:latest"
+	}
+}
+
+// ResolveImage applies backward-compatible defaults for legacy nodes with nil image.
+// Explicit blank strings are rejected so the API can return validation errors.
+func ResolveImage(img *string, nodeType string) (string, error) {
+	if img == nil {
+		return DefaultImageForNodeType(nodeType), nil
+	}
+	s := strings.TrimSpace(*img)
+	if s == "" {
+		return "", fmt.Errorf("Node image is required")
+	}
+	return s, nil
+}
+
 func DefaultCommand(image string) []string {
 	il := strings.ToLower(image)
 	if strings.Contains(il, "busybox") {

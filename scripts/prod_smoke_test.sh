@@ -424,7 +424,7 @@ if [[ "$HEAVY" -eq 1 && -n "$tid" && -n "$TOKEN" ]]; then
     "${AUTH_HDR[@]}" \
     -X POST "${BASE}/api/topologies/${tid}/nodes" \
     -H 'Content-Type: application/json' \
-    --data-binary "{\"name\":\"svc-${htag}\",\"node_type\":\"generic\",\"image\":\"busybox:latest\",\"ip_address\":\"10.0.0.2\",\"config\":null}")"
+    --data-binary "{\"name\":\"svc-${htag}\",\"node_type\":\"generic\",\"image\":\"nginx:alpine\",\"ip_address\":\"10.0.0.2\",\"config\":null}")"
   na=""
   if [[ "$http_na" == "201" ]]; then
     na="$(jq -r '.id // empty' "$BODY")"
@@ -436,7 +436,7 @@ if [[ "$HEAVY" -eq 1 && -n "$tid" && -n "$TOKEN" ]]; then
     "${AUTH_HDR[@]}" \
     -X POST "${BASE}/api/topologies/${tid}/nodes" \
     -H 'Content-Type: application/json' \
-    --data-binary "{\"name\":\"host-${htag}\",\"node_type\":\"host\",\"image\":null,\"ip_address\":\"10.0.0.3\",\"config\":null}")"
+    --data-binary "$(jq -nc --arg name "host-${htag}" '{name:$name, node_type:"host", image:"alpine:latest", ip_address:"10.0.0.3", config:{command:["sleep","infinity"]}}')")"
   nb=""
   if [[ "$http_nb" == "201" ]]; then
     nb="$(jq -r '.id // empty' "$BODY")"

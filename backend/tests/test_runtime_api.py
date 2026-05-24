@@ -40,6 +40,7 @@ def test_topology_runtime_returns_payload_after_deploy(client):
     assert body["topology_id"] == tid
     assert body["deployment_status"] == "succeeded"
     assert body["latest_deployment_id"] == did
+    assert body["status"] == "running"
     assert body["networks"] == []
     assert body["containers"] == []
     assert body["runtime_provider"] == "docker"
@@ -452,3 +453,200 @@ def test_non_member_cannot_read_deployment_runtime(client_strict):
     assert client_strict.get(f"/deployments/{did}/runtime/services/{uuid.uuid4()}/logs", headers=hb).status_code == 404
     assert client_strict.get(f"/api/deployments/{did}/runtime", headers=hb).status_code == 404
     assert client_strict.get(f"/api/deployments/{did}/runtime/nodes", headers=hb).status_code == 404
+
+
+def test_topology_runtime_not_deployed(client):
+    tid = client.post(
+        "/topologies",
+        json={
+            "name": "Undeployed",
+            "description": "",
+            "runtime_target": "docker",
+            "networking_mode": "docker_bridge",
+        },
+    ).json()["id"]
+    rt = client.get(f"/topologies/{tid}/runtime")
+    assert rt.status_code == 200, rt.text
+    body = rt.json()
+    assert body["status"] == "not_deployed"
+    assert body["resources"] == []
+    assert body["latest_deployment_id"] is None
+    assert body["deployment_status"] is None
+
+
+def test_topology_runtime_after_rollback_and_destroy(client_strict):
+    from tests.test_topology_rollback import (
+        _deploy,
+        _empty_version_then_populated,
+        _register,
+    )
+
+    h = _register(client_strict, prefix="rtdestroy")
+    tid, v_empty = _empty_version_then_populated(client_strict, h)
+    _deploy(client_strict, h, tid)
+    rb = client_strict.post(
+        f"/topologies/{tid}/versions/{v_empty['id']}/rollback",
+        headers=h,
+        json={"mode": "rollback_and_destroy"},
+    )
+    assert rb.status_code == 200, rb.text
+
+    rt = client_strict.get(f"/topologies/{tid}/runtime", headers=h)
+    assert rt.status_code == 200, rt.text
+    body = rt.json()
+    assert body["status"] == "destroyed"
+    assert body["resources"] == []
+    assert body["deployment_status"] == "stopped"
+
+
+def test_topology_runtime_missing_persisted_rows(client):
+    from sqlalchemy import delete
+
+    from app.db.session import SessionLocal
+    from app.models.deployment_runtime_resource import DeploymentRuntimeResource
+
+    tid = client.post(
+        "/topologies",
+        json={
+            "name": "Missing rows",
+            "description": "",
+            "runtime_target": "docker",
+            "networking_mode": "docker_bridge",
+        },
+    ).json()["id"]
+    client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "n1",
+            "node_type": NodeType.GENERIC.value,
+            "image": None,
+            "ip_address": None,
+            "config": None,
+        },
+    )
+    did = client.post(f"/topologies/{tid}/deploy").json()["id"]
+
+    with SessionLocal() as db:
+        db.execute(
+            delete(DeploymentRuntimeResource).where(
+                DeploymentRuntimeResource.deployment_id == uuid.UUID(did)
+            )
+        )
+        db.commit()
+
+    rt = client.get(f"/topologies/{tid}/runtime")
+    assert rt.status_code == 200, rt.text
+    body = rt.json()
+    assert body["status"] == "no_runtime_resources"
+    assert body["resources"] == []
+    assert body["warning"]
+    assert body["deployment_status"] == "succeeded"
+
+
+def test_topology_runtime_null_version_profile_metadata(client):
+    from uuid import UUID
+
+    from app.db.session import SessionLocal
+    from app.models.deployment import Deployment, DeploymentStatus, TopologySyncStatus
+
+    tid = client.post(
+        "/topologies",
+        json={
+            "name": "Null meta",
+            "description": "",
+            "runtime_target": "docker",
+            "networking_mode": "docker_bridge",
+        },
+    ).json()["id"]
+    with SessionLocal() as db:
+        dep = Deployment(
+            topology_id=UUID(tid),
+            status=DeploymentStatus.SUCCEEDED,
+            runtime_target="docker",
+            topology_version_id=None,
+            deployment_profile_id=None,
+            effective_config_json=None,
+            topology_sync_status=TopologySyncStatus.IN_SYNC,
+        )
+        db.add(dep)
+        db.commit()
+
+    rt = client.get(f"/topologies/{tid}/runtime")
+    assert rt.status_code == 200, rt.text
+    body = rt.json()
+    assert body["status"] == "no_runtime_resources"
+    assert body["topology_sync_status"] == "in_sync"
+    assert body["deployment_status"] == "succeeded"
+
+
+def test_topology_runtime_out_of_sync_warning(client_strict):
+    from tests.test_topology_rollback import (
+        _deploy,
+        _empty_version_then_populated,
+        _register,
+    )
+
+    h = _register(client_strict, prefix="rtdrift")
+    tid, v_empty = _empty_version_then_populated(client_strict, h)
+    _deploy(client_strict, h, tid)
+    rb = client_strict.post(
+        f"/topologies/{tid}/versions/{v_empty['id']}/rollback",
+        headers=h,
+        json={"mode": "config_only"},
+    )
+    assert rb.status_code == 200, rb.text
+
+    rt = client_strict.get(f"/topologies/{tid}/runtime", headers=h)
+    assert rt.status_code == 200, rt.text
+    body = rt.json()
+    assert body["status"] == "out_of_sync"
+    assert body["topology_sync_status"] == "out_of_sync"
+    assert body["warning"]
+
+
+def test_topology_runtime_survives_docker_init_failure(client, monkeypatch):
+    from app.providers.docker_runtime_provider import DockerRuntimeProvider
+    from app.providers.runtime_types import ProviderRuntimeSnapshot
+
+    tid = client.post(
+        "/topologies",
+        json={
+            "name": "Docker down",
+            "description": "",
+            "runtime_target": "docker",
+            "networking_mode": "docker_bridge",
+        },
+    ).json()["id"]
+    client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "n1",
+            "node_type": NodeType.GENERIC.value,
+            "image": None,
+            "ip_address": None,
+            "config": None,
+        },
+    )
+    client.post(f"/topologies/{tid}/deploy")
+
+    broken = DockerRuntimeProvider.__new__(DockerRuntimeProvider)
+    broken._client = None
+    broken._client_error = "Cannot connect to Docker daemon"
+
+    monkeypatch.setattr(
+        "app.services.runtime_state_service.runtime_provider_for_topology",
+        lambda _rt: broken,
+    )
+    monkeypatch.setattr(
+        broken,
+        "inspect_topology_runtime",
+        lambda _tid: ProviderRuntimeSnapshot(),
+    )
+
+    rt = client.get(f"/topologies/{tid}/runtime")
+    assert rt.status_code == 200, rt.text
+    body = rt.json()
+    assert body["status"] in ("running", "degraded", "no_runtime_resources")
+    assert body["warning"]
+    assert body["containers"] == []
+    assert body["networks"] == []

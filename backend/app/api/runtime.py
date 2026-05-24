@@ -136,6 +136,18 @@ def _topology_http(session, topology_id: UUID):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Topology not found",
         ) from None
+    except Exception as exc:
+        from app.core.errors import build_error_body
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=build_error_body(
+                code="INTERNAL_ERROR",
+                message="Failed to load topology runtime",
+                status=500,
+                details={"topology_id": str(topology_id), "reason": str(exc)[:500]},
+            ),
+        ) from exc
 
 
 @router.get(

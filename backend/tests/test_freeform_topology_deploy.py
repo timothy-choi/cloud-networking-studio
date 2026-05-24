@@ -195,6 +195,108 @@ def test_preset_override_image_in_plan(client):
     assert primary_port(node.runtime_config) == 443
 
 
+def test_legacy_null_image_gets_default_in_plan(client):
+    tid = client.post("/topologies", json=TOPO_BODY).json()["id"]
+    client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "legacy-host",
+            "node_type": NodeType.HOST.value,
+            "image": None,
+            "ip_address": "10.8.0.40",
+            "config": None,
+        },
+    )
+    client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "legacy-svc",
+            "node_type": NodeType.GENERIC.value,
+            "image": None,
+            "ip_address": "10.8.0.41",
+            "config": None,
+        },
+    )
+    from app.db.session import SessionLocal
+    from app.models.topology import Topology
+    from sqlalchemy.orm import selectinload
+    from sqlalchemy import select
+
+    with SessionLocal() as db:
+        topo = db.scalar(
+            select(Topology)
+            .where(Topology.id == uuid.UUID(tid))
+            .options(selectinload(Topology.nodes), selectinload(Topology.links))
+        )
+        plan = build_deployment_plan(topo)
+    by_name = {n.name: n for n in plan.nodes}
+    assert by_name["legacy-host"].image == "alpine:latest"
+    assert by_name["legacy-svc"].image == "nginx:alpine"
+
+
+def test_blank_image_rejected_at_deploy(client):
+    tid = client.post("/topologies", json=TOPO_BODY).json()["id"]
+    node = client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "blank-img",
+            "node_type": NodeType.HOST.value,
+            "image": None,
+            "config": None,
+        },
+    ).json()
+    from app.db.session import SessionLocal
+    from app.models.topology import TopologyNode
+
+    with SessionLocal() as db:
+        row = db.get(TopologyNode, uuid.UUID(node["id"]))
+        row.image = ""
+        db.commit()
+
+    dep = client.post(f"/topologies/{tid}/deploy")
+    assert dep.status_code == 400, dep.text
+    body = dep.json()
+    assert body["status"] == "failed"
+    assert any("image" in (e.get("message") or "").lower() for e in body.get("events") or [])
+
+
+def test_smoke_like_topology_deploys_with_defaults(client):
+    tid = client.post("/topologies", json=TOPO_BODY).json()["id"]
+    na = client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "svc",
+            "node_type": NodeType.GENERIC.value,
+            "image": "nginx:alpine",
+            "ip_address": "10.0.0.2",
+            "config": None,
+        },
+    ).json()["id"]
+    nb = client.post(
+        f"/topologies/{tid}/nodes",
+        json={
+            "name": "host",
+            "node_type": NodeType.HOST.value,
+            "image": "alpine:latest",
+            "ip_address": "10.0.0.3",
+            "config": {"command": ["sleep", "infinity"]},
+        },
+    ).json()["id"]
+    client.post(
+        f"/topologies/{tid}/links",
+        json={
+            "source_node_id": na,
+            "target_node_id": nb,
+            "network_name": "net0",
+            "cidr": "10.0.0.0/24",
+            "config": None,
+        },
+    )
+    dep = client.post(f"/topologies/{tid}/deploy")
+    assert dep.status_code == 201, dep.text
+    assert dep.json()["status"] == "succeeded"
+
+
 def test_template_starter_still_clones(client_strict):
     """Existing runtime template library remains usable."""
     _, headers = _register(client_strict)

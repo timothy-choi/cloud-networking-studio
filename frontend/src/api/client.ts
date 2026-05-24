@@ -43,37 +43,95 @@ export function parseStructuredError(detail: unknown): StructuredApiError | null
   return null;
 }
 
-export function getApiBase(): string {
-  const raw = import.meta.env.VITE_API_BASE_URL as string | undefined;
-  if (raw !== undefined && raw.trim() !== '') {
-    return raw.replace(/\/$/, '');
-  }
-  // `vite` dev server: same-origin `/api` proxied to FastAPI (see vite.config.ts).
-  if (import.meta.env.DEV) {
-    return '/api';
-  }
-  // `vite preview` (default port 4173): same proxy as dev.
-  if (typeof window !== 'undefined' && window.location.port === '4173') {
-    return '/api';
-  }
-  // Production static build behind Caddy/nginx: same-origin `/api` unless VITE_API_BASE_URL is set.
-  if (import.meta.env.PROD) {
-    return '/api';
-  }
-  return 'http://localhost:8000';
+export type ApiBaseContext = {
+  dev: boolean;
+  prod: boolean;
+  viteApiBaseUrl?: string;
+  useRemoteApi?: boolean;
+  previewPort?: string;
+};
+
+function normalizeApiBase(raw: string): string {
+  return raw.trim().replace(/\/$/, '');
 }
 
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = `${getApiBase()}${path.startsWith('/') ? path : `/${path}`}`;
+export function isAbsoluteApiBase(base: string): boolean {
+  return /^https?:\/\//i.test(base);
+}
+
+/** Pure resolver for tests and runtime. */
+export function resolveApiBaseFromEnv(ctx: ApiBaseContext): string {
+  const trimmed = (ctx.viteApiBaseUrl ?? '').trim();
+
+  // Vite dev server: same-origin `/api` proxy unless explicitly testing a remote API.
+  if (ctx.dev) {
+    if (ctx.useRemoteApi && trimmed) {
+      return normalizeApiBase(trimmed);
+    }
+    if (trimmed.startsWith('/')) {
+      return normalizeApiBase(trimmed);
+    }
+    return '/api';
+  }
+
+  // `vite preview` uses the same proxy as dev.
+  if (ctx.previewPort === '4173') {
+    if (trimmed && !isAbsoluteApiBase(trimmed)) {
+      return normalizeApiBase(trimmed);
+    }
+    return '/api';
+  }
+
+  // Production static bundle (Vercel, Caddy on EC2, etc.).
+  if (trimmed) {
+    return normalizeApiBase(trimmed);
+  }
+  if (ctx.prod) {
+    return '/api';
+  }
+  return '/api';
+}
+
+export function getApiBase(): string {
+  return resolveApiBaseFromEnv({
+    dev: import.meta.env.DEV,
+    prod: import.meta.env.PROD,
+    viteApiBaseUrl: import.meta.env.VITE_API_BASE_URL as string | undefined,
+    useRemoteApi: import.meta.env.VITE_USE_REMOTE_API === 'true',
+    previewPort: typeof window !== 'undefined' ? window.location.port : undefined,
+  });
+}
+
+export function resolveApiUrl(path: string): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${getApiBase()}${normalizedPath}`;
+}
+
+export function resolveApiWebSocketUrl(pathWithQuery: string): string {
+  const path = pathWithQuery.startsWith('/') ? pathWithQuery : `/${pathWithQuery}`;
+  const base = getApiBase().replace(/\/$/, '');
+  if (base.startsWith('/')) {
+    const wsProto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = typeof window !== 'undefined' ? window.location.host : 'localhost';
+    return `${wsProto}//${host}${base}${path}`;
+  }
+  const wsBase = base.replace(/^http/i, 'ws');
+  return `${wsBase}${path}`;
+}
+
+function buildAuthHeaders(init?: RequestInit): HeadersInit {
   const token = getStoredAccessToken();
-  const headers: HeadersInit = {
+  return {
     Accept: 'application/json',
     ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
     ...(init?.headers ?? {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
+}
 
-  const res = await fetch(url, { ...init, headers });
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const url = resolveApiUrl(path);
+  const res = await fetch(url, { ...init, headers: buildAuthHeaders(init) });
 
   if (!res.ok) {
     let detail: unknown;
@@ -98,9 +156,47 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return res.json() as Promise<T>;
 }
 
+export async function apiFetchBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const url = resolveApiUrl(path);
+  const token = getStoredAccessToken();
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      ...(init?.headers ?? {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    let detail: unknown = await res.text();
+    try {
+      detail = JSON.parse(String(detail));
+    } catch {
+      /* plain text error */
+    }
+    throw new ApiError(res.status, res.statusText, detail);
+  }
+  return res.blob();
+}
+
 function extractRequestId(detail: unknown): string | null {
   const structured = parseStructuredError(detail);
   return structured?.request_id ?? null;
+}
+
+function _isLikelyNetworkError(err: Error): boolean {
+  const m = err.message;
+  return m === 'Failed to fetch' || m.includes('NetworkError') || m.includes('Load failed');
+}
+
+export function formatNetworkReachabilityError(err: Error): string {
+  const base = getApiBase();
+  if (import.meta.env.DEV && isAbsoluteApiBase(base)) {
+    return `${err.message} — resolved API base is ${base}. In local dev, use the Vite proxy at /api (remove absolute VITE_API_BASE_URL from frontend/.env, or set VITE_USE_REMOTE_API=true to call a remote API intentionally).`;
+  }
+  if (import.meta.env.DEV) {
+    return `${err.message} — cannot reach ${base}. Start the API on port 8000 (see README), or keep dev defaults so Vite proxies /api → 127.0.0.1:8000.`;
+  }
+  return `${err.message} — cannot reach ${base}. Confirm the API is running and CORS allows this app origin.`;
 }
 
 export function formatApiError(err: unknown): string {
@@ -122,22 +218,12 @@ export function formatApiError(err: unknown): string {
     return err.message;
   }
   if (err instanceof Error) {
-    const m = err.message;
-    if (
-      m === 'Failed to fetch' ||
-      m.includes('NetworkError') ||
-      m.includes('Load failed')
-    ) {
-      return `${m} — cannot reach ${getApiBase()}. Start the API on port 8000 (see README), or keep using dev defaults so Vite proxies /api → 127.0.0.1:8000.`;
+    if (_isLikelyNetworkError(err)) {
+      return formatNetworkReachabilityError(err);
     }
-    return m;
+    return err.message;
   }
   return String(err);
-}
-
-function _isLikelyNetworkError(err: Error): boolean {
-  const m = err.message;
-  return m === 'Failed to fetch' || m.includes('NetworkError') || m.includes('Load failed');
 }
 
 const _LOGIN_GENERIC =

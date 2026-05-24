@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { getApiBase } from '../api/client';
+
+import { apiFetch, formatApiError } from '../api/client';
 
 type RuntimeStatusPayload = {
   backend_status?: string;
@@ -31,20 +32,14 @@ export function PlatformStatusBanner() {
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await fetch(`${getApiBase()}/runtime/status`, {
-          headers: { Accept: 'application/json' },
-        });
-        if (!res.ok) {
-          throw new Error(`${res.status} ${res.statusText}`);
-        }
-        const json = (await res.json()) as RuntimeStatusPayload;
+        const json = await apiFetch<RuntimeStatusPayload>('/runtime/status');
         if (!cancelled) {
           setData(json);
           setError(null);
         }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : String(e));
+          setError(formatApiError(e));
           setData(null);
         }
       }

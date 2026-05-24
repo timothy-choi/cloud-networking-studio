@@ -81,23 +81,33 @@ _cns_docker_apt_diagnostics() {
   sudo tail -n 200 /var/log/cloud-init-output.log 2>/dev/null || true
 }
 
+_cns_validate_docker_apt_list() {
+  local list_file="$1"
+  grep -Eq '^deb \[arch=(amd64|arm64) signed-by=/etc/apt/keyrings/docker.asc\] https://download.docker.com/linux/ubuntu (noble|jammy|focal) stable$' \
+    "${list_file}"
+}
+
 _cns_write_docker_apt_repo() {
   sudo rm -f /etc/apt/sources.list.d/docker.list
   sudo install -m 0755 -d /etc/apt/keyrings
   _cns_retry 5 10 curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
     -o /etc/apt/keyrings/docker.asc
   sudo chmod a+r /etc/apt/keyrings/docker.asc
+  ARCH="$(dpkg --print-architecture)"
   # shellcheck disable=SC1091
   . /etc/os-release
   UBUNTU_CODENAME="${VERSION_CODENAME:-noble}"
-  ARCH="$(dpkg --print-architecture)"
-  _cns_log "Docker apt repo target codename: ${UBUNTU_CODENAME} arch=${ARCH}"
-  cat /etc/os-release || true
+  echo "ARCH=${ARCH}"
   echo "UBUNTU_CODENAME=${UBUNTU_CODENAME}"
-  echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" \
+  cat /etc/os-release || true
+  printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' \
+    "${ARCH}" "${UBUNTU_CODENAME}" \
     | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
   _cns_log "Wrote /etc/apt/sources.list.d/docker.list:"
   sudo cat /etc/apt/sources.list.d/docker.list
+  if ! _cns_validate_docker_apt_list /etc/apt/sources.list.d/docker.list; then
+    _cns_die "invalid /etc/apt/sources.list.d/docker.list (arch/codename/signed-by)"
+  fi
 }
 
 _cns_install_docker_via_apt() {

@@ -57,10 +57,11 @@ sudo chmod a+r /etc/apt/keyrings/docker.asc
 . /etc/os-release
 UBUNTU_CODENAME="${VERSION_CODENAME:-noble}"
 ARCH="$(dpkg --print-architecture)"
-cat /etc/os-release
+echo "ARCH=${ARCH}"
 echo "UBUNTU_CODENAME=${UBUNTU_CODENAME}"
-echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" \
+printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' "${ARCH}" "${UBUNTU_CODENAME}" \
   | sudo tee /etc/apt/sources.list.d/docker.list
+grep -Eq '^deb \[arch=(amd64|arm64) signed-by=/etc/apt/keyrings/docker.asc\] https://download.docker.com/linux/ubuntu (noble|jammy|focal) stable$' /etc/apt/sources.list.d/docker.list
 cat /etc/apt/sources.list.d/docker.list
 sudo apt-get update -y
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin

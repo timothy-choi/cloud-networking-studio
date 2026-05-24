@@ -38,24 +38,31 @@ install_docker_via_apt() {
   install -m 0755 -d /etc/apt/keyrings
   retry 5 10 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   chmod a+r /etc/apt/keyrings/docker.asc
+  ARCH="$$(dpkg --print-architecture)"
   # shellcheck disable=SC1091
   . /etc/os-release
   UBUNTU_CODENAME="$${VERSION_CODENAME:-noble}"
-  ARCH="$$(dpkg --print-architecture)"
-  log "Docker apt repo target codename: $${UBUNTU_CODENAME} arch=$${ARCH}"
-  cat /etc/os-release || true
+  echo "ARCH=$${ARCH}"
   echo "UBUNTU_CODENAME=$${UBUNTU_CODENAME}"
-  echo "deb [arch=$${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $${UBUNTU_CODENAME} stable" \
+  cat /etc/os-release || true
+  printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' "$${ARCH}" "$${UBUNTU_CODENAME}" \
     > /etc/apt/sources.list.d/docker.list
   log "Wrote /etc/apt/sources.list.d/docker.list:"
   cat /etc/apt/sources.list.d/docker.list
+  validate_docker_apt_list || die "invalid /etc/apt/sources.list.d/docker.list (arch/codename/signed-by)"
   apt_get_update
   retry 3 10 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+}
+
+validate_docker_apt_list() {
+  grep -Eq '^deb \[arch=(amd64|arm64) signed-by=/etc/apt/keyrings/docker.asc\] https://download.docker.com/linux/ubuntu (noble|jammy|focal) stable$$' \
+    /etc/apt/sources.list.d/docker.list
 }
 
 docker_apt_diagnostics() {
   log "Docker apt diagnostics:"
   cat /etc/os-release || true
+  echo "ARCH=$${ARCH:-unknown}"
   echo "UBUNTU_CODENAME=$${UBUNTU_CODENAME:-unknown}"
   cat /etc/apt/sources.list.d/docker.list || true
   ls -la /etc/apt/keyrings || true

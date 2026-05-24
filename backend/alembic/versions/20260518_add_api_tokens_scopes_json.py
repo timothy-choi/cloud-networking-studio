@@ -30,6 +30,9 @@ def _api_tokens_columns() -> set[str]:
 
 def upgrade() -> None:
     cols = _api_tokens_columns()
+    if not cols:
+        # Fresh install: ``api_tokens`` is created by ``create_all`` after migrations run.
+        return
     if "scopes_json" not in cols:
         op.add_column("api_tokens", sa.Column("scopes_json", sa.Text(), nullable=True))
 

@@ -17,7 +17,28 @@ from app.models.topology import Topology, TopologyNode
 from app.services.deployment_queries import deployment_status_blocks_new_deploy
 
 
-def _quota_exceeded(quota: str, message: str, **details: object) -> HTTPException:
+def _quota_exceeded(
+    quota: str,
+    message: str,
+    *,
+    db: Session | None = None,
+    user_id: UUID | None = None,
+    project_id: UUID | None = None,
+    **details: object,
+) -> HTTPException:
+    if db is not None and user_id is not None:
+        try:
+            from app.services.notification_service import notify_quota_exceeded_event
+
+            notify_quota_exceeded_event(
+                db,
+                user_id=user_id,
+                project_id=project_id,
+                quota=quota,
+                message=message,
+            )
+        except Exception:
+            pass
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail={
@@ -126,25 +147,40 @@ def build_project_quota_usage(db: Session, project_id: UUID, user_id: UUID) -> d
     }
 
 
-def ensure_can_deploy_project(db: Session, project_id: UUID) -> None:
+def ensure_can_deploy_project(
+    db: Session, project_id: UUID, *, user_id: UUID | None = None
+) -> None:
     limit = settings.quota_max_active_deployments_per_project
     used = count_active_deployments_for_project(db, project_id)
     if used >= limit:
         raise _quota_exceeded(
             "active_deployments",
             f"Project active deployment quota reached ({used}/{limit}). Destroy a deployment before deploying again.",
+            db=db,
+            user_id=user_id,
+            project_id=project_id,
             used=used,
             limit=limit,
         )
 
 
-def ensure_topology_node_quota(db: Session, topology_id: UUID, *, adding: int = 1) -> None:
+def ensure_topology_node_quota(
+    db: Session,
+    topology_id: UUID,
+    *,
+    adding: int = 1,
+    user_id: UUID | None = None,
+    project_id: UUID | None = None,
+) -> None:
     limit = settings.quota_max_nodes_per_topology
     used = count_nodes_for_topology(db, topology_id)
     if used + adding > limit:
         raise _quota_exceeded(
             "nodes_per_topology",
             f"Topology node quota reached ({used}/{limit}). Remove nodes before adding more.",
+            db=db,
+            user_id=user_id,
+            project_id=project_id,
             used=used,
             limit=limit,
         )
@@ -169,6 +205,8 @@ def ensure_terminal_session_quota(db: Session, user_id: UUID) -> None:
         raise _quota_exceeded(
             "terminal_sessions",
             f"Terminal session quota reached ({used}/{limit}). Close an existing session first.",
+            db=db,
+            user_id=user_id,
             used=used,
             limit=limit,
         )
@@ -181,6 +219,8 @@ def ensure_api_token_quota(db: Session, user_id: UUID) -> None:
         raise _quota_exceeded(
             "api_tokens",
             f"API token quota reached ({used}/{limit}). Revoke an unused token first.",
+            db=db,
+            user_id=user_id,
             used=used,
             limit=limit,
         )

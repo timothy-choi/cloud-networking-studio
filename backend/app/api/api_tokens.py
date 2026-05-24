@@ -41,6 +41,26 @@ def post_api_token(
         status="success",
         metadata={"name": body.name, "scopes": body.scopes},
     )
+    try:
+        from app.services import email_templates as tpl
+        from app.services.notification_service import notify_user
+
+        subj, text, html = tpl.api_token_created(token_name=body.name)
+        notify_user(
+            db,
+            user.id,
+            type="api_token.created",
+            title=f"API token created: {body.name}",
+            message=f"A new API token \"{body.name}\" was created.",
+            severity="info",
+            metadata={"token_id": str(out.id)},
+            send_email=True,
+            email_subject=subj,
+            email_text=text,
+            email_html=html,
+        )
+    except Exception:
+        pass
     db.commit()
     return out
 
@@ -81,5 +101,25 @@ def delete_api_token(
         actor_user_id=user.id,
         status="success",
     )
+    try:
+        from app.services import email_templates as tpl
+        from app.services.notification_service import notify_user
+
+        subj, text, html = tpl.api_token_revoked(token_name=str(token_id))
+        notify_user(
+            db,
+            user.id,
+            type="api_token.revoked",
+            title="API token revoked",
+            message="An API token was revoked on your account.",
+            severity="warning",
+            metadata={"token_id": str(token_id)},
+            send_email=True,
+            email_subject=subj,
+            email_text=text,
+            email_html=html,
+        )
+    except Exception:
+        pass
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

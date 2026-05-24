@@ -22,6 +22,7 @@ os.environ["CNS_USE_FAKE_DOCKER"] = "1"
 # Rate limits use a process-wide in-memory bucket; disable by default so the full
 # pytest session (shared dev user / TestClient IP) does not trip RATE_LIMITED.
 os.environ.setdefault("CNS_ENVIRONMENT", "development")
+os.environ.setdefault("EMAIL_PROVIDER", "console")
 
 import pytest
 from fastapi.testclient import TestClient

@@ -37,6 +37,32 @@ from app.core.config import settings
 from app.services.rate_limit_service import check_rate_limit
 
 
+def _notify_deploy_outcome(
+    db: Session,
+    *,
+    user: User,
+    topo: Topology,
+    deployment: Deployment,
+    succeeded: bool,
+    reason: str | None = None,
+) -> None:
+    try:
+        from app.services.notification_service import notify_deployment_outcome
+
+        notify_deployment_outcome(
+            db,
+            user_id=user.id,
+            project_id=topo.project_id,
+            topology_id=topo.id,
+            deployment_id=deployment.id,
+            topology_name=topo.name,
+            succeeded=succeeded,
+            reason=reason,
+        )
+    except Exception:
+        pass
+
+
 def _append_event(
     db: Session,
     deployment_id: UUID,
@@ -83,13 +109,13 @@ def execute_topology_deploy(
 ) -> Deployment | JSONResponse:
     """Create and run a deployment for ``topology_id``; same semantics as ``POST /topologies/{id}/deploy``."""
     topo = _topology_for_deploy(db, user, topology_id)
-    ensure_can_deploy_project(db, topo.project_id)
+    ensure_can_deploy_project(db, topo.project_id, user_id=user.id)
     check_rate_limit(
         key=f"deploy:user:{user.id}",
         limit=settings.rate_limit_deploy_per_user,
         action="deploy_topology",
     )
-    ensure_topology_node_quota(db, topology_id, adding=0)
+    ensure_topology_node_quota(db, topology_id, adding=0, user_id=user.id, project_id=topo.project_id)
     alloc_mode = resolve_network_allocation_mode(topo, network_allocation_mode)
     if network_allocation_mode is not None:
         topo.config = merge_allocation_mode_into_config(topo.config, alloc_mode)
@@ -179,6 +205,7 @@ def execute_topology_deploy(
             status="failure",
             metadata={"reason": "validation_failed"},
         )
+        _notify_deploy_outcome(db, user=user, topo=topo, deployment=deployment, succeeded=False, reason=joined)
         db.commit()
         loaded = _load_deployment_full(db, deployment.id)
         from app.schemas.deployment import DeploymentResponse
@@ -256,6 +283,9 @@ def execute_topology_deploy(
             status="failure",
             metadata={"error": exc.message},
         )
+        _notify_deploy_outcome(
+            db, user=user, topo=topo, deployment=deployment, succeeded=False, reason=exc.message
+        )
         _append_event(
             db,
             deployment.id,
@@ -304,6 +334,7 @@ def execute_topology_deploy(
             actor_user_id=user.id,
             status="failure",
         )
+        _notify_deploy_outcome(db, user=user, topo=topo, deployment=deployment, succeeded=False, reason=str(exc))
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -340,6 +371,7 @@ def execute_topology_deploy(
         actor_user_id=user.id,
         status="success",
     )
+    _notify_deploy_outcome(db, user=user, topo=topo, deployment=deployment, succeeded=True)
     if outcome.runtime_access:
         resources = outcome.runtime_access.get("resources") or []
         service_count = sum(
@@ -362,6 +394,7 @@ def execute_topology_deploy(
                 message=msg,
                 status="failed",
             )
+            _notify_deploy_outcome(db, user=user, topo=topo, deployment=deployment, succeeded=False, reason=msg)
             db.commit()
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
                 "code": "QUOTA_EXCEEDED",

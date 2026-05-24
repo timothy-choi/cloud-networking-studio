@@ -1,6 +1,7 @@
 import { Link, Outlet } from 'react-router-dom';
 import { getApiBase } from '../api/client';
 import { PlatformStatusBanner } from './PlatformStatusBanner';
+import { NotificationBell } from './notifications/NotificationBell';
 import { useAuth } from '../auth/AuthContext';
 
 export function Layout() {
@@ -39,6 +40,7 @@ export function Layout() {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            {user ? <NotificationBell /> : null}
             {user ? (
               <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/80 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900/60">
                 <span className="max-w-[12rem] truncate font-medium text-zinc-800 dark:text-zinc-100" title={user.email}>

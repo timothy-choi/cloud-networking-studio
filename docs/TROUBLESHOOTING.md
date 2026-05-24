@@ -28,6 +28,7 @@ Common mistakes:
 - `signed-by` without `=` and a path (`signed-by=/etc/apt/keyrings/docker.asc`)
 - Single-line echo that drops the codename or breaks bracket syntax
 - Stale malformed file left from a previous boot attempt
+- Using `$(. /etc/os-release && echo "$VERSION_CODENAME")` under `set -u` inside Terraform user_data — can fail with `VERSION_CODENAME: unbound variable`. Source `/etc/os-release` first, set `UBUNTU_CODENAME="${VERSION_CODENAME:-noble}"`, then write `docker.list`.
 
 ### Fix (in repo)
 
@@ -53,9 +54,12 @@ sudo rm -f /etc/apt/sources.list.d/docker.list
 sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 sudo chmod a+r /etc/apt/keyrings/docker.asc
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+. /etc/os-release
+UBUNTU_CODENAME="${VERSION_CODENAME:-noble}"
+ARCH="$(dpkg --print-architecture)"
+cat /etc/os-release
+echo "UBUNTU_CODENAME=${UBUNTU_CODENAME}"
+echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" \
   | sudo tee /etc/apt/sources.list.d/docker.list
 cat /etc/apt/sources.list.d/docker.list
 sudo apt-get update -y

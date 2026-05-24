@@ -71,6 +71,8 @@ _cns_install_prereqs() {
 }
 
 _cns_docker_apt_diagnostics() {
+  echo "=== /etc/os-release ==="
+  cat /etc/os-release 2>/dev/null || true
   echo "=== /etc/apt/sources.list.d/docker.list ==="
   sudo cat /etc/apt/sources.list.d/docker.list 2>/dev/null || true
   echo "=== /etc/apt/keyrings ==="
@@ -85,9 +87,14 @@ _cns_write_docker_apt_repo() {
   _cns_retry 5 10 curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
     -o /etc/apt/keyrings/docker.asc
   sudo chmod a+r /etc/apt/keyrings/docker.asc
-  echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  UBUNTU_CODENAME="${VERSION_CODENAME:-noble}"
+  ARCH="$(dpkg --print-architecture)"
+  _cns_log "Docker apt repo target codename: ${UBUNTU_CODENAME} arch=${ARCH}"
+  cat /etc/os-release || true
+  echo "UBUNTU_CODENAME=${UBUNTU_CODENAME}"
+  echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" \
     | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
   _cns_log "Wrote /etc/apt/sources.list.d/docker.list:"
   sudo cat /etc/apt/sources.list.d/docker.list

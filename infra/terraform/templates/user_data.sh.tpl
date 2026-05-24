@@ -38,9 +38,14 @@ install_docker_via_apt() {
   install -m 0755 -d /etc/apt/keyrings
   retry 5 10 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   chmod a+r /etc/apt/keyrings/docker.asc
-  echo \
-    "deb [arch=$$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-    $$(. /etc/os-release && echo "$${VERSION_CODENAME}") stable" \
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  UBUNTU_CODENAME="$${VERSION_CODENAME:-noble}"
+  ARCH="$$(dpkg --print-architecture)"
+  log "Docker apt repo target codename: $${UBUNTU_CODENAME} arch=$${ARCH}"
+  cat /etc/os-release || true
+  echo "UBUNTU_CODENAME=$${UBUNTU_CODENAME}"
+  echo "deb [arch=$${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $${UBUNTU_CODENAME} stable" \
     > /etc/apt/sources.list.d/docker.list
   log "Wrote /etc/apt/sources.list.d/docker.list:"
   cat /etc/apt/sources.list.d/docker.list
@@ -50,6 +55,8 @@ install_docker_via_apt() {
 
 docker_apt_diagnostics() {
   log "Docker apt diagnostics:"
+  cat /etc/os-release || true
+  echo "UBUNTU_CODENAME=$${UBUNTU_CODENAME:-unknown}"
   cat /etc/apt/sources.list.d/docker.list || true
   ls -la /etc/apt/keyrings || true
   tail -n 200 /var/log/cloud-init-output.log || true

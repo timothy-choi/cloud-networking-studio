@@ -148,30 +148,11 @@ def execute_rollback(
     impact = compute_rollback_impact(db, topology=topology, version=version)
     active_before = list_active_deployments_for_topology(db, topology.id)
 
-    rollback_version = version_svc.rollback_topology_to_version(
-        db,
-        topology=topology,
-        version=version,
-        actor=actor,
-    )
-
     destroyed_ids: list[str] = []
     redeployed_id: str | None = None
     message = "Topology restored from snapshot."
 
-    if mode == "config_only":
-        if active_before:
-            _mark_deployments_out_of_sync(
-                db,
-                active_before,
-                rollback_version_number=version.version_number,
-            )
-            message = (
-                "Topology config rolled back. Active deployments marked out of sync — "
-                "destroy or redeploy to align runtime."
-            )
-    elif mode in ("rollback_and_destroy", "rollback_and_redeploy"):
-        db.refresh(topology, attribute_names=["nodes", "links"])
+    if mode in ("rollback_and_destroy", "rollback_and_redeploy"):
         for dep in active_before:
             destroy_deployment_record(
                 db,
@@ -188,27 +169,51 @@ def execute_rollback(
                 ),
             )
             destroyed_ids.append(str(dep.id))
-        message = f"Topology rolled back and {len(destroyed_ids)} deployment(s) destroyed."
+        message = f"Prior {len(destroyed_ids)} deployment(s) destroyed; rolling back topology config."
 
-        if mode == "rollback_and_redeploy":
-            target_nodes = _node_names(version.snapshot_json or {})
-            if target_nodes:
-                out = deploy_exec.execute_topology_deploy(db, actor, topology.id)
-                if isinstance(out, Deployment):
-                    redeployed_id = str(out.id)
-                    message = (
-                        "Topology rolled back, prior deployments destroyed, and redeploy started."
-                    )
-                else:
-                    message = (
-                        "Topology rolled back and prior deployments destroyed, "
-                        "but redeploy failed validation."
-                    )
+    rollback_version = version_svc.rollback_topology_to_version(
+        db,
+        topology=topology,
+        version=version,
+        actor=actor,
+    )
+
+    if mode == "config_only":
+        if active_before:
+            _mark_deployments_out_of_sync(
+                db,
+                active_before,
+                rollback_version_number=version.version_number,
+            )
+            message = (
+                "Topology config rolled back. Active deployments marked out of sync — "
+                "destroy or redeploy to align runtime."
+            )
+    elif mode == "rollback_and_destroy":
+        message = (
+            f"Topology rolled back and {len(destroyed_ids)} deployment(s) destroyed."
+            if destroyed_ids
+            else "Topology rolled back; no active deployments required destroy."
+        )
+    elif mode == "rollback_and_redeploy":
+        target_nodes = _node_names(version.snapshot_json or {})
+        if target_nodes:
+            out = deploy_exec.execute_topology_deploy(db, actor, topology.id)
+            if isinstance(out, Deployment):
+                redeployed_id = str(out.id)
+                message = (
+                    "Topology rolled back, prior deployments destroyed, and redeploy started."
+                )
             else:
                 message = (
-                    "Topology rolled back to an empty graph; prior deployments destroyed. "
-                    "Redeploy skipped — add nodes before deploying."
+                    "Topology rolled back and prior deployments destroyed, "
+                    "but redeploy failed validation."
                 )
+        else:
+            message = (
+                "Topology rolled back to an empty graph; prior deployments destroyed. "
+                "Redeploy skipped — add nodes before deploying."
+            )
     else:
         raise ValueError(f"Unknown rollback mode: {mode}")
 

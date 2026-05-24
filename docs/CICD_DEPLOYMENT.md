@@ -58,17 +58,23 @@ In the **Vercel dashboard** (Project → Settings → General), align with **`de
 
 | Setting | Value |
 |--------|--------|
-| **Root Directory** | **Repository root** — leave **empty** (or `./`). **Do not** set this to **`frontend`**. |
+| **Root Directory** | **Repository root** — leave **empty** (blank). CI runs **`cd frontend`** and **`vercel deploy`** from that directory. |
 
-**Vercel → Settings → Environment variables (production):** set **`VITE_API_BASE_URL`** to **`https://api.cloudnetstudio.com/api`** if you run **`vercel build`** in the Vercel dashboard; **`deploy-production.yml`** already injects the same value during **`npm run build`** on the runner when **`VERCEL_VITE_API_BASE_URL`** is unset.
+**Vercel → Settings → Environment variables (production):** set **`VITE_API_BASE_URL`** to **`https://api.cloudnetstudio.com/api`** (or rely on CI — see below).
 
-**Why:** CI builds the SPA with **Vite** on the runner (`cd frontend`, `npm ci`, `VITE_API_BASE_URL=… npm run build`), producing **`frontend/dist`**. It then deploys **static files only** from the **monorepo root** with:
+**Why:** CI builds the SPA with **Vite** on the runner (`cd frontend`, `npm ci`, `vercel pull`, `VITE_API_BASE_URL=… npm run build`), then deploys from **`frontend/`**:
 
 ```bash
-npx vercel@54.0.0 deploy frontend/dist --prod --yes --token "$VERCEL_TOKEN"
+cd frontend
+npm ci
+npx vercel@54.0.0 pull --yes --environment=production --token "$VERCEL_TOKEN"
+VITE_API_BASE_URL=https://api.cloudnetstudio.com/api npm run build
+npx vercel@54.0.0 deploy --prod --yes --token "$VERCEL_TOKEN"
 ```
 
-If **Root Directory** is **`frontend`**, Vercel resolves that path again under `frontend/` and can error with paths like **`frontend/dist/frontend`**.
+Do **not** pass **`frontend/dist`**, **`./dist`**, or **`--cwd frontend/dist`** to **`vercel deploy`** — that breaks when the Vercel project **Root Directory** is blank.
+
+If **Root Directory** is mistakenly set to **`frontend`**, Vercel can double-resolve paths (e.g. **`frontend/dist/frontend`**).
 
 CI runs **`vercel pull`** inside **`frontend/`** for project linking (`.vercel` next to the app). It does **not** run **`vercel build`** (no Vercel remote build) and does **not** use **`--prebuilt`**.
 
@@ -144,7 +150,7 @@ On **`push` to `main`** (and **`workflow_dispatch`**), the **`deploy`** job:
 9. **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL`** = **`https://<API host>`** and **`CNS_SMOKE_API_ONLY=1`** (no **`-L`**): waits for **`GET /api/health`** only (SPA is on Vercel, not the API host). After **Step 34** the script authenticates (register/login), uses **Bearer** tokens for topology APIs, and expects **401** for unauthenticated topology **POST** when **`AUTH_REQUIRE_LOGIN=true`** (set in the workflow-written **`.env`**).
 10. **`curl -vL`** **`http://<API host>/api/health`** on the runner (follow redirect to HTTPS).
 11. Retries **`curl -sfS`** on **`https://<API host>/api/health`**; on failure prints **`curl -vk`** for TLS debugging.
-12. **Vercel (static `dist`):** from the **repository root**, **`cd frontend`**, **`npm ci`**, **`VITE_API_BASE_URL=… npm run build`**, **`npx vercel@54.0.0 pull`** (linking), then **`npx vercel@54.0.0 deploy frontend/dist --prod --yes`**. No **`vercel build`** and no **`--prebuilt`**.
+12. **Vercel:** **`cd frontend`**, **`npm ci`**, **`vercel pull`** (production env), **`VITE_API_BASE_URL=… npm run build`**, then **`vercel deploy --prod --yes`** from **`frontend/`** (not **`frontend/dist`**).
 
 **SSH CIDR:** for **local or manual** Terraform, use **`ssh_allowed_cidr = "<MY_PUBLIC_IP>/32"`** in **`terraform.tfvars`**. For **`deploy-production.yml`**, set secret **`TF_VAR_SSH_ALLOWED_CIDR`** appropriately for who may SSH to the instance. **Ephemeral** forces **`0.0.0.0/0`** for GitHub-hosted runners (see **`docs/EPHEMERAL_CI_ENVIRONMENTS.md`**).
 
@@ -168,7 +174,7 @@ Browsers load the SPA from **Vercel** (e.g. **`https://app.cloudnetstudio.com`**
 | EC2 (compose on instance) | **`RDS_PASSWORD`** or **`POSTGRES_PASSWORD`**, **`CNS_CORS_ORIGINS`**; optional **`AUTH_SECRET_KEY`** | **`.env`** on each deploy: DB password for Compose **`postgres`** or for **RDS** + **`DATABASE_URL`**; merge with required app/API/sslip origins (see **CORS** above). **`AUTH_SECRET_KEY`**: use repo secret if set, else preserve existing **`.env`**, else generate (required for Step 53D production startup). |
 | EC2 | `EC2_SSH_PRIVATE_KEY` | PEM for `appleboy/ssh-action` |
 | EC2 | `EC2_SSH_USER` | e.g. `ubuntu` |
-| Vercel | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | **`vercel pull`** (in `frontend/`) and **`vercel deploy frontend/dist`** from repo root |
+| Vercel | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | **`vercel pull`** and **`vercel deploy`** run from **`frontend/`** (Root Directory blank in dashboard) |
 | Vercel (optional) | **`VERCEL_VITE_API_BASE_URL`** | Overrides **`VITE_API_BASE_URL`** for the **local** **`npm run build`** in **`frontend/`**. If unset, CI uses **`https://<API host>/api`** (default **`https://api.cloudnetstudio.com/api`**). |
 
 Never commit keys, `terraform.tfvars`, or tokens. Fork PRs do not receive secrets (ephemeral workflow skips them).

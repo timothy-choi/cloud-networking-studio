@@ -452,6 +452,13 @@ jobs:
             echo "=== docker compose ps ==="
             run_compose "${C_ARGS[@]}" ps
 
+            echo "=== alembic upgrade head (before smoke / health gate) ==="
+            if ! run_compose "${C_ARGS[@]}" exec -T backend alembic upgrade head; then
+              echo "=== docker compose logs backend (after failed alembic, tail=120) ==="
+              run_compose "${C_ARGS[@]}" logs backend --tail=120 || true
+              exit 1
+            fi
+
             echo "=== runner RUNTIME_PROVIDER (container env) ==="
             run_compose "${C_ARGS[@]}" exec -T runner env | grep RUNTIME_PROVIDER || true
 

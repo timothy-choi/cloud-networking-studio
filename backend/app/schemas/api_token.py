@@ -19,6 +19,10 @@ class ApiTokenCreateRequest(BaseModel):
 
 
 class ApiTokenResponse(BaseModel):
+    """Listed token metadata — never includes ``token_hash`` or plaintext ``token``."""
+
+    model_config = {"extra": "ignore"}
+
     id: UUID
     name: str
     token_hint: str

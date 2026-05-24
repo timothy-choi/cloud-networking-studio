@@ -651,7 +651,15 @@ class DockerRuntimeProvider(RuntimeProvider):
     """Real Docker engine orchestration for bridge networks + containers."""
 
     def __init__(self, client: docker.DockerClient | None = None) -> None:
-        self._client = client or docker.from_env()
+        self._client_error: str | None = None
+        if client is not None:
+            self._client = client
+        else:
+            try:
+                self._client = docker.from_env()
+            except Exception as exc:  # noqa: BLE001 — probe only; callers degrade gracefully
+                self._client = None
+                self._client_error = str(exc)
 
     def deploy(self, plan: DeploymentPlan) -> DeployOutcome:
         if plan.segmented_networks:
@@ -1354,6 +1362,8 @@ class DockerRuntimeProvider(RuntimeProvider):
         return events
 
     def inspect_topology_runtime(self, topology_id: UUID) -> ProviderRuntimeSnapshot:
+        if self._client is None:
+            return ProviderRuntimeSnapshot()
         flt = _topology_runtime_filters(topology_id)
         nets_raw: list = []
         ctrs_raw: list = []
@@ -1365,7 +1375,10 @@ class DockerRuntimeProvider(RuntimeProvider):
             ctrs_raw = list(self._client.containers.list(all=True, filters=flt))
         except APIError:
             pass
-        labeled_ids = _labeled_topology_network_ids(self._client, topology_id)
+        try:
+            labeled_ids = _labeled_topology_network_ids(self._client, topology_id)
+        except APIError:
+            labeled_ids = frozenset()
         nets = tuple(_network_record(n) for n in nets_raw)
         ctrs = tuple(
             _container_record(c, topology_id, labeled_ids) for c in ctrs_raw

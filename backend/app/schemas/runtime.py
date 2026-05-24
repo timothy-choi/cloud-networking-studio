@@ -90,6 +90,21 @@ class RuntimeTopologyResponse(BaseModel):
     """Aggregated runtime view for a topology."""
 
     topology_id: UUID
+    status: str = Field(
+        default="unknown",
+        description=(
+            "Coarse runtime view: not_deployed, destroyed, running, pending, failed, "
+            "no_runtime_resources, out_of_sync, or degraded."
+        ),
+    )
+    resources: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Persisted runtime access rows for the latest deployment (when present).",
+    )
+    warning: str | None = Field(
+        default=None,
+        description="Non-fatal drift or inspection issue (never implies HTTP 500).",
+    )
     deployment_status: DeploymentStatus | None = None
     latest_deployment_id: UUID | None = None
     topology_sync_status: str | None = Field(

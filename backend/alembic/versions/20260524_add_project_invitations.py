@@ -22,8 +22,17 @@ def _table_exists(name: str) -> bool:
     return name in sa.inspect(bind).get_table_names()
 
 
+def _core_tables_present() -> bool:
+    bind = op.get_bind()
+    tables = set(sa.inspect(bind).get_table_names())
+    return "users" in tables and "projects" in tables
+
+
 def upgrade() -> None:
     if _table_exists("project_invitations"):
+        return
+    if not _core_tables_present():
+        # Fresh install: core tables (and project_invitations) are created by create_all.
         return
     op.create_table(
         "project_invitations",

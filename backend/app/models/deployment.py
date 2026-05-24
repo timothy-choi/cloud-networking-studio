@@ -7,9 +7,10 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, JSON, String, Text, Uuid
+from sqlalchemy import DateTime, ForeignKey, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.db.coerced_enum import coerced_enum_column, register_legacy_enum_alias
 from app.db.session import Base
 
 if TYPE_CHECKING:
@@ -54,14 +55,9 @@ class DeploymentEventLevel(str, enum.Enum):
     ERROR = "error"
 
 
-def _enum_column(enum_cls: type[enum.Enum]) -> Enum:
-    """Persist/load ``str`` enum **values** (e.g. ``none``), not member names (``NONE``)."""
-    return Enum(
-        enum_cls,
-        native_enum=False,
-        length=32,
-        values_callable=lambda members: [member.value for member in members],
-    )
+register_legacy_enum_alias(
+    DeploymentStatus, legacy_value="destroyed", canonical_value="stopped"
+)
 
 
 def _utc_now() -> datetime:
@@ -82,7 +78,7 @@ class Deployment(Base):
         index=True,
     )
     status: Mapped[DeploymentStatus] = mapped_column(
-        _enum_column(DeploymentStatus),
+        coerced_enum_column(DeploymentStatus),
         default=DeploymentStatus.PENDING,
     )
     runtime_target: Mapped[str] = mapped_column(String(64))
@@ -102,12 +98,12 @@ class Deployment(Base):
     )
     effective_config_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     topology_sync_status: Mapped[TopologySyncStatus] = mapped_column(
-        _enum_column(TopologySyncStatus),
+        coerced_enum_column(TopologySyncStatus),
         default=TopologySyncStatus.IN_SYNC,
         index=True,
     )
     cleanup_status: Mapped[DeploymentCleanupStatus] = mapped_column(
-        _enum_column(DeploymentCleanupStatus),
+        coerced_enum_column(DeploymentCleanupStatus),
         default=DeploymentCleanupStatus.NONE,
         index=True,
     )
@@ -159,7 +155,7 @@ class DeploymentEvent(Base):
         index=True,
     )
     level: Mapped[DeploymentEventLevel] = mapped_column(
-        _enum_column(DeploymentEventLevel),
+        coerced_enum_column(DeploymentEventLevel),
         default=DeploymentEventLevel.INFO,
     )
     message: Mapped[str] = mapped_column(Text)

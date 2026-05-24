@@ -17,6 +17,7 @@ from app.schemas.api_token import ApiTokenCreateRequest, ApiTokenCreateResponse,
 
 
 def _scopes_for_response(raw: str | None) -> list[str] | None:
+    """Map DB value to API response; NULL means legacy full access."""
     parsed = parse_stored_scopes(raw)
     if parsed is None:
         return None

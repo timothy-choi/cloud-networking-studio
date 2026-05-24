@@ -132,17 +132,23 @@ def test_project_broadcast_visible_to_members(client_strict, engine_db):
     assert any(x["title"] == "Team note" for x in lst.json())
 
 
-def test_console_email_provider(caplog):
-    import logging
+def test_console_email_provider(monkeypatch):
+    from app.services import email_service as email_svc
 
-    caplog.set_level(logging.INFO, logger="cns.email")
+    messages: list[str] = []
+
+    def capture_info(msg, *args, **kwargs):
+        messages.append(msg % args if args else str(msg))
+
+    monkeypatch.setattr(email_svc._log, "info", capture_info)
+
     ok = ConsoleEmailProvider().send(
         to_email="user@example.com",
         subject="Test",
         body_text="Hello",
     )
     assert ok is True
-    assert any("console email" in r.message for r in caplog.records)
+    assert any("console email" in m for m in messages)
 
 
 def test_smtp_disabled_does_not_crash(monkeypatch):

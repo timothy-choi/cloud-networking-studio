@@ -47,9 +47,17 @@ jobs:
         id: ref
         run: |
           set -euo pipefail
-          R="${{ inputs.git_ref || github.ref }}"
+          if [[ -n "${{ inputs.git_ref }}" ]]; then
+            R="${{ inputs.git_ref }}"
+          elif [[ "${{ github.ref_type }}" == "branch" ]]; then
+            R="${{ github.ref_name }}"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            R="${{ github.ref_name }}"
+          else
+            R="${{ github.sha }}"
+          fi
           echo "ref=${R}" >> "$GITHUB_OUTPUT"
-          echo "Deploying git ref: ${R}"
+          echo "Deploying git ref: ${R} (ref_type=${{ github.ref_type }})"
 
       - name: Validate staging compose files
         run: |

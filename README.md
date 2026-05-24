@@ -84,6 +84,7 @@ An optional **Go runtime executor** can sit alongside FastAPI for richer deploy 
 - [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) — exact **UI** and **CLI** demo steps and what each proves
 - [docs/RESUME_NOTES.md](docs/RESUME_NOTES.md) — **three resume bullets**, talking points, challenges solved
 - [docs/CICD_DEPLOYMENT.md](docs/CICD_DEPLOYMENT.md) — **Step 31** production deploy (EC2 Caddy HTTPS on **`api.cloudnetstudio.com`**, Vercel **`app`**, Cloudflare **DNS only**)
+- [docs/STAGING_DEPLOYMENT.md](docs/STAGING_DEPLOYMENT.md) — **Step 55** staging deploy (`api-staging`, isolated `cns-staging` stack, manual from any branch)
 - [docs/CI.md](docs/CI.md) — what GitHub Actions runs (including production Compose smoke)
 
 **Technical deep dives:**

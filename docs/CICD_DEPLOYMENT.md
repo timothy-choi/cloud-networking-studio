@@ -2,10 +2,24 @@
 
 This document describes **Step 31** GitHub Actions deployment: **push to `main`** updates a **persistent** Terraform-managed EC2 stack, runs **Caddy HTTPS** on the **custom API hostname** (default **`api.cloudnetstudio.com`** via **`deploy/Caddyfile.public-https`**, **`docker-compose.caddy-https.yml`**, **`CADDYFILE_CADDY`**, **`CNS_CADDY_AUTO_HTTPS=on`**, **`CNS_CADDY_SITE_ADDRESS`**, volumes **`caddy_data`/`caddy_config`**), merges required **CORS** origins on the instance, runs **`prod_smoke_test.sh`** against **`https://<API host>`** with **`CNS_SMOKE_API_ONLY=1`** (no **`-L`**; smoke waits **`/api/health`** only because the SPA is on **Vercel**), verifies **HTTP** (with **`-L`** to follow redirect) and **HTTPS** **`/api/health`**, builds the **Vercel** app with **`VITE_API_BASE_URL=https://<API host>/api`** (unless **`VERCEL_VITE_API_BASE_URL`** is set), and **never** runs `terraform destroy`. Override the API hostname with repository **Variable** **`CNS_PRODUCTION_API_HOST`**. **PR ephemeral** stays **HTTP-only** on sslip — see **`docs/EPHEMERAL_CI_ENVIRONMENTS.md`**.
 
-## Main (`deploy-production.yml`) vs PR (`ephemeral-infra-smoke.yml`)
+## Main (`deploy-production.yml`) vs PR (`ephemeral-infra-smoke.yml`) vs staging (`deploy-staging.yml`)
 
-| | **Production (push `main`)** | **Ephemeral (PR / manual)** |
-|--|------------------------------|-----------------------------|
+| | **Production (manual)** | **Staging (manual, any branch)** | **Ephemeral (PR / manual)** |
+|--|-------------------------|----------------------------------|-----------------------------|
+| **Workflow** | `deploy-production.yml` | `deploy-staging.yml` | `ephemeral-infra-smoke.yml` |
+| **Terraform state** | Fixed prod key | Optional staging key (`…/staging/terraform.tfstate`) | Unique per run, **destroyed** |
+| **Infra lifetime** | **Keeps** EC2/RDS | **Keeps** staging EC2 (if Terraform enabled) | **Temporary** |
+| **EC2 directory** | `~/cloud-networking-studio` | `~/cloud-networking-studio-staging` | `~/cloud-networking-studio-ephemeral` |
+| **Compose project** | `cns-prod` | `cns-staging` | `cns-prod` (ephemeral name from compose file) |
+| **API host** | `api.cloudnetstudio.com` | `api-staging.cloudnetstudio.com` | `<EIP>.sslip.io` |
+| **Environment** | `production` | `staging` | `production` (HTTP lab stack) |
+
+See **[STAGING_DEPLOYMENT.md](./STAGING_DEPLOYMENT.md)** for staging setup and safety rules.
+
+## Main (`deploy-production.yml`) vs PR (`ephemeral-infra-smoke.yml`) — detail
+
+| | **Production (manual)** | **Ephemeral (PR / manual)** |
+|--|-------------------------|-----------------------------|
 | **Terraform state** | Same S3 bucket, fixed key (default `cloud-networking-studio/prod/terraform.tfstate`) | Same bucket, **unique** key per run: `cloud-networking-studio/ephemeral/<run_id>/terraform.tfstate` |
 | **Infra lifetime** | **Keeps** VPC/EC2/EIP across runs | **Creates** stack, then **`terraform destroy`** in `always()` |
 | **EC2 directory** | `~/cloud-networking-studio` (persistent clone) | `~/cloud-networking-studio-ephemeral` (fresh clone) |

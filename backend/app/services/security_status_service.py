@@ -21,6 +21,8 @@ def build_security_status() -> SecurityStatusResponse:
         warnings.append("CNS_CORS_ORIGINS contains a wildcard origin.")
     if not settings.auth_require_login and settings.environment.lower() in ("production", "prod"):
         warnings.append("AUTH_REQUIRE_LOGIN is disabled in production.")
+    elif not settings.auth_require_login and settings.environment.lower() == "staging":
+        warnings.append("AUTH_REQUIRE_LOGIN is disabled in staging.")
 
     runtime_ok = bool(
         (settings.runtime_executor or "").strip()

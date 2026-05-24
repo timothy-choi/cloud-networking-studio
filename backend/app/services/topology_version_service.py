@@ -227,23 +227,6 @@ def rollback_topology_to_version(
         parent_version_id=version.id,
         snapshot=build_topology_snapshot(topology),
     )
-    record_audit(
-        db,
-        action="topology.version.rollback",
-        resource_type="topology_version",
-        resource_id=rollback_version.id,
-        project_id=topology.project_id,
-        actor_user_id=actor.id,
-        status="success",
-        metadata=scrub_sensitive_dict(
-            {
-                "topology_id": str(topology.id),
-                "from_version_id": str(version.id),
-                "from_version_number": version.version_number,
-                "new_version_number": rollback_version.version_number,
-            }
-        ),
-    )
     return rollback_version
 
 

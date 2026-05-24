@@ -92,6 +92,10 @@ class RuntimeTopologyResponse(BaseModel):
     topology_id: UUID
     deployment_status: DeploymentStatus | None = None
     latest_deployment_id: UUID | None = None
+    topology_sync_status: str | None = Field(
+        default=None,
+        description="in_sync or out_of_sync for the latest deployment.",
+    )
     runtime_provider: str
     networks: list[RuntimeNetworkResponse]
     containers: list[RuntimeContainerResponse]
@@ -112,6 +116,10 @@ class RuntimeDeploymentResponse(BaseModel):
     topology_id: UUID
     runtime_provider: str
     deployment_status: DeploymentStatus
+    topology_sync_status: str | None = Field(
+        default=None,
+        description="Whether deployment config matches current topology.",
+    )
     networks: list[RuntimeNetworkResponse]
     containers: list[RuntimeContainerResponse]
     node_runtime_mapping: dict[str, str] = Field(default_factory=dict)

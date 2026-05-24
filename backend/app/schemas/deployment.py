@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.deployment import DeploymentEventLevel, DeploymentStatus
+from app.models.deployment import DeploymentEventLevel, DeploymentStatus, TopologySyncStatus
 
 
 class DeploymentEventResponse(BaseModel):
@@ -68,6 +68,10 @@ class DeploymentResponse(BaseModel):
     effective_config_json: dict | None = Field(
         default=None,
         description="Resolved config after profile overrides (secrets redacted in exports).",
+    )
+    topology_sync_status: TopologySyncStatus | None = Field(
+        default=None,
+        description="Whether this deployment still matches the topology definition.",
     )
     started_at: datetime | None
     finished_at: datetime | None

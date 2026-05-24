@@ -446,6 +446,16 @@ export function TopologyDetailPage() {
         </div>
       )}
 
+      {runtime?.topology_sync_status === 'out_of_sync' && deploymentId ? (
+        <div
+          role="alert"
+          className="rounded-lg border border-amber-500/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-600 dark:bg-amber-950/35 dark:text-amber-100"
+        >
+          <strong className="font-semibold">Out of sync with current topology.</strong> This deployment was created from
+          an older topology config. Destroy and redeploy, or roll back with destroy/redeploy to align runtime.
+        </div>
+      ) : null}
+
       {topology && (
         <div className="grid gap-4 lg:grid-cols-2">
           <DeploymentProgressRail deploymentId={deploymentId} status={deploymentStatus} />

@@ -28,6 +28,7 @@ from app.models.deployment import (
     DeploymentEvent,
     DeploymentEventLevel,
     DeploymentStatus,
+    TopologySyncStatus,
 )
 from app.models.deployment_runtime_resource import DeploymentRuntimeResource
 from app.models.deployment_runtime_exec_result import DeploymentRuntimeExecResult
@@ -59,6 +60,7 @@ __all__ = [
     "DeploymentEvent",
     "DeploymentEventLevel",
     "DeploymentStatus",
+    "TopologySyncStatus",
     "FailureInjection",
     "FailureInjectionFailureType",
     "FailureInjectionStatus",

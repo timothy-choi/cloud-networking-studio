@@ -17,6 +17,8 @@ from app.schemas.topology_version import (
     TopologyVersionDiffResponse,
     TopologyVersionListResponse,
     TopologyVersionResponse,
+    TopologyVersionRollbackImpact,
+    TopologyVersionRollbackRequest,
     TopologyVersionRollbackResponse,
 )
 from app.services.access_control import (
@@ -27,12 +29,17 @@ from app.services.access_control import (
 from app.services.audit_service import record_audit
 from app.services.topology_version_diff_service import diff_topology_snapshots
 from app.services import topology_version_service as version_svc
+from app.services import topology_rollback_service as rollback_svc
 
 router = APIRouter(prefix="/topologies/{topology_id}/versions", tags=["topology-versions"])
 
 
 def _to_response(v) -> TopologyVersionResponse:
     return TopologyVersionResponse.model_validate(v)
+
+
+def _impact_from_dict(raw: dict) -> TopologyVersionRollbackImpact:
+    return TopologyVersionRollbackImpact.model_validate(raw)
 
 
 @router.get("", response_model=TopologyVersionListResponse)
@@ -102,6 +109,25 @@ def get_topology_version(
     return data
 
 
+@router.get("/{version_id}/rollback-impact", response_model=TopologyVersionRollbackImpact)
+def get_rollback_impact(
+    topology_id: UUID,
+    version_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TopologyVersionRollbackImpact:
+    topo = version_svc.load_topology_with_graph(db, topology_id)
+    if topo is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    get_topology_for_user(db, user, topology_id)
+    version = version_svc.get_version_for_topology(db, topology_id, version_id)
+    if version is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return _impact_from_dict(
+        rollback_svc.compute_rollback_impact(db, topology=topo, version=version)
+    )
+
+
 @router.get("/{version_id}/diff", response_model=TopologyVersionDiffResponse)
 def diff_topology_versions(
     topology_id: UUID,
@@ -127,6 +153,7 @@ def diff_topology_versions(
 def rollback_topology_version(
     topology_id: UUID,
     version_id: UUID,
+    body: TopologyVersionRollbackRequest | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> TopologyVersionRollbackResponse:
@@ -137,9 +164,16 @@ def rollback_topology_version(
     version = version_svc.get_version_for_topology(db, topology_id, version_id)
     if version is None:
         raise HTTPException(status_code=404, detail="Not found")
-    rollback_version = version_svc.rollback_topology_to_version(
-        db, topology=topo, version=version, actor=user
+
+    mode = body.mode if body else "config_only"
+    result = rollback_svc.execute_rollback(
+        db,
+        topology=topo,
+        version=version,
+        actor=user,
+        mode=mode,  # type: ignore[arg-type]
     )
+
     try:
         from app.services.notification_service import notify_project_members
 
@@ -150,18 +184,30 @@ def rollback_topology_version(
             title=f"Topology rolled back: {topo.name}",
             message=(
                 f"{user.email or user.id} rolled back topology '{topo.name}' "
-                f"to version {version.version_number}."
+                f"to version {version.version_number} (mode={mode})."
             ),
             severity="warning",
             metadata=scrub_sensitive_dict(
                 {
                     "topology_id": str(topology_id),
                     "version_id": str(version_id),
+                    "mode": mode,
                 }
             ),
         )
     except Exception:
         pass
     db.commit()
-    db.refresh(rollback_version)
-    return TopologyVersionRollbackResponse(version=_to_response(rollback_version))
+    db.refresh(result["version"])
+    return TopologyVersionRollbackResponse(
+        version=_to_response(result["version"]),
+        mode=result["mode"],
+        message=result["message"],
+        impact=_impact_from_dict(result["impact"]),
+        destroyed_deployment_ids=[UUID(x) for x in result["destroyed_deployment_ids"]],
+        redeployed_deployment_id=(
+            UUID(result["redeployed_deployment_id"])
+            if result["redeployed_deployment_id"]
+            else None
+        ),
+    )

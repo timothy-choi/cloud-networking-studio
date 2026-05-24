@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLevel, DeploymentStatus
+from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLevel, DeploymentStatus, TopologySyncStatus
 from app.models.topology import Topology
 from app.models.user import User
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
@@ -238,6 +238,7 @@ def execute_topology_deploy(
         topology_version_id=version_row.id if version_row else None,
         deployment_profile_id=profile.id if profile else None,
         effective_config_json=scrub_sensitive_dict(effective),
+        topology_sync_status=TopologySyncStatus.IN_SYNC,
     )
     db.add(deployment)
     db.flush()

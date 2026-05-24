@@ -114,6 +114,11 @@ def test_get_api_tokens_never_returns_hash_or_plaintext(client_strict):
     assert created["token"] not in str(lst.json())
 
 
+def _reset_alembic_revision(engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+
+
 def test_alembic_skips_when_api_tokens_table_missing(engine_db):
     from alembic import command
     from alembic.config import Config
@@ -121,7 +126,7 @@ def test_alembic_skips_when_api_tokens_table_missing(engine_db):
 
     with engine.begin() as conn:
         conn.execute(text("DROP TABLE IF EXISTS api_tokens CASCADE"))
-        conn.execute(text("DELETE FROM alembic_version"))
+    _reset_alembic_revision(engine)
 
     cfg = Config("alembic.ini")
     cfg.set_main_option("script_location", "alembic")
@@ -143,7 +148,7 @@ def test_alembic_adds_scopes_json_column(client_strict, engine_db):
     with engine.begin() as conn:
         if "scopes_json" in cols_before:
             conn.execute(text("ALTER TABLE api_tokens DROP COLUMN scopes_json"))
-        conn.execute(text("DELETE FROM alembic_version"))
+    _reset_alembic_revision(engine)
 
     cfg = Config("alembic.ini")
     cfg.set_main_option("script_location", "alembic")

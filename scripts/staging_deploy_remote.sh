@@ -41,6 +41,61 @@ if [[ -z "${STAGING_API_HOST}" ]]; then
   exit 1
 fi
 
+normalize_checkout_ref() {
+  local ref="$1"
+  ref="$(printf '%s' "$ref" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  printf '%s' "$ref"
+}
+
+print_git_diagnostics() {
+  echo "=== git diagnostics ==="
+  git branch -a || true
+  git status --short || true
+  git rev-parse --abbrev-ref HEAD || true
+  git rev-parse --short HEAD || true
+}
+
+checkout_deploy_ref() {
+  local ref
+  ref="$(normalize_checkout_ref "$1")"
+  if [[ -z "${ref}" ]]; then
+    echo "::error::CHECKOUT_REF is empty after normalization."
+    return 1
+  fi
+
+  git fetch origin --tags --prune
+
+  # Detached commit SHA (full or short).
+  if [[ "${ref}" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+    git fetch origin "${ref}"
+    git checkout --detach "${ref}"
+    return 0
+  fi
+
+  # Annotated/lightweight tag by full ref.
+  if [[ "${ref}" == refs/tags/* ]]; then
+    local tag="${ref#refs/tags/}"
+    git fetch origin "refs/tags/${tag}"
+    git checkout --detach "refs/tags/${tag}" 2>/dev/null || git checkout -B "${tag}" "origin/${tag}"
+    return 0
+  fi
+
+  # Branch: refs/heads/name, origin/name, or bare name — never checkout refs/heads/* directly.
+  local branch="${ref}"
+  branch="${branch#refs/heads/}"
+  branch="${branch#origin/}"
+
+  git fetch origin "${branch}"
+  if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
+    git checkout -B "${branch}" "origin/${branch}"
+    return 0
+  fi
+
+  echo "::error::Could not resolve '${branch}' — origin/${branch} missing after fetch."
+  print_git_diagnostics
+  return 1
+}
+
 # --- Safety: never mutate production stack paths or secrets ---
 if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]] && [[ "${COMPOSE_PROJECT_NAME}" == "cns-prod" ]]; then
   echo "::error::Refusing deploy: COMPOSE_PROJECT_NAME=cns-prod on staging script."
@@ -128,8 +183,10 @@ if [[ ! -d "${REPO_DIR}/.git" ]]; then
 fi
 cd "${REPO_DIR}"
 git remote set-url origin "${CLONE_URL}"
-git fetch origin
-git checkout "${CHECKOUT_REF}"
+if ! checkout_deploy_ref "${CHECKOUT_REF}"; then
+  exit 1
+fi
+print_git_diagnostics
 git rev-parse HEAD
 
 echo "=== write staging .env (values not printed) ==="

@@ -19,7 +19,7 @@ from app.models.topology import (
     TopologyNode,
     TopologyStatus,
 )
-from app.models.api_token import ApiToken
+from app.models.notification import Notification
 from app.models.audit_log import AuditLog
 from app.models.deployment_timeline import DeploymentTimelineEvent, TimelineEventType
 from app.models.deployment import (
@@ -41,6 +41,7 @@ from app.models.failure_injection import (
 from app.models.runtime_template import RuntimeTemplate, TemplateVisibility
 
 __all__ = [
+    "Notification",
     "ApiToken",
     "AuditLog",
     "DeploymentTimelineEvent",

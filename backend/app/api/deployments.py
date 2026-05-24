@@ -958,6 +958,26 @@ def post_deployment_runtime_service_terminal(
         status="success",
         metadata={"service_id": str(service_id), "session_id": str(body.session_id)},
     )
+    try:
+        from app.services.notification_service import notify_user
+
+        notify_user(
+            db,
+            user.id,
+            type="terminal.opened",
+            title="Terminal session opened",
+            message="An interactive terminal session was opened for a deployment service.",
+            severity="info",
+            project_id=topo.project_id if topo else None,
+            metadata={
+                "deployment_id": str(deployment_id),
+                "service_id": str(service_id),
+                "session_id": str(body.session_id),
+                "url": f"/topologies/{dep.topology_id}" if dep else None,
+            },
+        )
+    except Exception:
+        pass
     db.commit()
     return body
 
@@ -1100,6 +1120,31 @@ def post_deployment_cleanup(
         actor_user_id=user.id,
         status="success",
     )
+    try:
+        from app.services import email_templates as tpl
+        from app.services.notification_service import notify_user
+
+        subj, text, html = tpl.cleanup_completed(deployment_id=str(dep.id))
+        notify_user(
+            db,
+            user.id,
+            type="deployment.cleanup",
+            title="Deployment cleanup completed",
+            message=f"Runtime cleanup completed for deployment {dep.id}.",
+            severity="success",
+            project_id=topo.project_id if topo else None,
+            metadata={
+                "deployment_id": str(dep.id),
+                "topology_id": str(dep.topology_id),
+                "url": f"/topologies/{dep.topology_id}",
+            },
+            send_email=False,
+            email_subject=subj,
+            email_text=text,
+            email_html=html,
+        )
+    except Exception:
+        pass
     db.commit()
     return DeploymentCleanupResponse(
         ok=bool(out.get("ok")),

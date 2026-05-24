@@ -227,7 +227,10 @@ def create_topology_node(
     user: User = Depends(get_current_user),
 ) -> TopologyNode:
     require_topology_editor(db, user, topology_id)
-    ensure_topology_node_quota(db, topology_id, adding=1)
+    topo = get_topology_for_user(db, user, topology_id)
+    ensure_topology_node_quota(
+        db, topology_id, adding=1, user_id=user.id, project_id=topo.project_id
+    )
     image, ip_address, config = _validated_node_fields(
         image=body.image,
         ip_address=body.ip_address,

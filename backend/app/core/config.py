@@ -167,6 +167,18 @@ class Settings(BaseSettings):
         le=1000,
         validation_alias="CNS_RATE_LIMIT_DOWNLOAD_PER_USER",
     )
+    # --- Step 54A: email / notifications ---
+    email_provider: str = Field(
+        default="console",
+        validation_alias="EMAIL_PROVIDER",
+        description="console | smtp | disabled",
+    )
+    smtp_host: str = Field(default="localhost", validation_alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, ge=1, le=65535, validation_alias="SMTP_PORT")
+    smtp_username: str = Field(default="", validation_alias="SMTP_USERNAME")
+    smtp_password: str = Field(default="", validation_alias="SMTP_PASSWORD")
+    smtp_from_email: str = Field(default="cns@localhost", validation_alias="SMTP_FROM_EMAIL")
+    smtp_use_tls: bool = Field(default=True, validation_alias="SMTP_USE_TLS")
 
 
 settings = Settings()

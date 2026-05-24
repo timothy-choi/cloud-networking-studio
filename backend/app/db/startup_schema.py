@@ -27,6 +27,7 @@ def import_all_orm_modules() -> None:
     """
     import app.models  # noqa: F401 — package barrel
 
+    import app.models.notification  # noqa: F401
     import app.models.api_token  # noqa: F401
     import app.models.audit_log  # noqa: F401
     import app.models.deployment_timeline  # noqa: F401

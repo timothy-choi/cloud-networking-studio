@@ -14,6 +14,7 @@ from app.api.failure_injections import router as failure_injections_router
 from app.api.metrics import router as metrics_router
 from app.api.platform_metrics import router as platform_metrics_router
 from app.api.security_status import router as security_status_router
+from app.api.notifications import router as notifications_router
 from app.api.onboarding import router as onboarding_router
 from app.api.projects import router as projects_router
 from app.api.runtime import router as runtime_router
@@ -136,6 +137,7 @@ app.include_router(metrics_router)
 app.include_router(platform_metrics_router)
 app.include_router(security_status_router)
 app.include_router(onboarding_router)
+app.include_router(notifications_router)
 app.include_router(audit_logs_router)
 
 

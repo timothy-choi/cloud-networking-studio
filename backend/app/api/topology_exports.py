@@ -47,6 +47,32 @@ def _audit_iac_download(
         status="success",
         metadata={"format": export_format},
     )
+    try:
+        from app.services import email_templates as tpl
+        from app.services.notification_service import notify_user
+
+        name = topo.name if topo else str(topology_id)
+        subj, text, html = tpl.export_completed(export_type=export_format, topology_name=name)
+        notify_user(
+            db,
+            user.id,
+            type="export.completed",
+            title=f"Export ready: {export_format}",
+            message=f"Your {export_format} export for \"{name}\" is ready.",
+            severity="info",
+            project_id=topo.project_id if topo else None,
+            metadata={
+                "topology_id": str(topology_id),
+                "format": export_format,
+                "url": f"/topologies/{topology_id}",
+            },
+            send_email=False,
+            email_subject=subj,
+            email_text=text,
+            email_html=html,
+        )
+    except Exception:
+        pass
     db.commit()
 
 

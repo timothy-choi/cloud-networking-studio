@@ -14,6 +14,7 @@ from app.services.integration_outputs_service import (
     ALLOWED_INTEGRATION_FILENAMES,
     OUTPUT_LANGUAGE_KEYS,
 )
+from tests.membership_helpers import invite_and_accept
 
 TOPO = {
     "name": "integration-outputs-lab",
@@ -132,18 +133,12 @@ def test_unauthorized_user_blocked(client_strict):
     assert r.status_code == 404
 
 
+
 def test_viewer_can_read_integration_outputs(client_strict):
     _, owner_h = _reg(client_strict, "iovown")
     viewer_email, viewer_h = _reg(client_strict, "ioview")
     pid = client_strict.get("/projects", headers=owner_h).json()[0]["id"]
-    assert (
-        client_strict.post(
-            f"/projects/{pid}/members/invite",
-            headers=owner_h,
-            json={"email": viewer_email, "role": "viewer"},
-        ).status_code
-        == 201
-    )
+    invite_and_accept(client_strict, owner_h, pid, viewer_email, viewer_h, "viewer")
     tid = client_strict.post(
         "/topologies",
         headers=owner_h,

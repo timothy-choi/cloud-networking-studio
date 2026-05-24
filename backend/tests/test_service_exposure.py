@@ -22,17 +22,15 @@ def _reg(client_strict, prefix: str) -> tuple[str, dict[str, str]]:
     return email, {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
+from tests.membership_helpers import invite_and_accept
+
+
 def _topology_with_persisted_service(client_strict):
     """Owner + viewer on same project; one fake service runtime row for exposure."""
     _, ha = _reg(client_strict, "eo")
     eb, hb = _reg(client_strict, "ev")
     pid = client_strict.get("/projects", headers=ha).json()[0]["id"]
-    inv = client_strict.post(
-        f"/projects/{pid}/members/invite",
-        headers=ha,
-        json={"email": eb, "role": "viewer"},
-    )
-    assert inv.status_code == 201, inv.text
+    invite_and_accept(client_strict, ha, pid, eb, hb, "viewer")
 
     tid = client_strict.post(
         "/topologies",

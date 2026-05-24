@@ -16,6 +16,7 @@ from app.api.platform_metrics import router as platform_metrics_router
 from app.api.security_status import router as security_status_router
 from app.api.notifications import router as notifications_router
 from app.api.onboarding import router as onboarding_router
+from app.api.project_invitations import router as project_invitations_router
 from app.api.projects import router as projects_router
 from app.api.runtime import router as runtime_router
 from app.api.terminal import router as terminal_router
@@ -124,6 +125,7 @@ register_exception_handlers(app)
 app.include_router(auth_router)
 app.include_router(api_tokens_router)
 app.include_router(projects_router)
+app.include_router(project_invitations_router)
 app.include_router(topologies_router)
 app.include_router(topology_exports_router)
 app.include_router(templates_router)

@@ -25,19 +25,15 @@ def _reg(client_strict, prefix: str) -> tuple[str, dict[str, str]]:
     return email, {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
+from tests.membership_helpers import invite_and_accept
+
+
 def _lab_with_service_row(client_strict, *, viewer_role: str):
     """Owner + second user on project; persisted service runtime row."""
     _, ha = _reg(client_strict, "ro")
     eb, hb = _reg(client_strict, "rb")
     pid = client_strict.get("/projects", headers=ha).json()[0]["id"]
-    assert (
-        client_strict.post(
-            f"/projects/{pid}/members/invite",
-            headers=ha,
-            json={"email": eb, "role": viewer_role},
-        ).status_code
-        == 201
-    )
+    invite_and_accept(client_strict, ha, pid, eb, hb, viewer_role)
 
     tid = client_strict.post(
         "/topologies",

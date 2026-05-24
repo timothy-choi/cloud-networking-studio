@@ -78,19 +78,22 @@ Basic text/HTML templates live in `backend/app/services/email_templates.py`:
 - Quota exceeded
 - API token created / revoked
 - Export completed
-- Project invitation **placeholder** (team invites not implemented yet)
+- Project invitation (accept link uses `CNS_FRONTEND_APP_URL`)
 
 ## Frontend
 
 - Header **notification bell** with unread count, recent items, mark read, archive, and links from metadata
 - **`/notifications`** page for full history
 
-## Future: team invitations
+## Team invitations (Step 54B)
 
-When Step 54B+ adds invitations, reuse:
+See **[TEAM_COLLABORATION.md](./TEAM_COLLABORATION.md)** for the full invitation flow, roles, ownership rules, and API table.
 
-- `notify_user` / `notify_project_members`
-- `project_invitation_placeholder` email template
-- Console provider in dev; SMTP in production
+Hooked for invitations:
 
-No invitation endpoints are shipped in Step 54A.
+- `notify_user` when invitee email matches an existing account
+- `notify_project_owners` on accept/decline
+- `project_invitation()` email template with accept URL
+- Audit: `project.invite.sent`, `project.invite.accepted`, `project.invite.declined`, `project.invite.revoked`
+
+Accept URL pattern: `{CNS_FRONTEND_APP_URL}/invitations/accept?token={id}.{secret}`

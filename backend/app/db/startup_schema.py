@@ -38,6 +38,7 @@ def import_all_orm_modules() -> None:
     import app.models.deployment_service_exposure  # noqa: F401
     import app.models.failure_injection  # noqa: F401
     import app.models.project  # noqa: F401
+    import app.models.project_invitation  # noqa: F401
     import app.models.project_membership  # noqa: F401
     import app.models.runtime_template  # noqa: F401
     import app.models.topology  # noqa: F401

@@ -47,11 +47,17 @@ def required_scope_for_route(method: str, path: str) -> str | None:
         return None
     if p == "/auth/me":
         return None
+    if m in ("POST",) and p.startswith("/invitations/") and (p.endswith("/accept") or p.endswith("/decline")):
+        return None
 
     if is_jwt_only_route(m, p):
         return None
 
     if "/members" in p and m in ("POST", "PATCH", "DELETE"):
+        return "admin:project"
+    if "/invitations" in p and m in ("POST", "DELETE"):
+        return "admin:project"
+    if m == "POST" and "/invitations/" in p and p.endswith("/revoke"):
         return "admin:project"
     if m == "DELETE" and re.fullmatch(r"/projects/[^/]+", p):
         return "admin:project"

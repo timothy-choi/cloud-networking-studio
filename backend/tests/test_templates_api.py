@@ -23,6 +23,9 @@ def _reg(client_strict, prefix: str) -> tuple[str, dict[str, str]]:
     return email, {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
+from tests.membership_helpers import invite_and_accept
+
+
 def _project_topology(client_strict, *, invite_role: str | None = None):
     """Owner + optional invitee with role; returns headers and ids."""
     _, ha = _reg(client_strict, "tp")
@@ -30,14 +33,7 @@ def _project_topology(client_strict, *, invite_role: str | None = None):
     hb: dict[str, str] | None = None
     if invite_role:
         eb, hb = _reg(client_strict, "tpi")
-        assert (
-            client_strict.post(
-                f"/projects/{pid}/members/invite",
-                headers=ha,
-                json={"email": eb, "role": invite_role},
-            ).status_code
-            == 201
-        )
+        invite_and_accept(client_strict, ha, pid, eb, hb, invite_role)
     tid = client_strict.post(
         "/topologies",
         headers=ha,

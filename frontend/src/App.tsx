@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './auth/AuthContext';
 import { RequireSession } from './auth/RequireSession';
 import { Layout } from './components/Layout';
+import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
 import { ApiTokensPage } from './pages/ApiTokensPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route element={<RequireSession />}>
             <Route element={<Layout />}>
+              <Route path="invitations/accept" element={<AcceptInvitationPage />} />
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="platform-metrics" element={<PlatformMetricsPage />} />
               <Route path="platform-security" element={<PlatformSecurityPage />} />

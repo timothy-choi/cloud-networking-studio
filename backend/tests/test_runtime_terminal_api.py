@@ -57,18 +57,14 @@ def _reg(client_strict, prefix: str) -> tuple[str, dict[str, str]]:
     return email, {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
+from tests.membership_helpers import invite_and_accept
+
+
 def _lab_service_row(client_strict):
     _, ha = _reg(client_strict, "termo")
     eb, hb = _reg(client_strict, "termv")
     pid = client_strict.get("/projects", headers=ha).json()[0]["id"]
-    assert (
-        client_strict.post(
-            f"/projects/{pid}/members/invite",
-            headers=ha,
-            json={"email": eb, "role": "viewer"},
-        ).status_code
-        == 201
-    )
+    invite_and_accept(client_strict, ha, pid, eb, hb, "viewer")
     tid = client_strict.post(
         "/topologies",
         headers=ha,

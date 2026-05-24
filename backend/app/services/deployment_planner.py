@@ -107,6 +107,114 @@ def _resolve_endpoint_ip(
     return raw_node
 
 
+def _build_plan_from_effective_config(
+    *,
+    topology_id: UUID,
+    runtime_target: str,
+    networking_mode: str,
+    effective_config: dict,
+    deployment_id: UUID | None,
+    project_id: UUID | None,
+    requested_by_user_id: UUID | None,
+    network_allocation_mode: str | None,
+    topology: Topology,
+) -> DeploymentPlan:
+    """Build plan from effective snapshot (version/profile deploy) without mutating ORM."""
+    snap_nodes = effective_config.get("nodes") or []
+    snap_links = effective_config.get("links") or []
+    node_by_id: dict[UUID, dict] = {}
+    for raw in snap_nodes:
+        nid = UUID(str(raw["id"]))
+        node_by_id[nid] = raw
+
+    multinet = len({lnk.get("network_name") for lnk in snap_links if lnk.get("network_name")}) > 1
+    degrees: dict[UUID, int] = {}
+    for link in snap_links:
+        sid = UUID(str(link["source_node_id"]))
+        tid = UUID(str(link["target_node_id"]))
+        degrees[sid] = degrees.get(sid, 0) + 1
+        degrees[tid] = degrees.get(tid, 0) + 1
+
+    plan_links_list: list[PlanLinkDetail] = []
+    legacy_links: list[tuple[str, str, str]] = []
+    subnet_cidr: str | None = None
+
+    for link in snap_links:
+        if subnet_cidr is None and link.get("cidr"):
+            subnet_cidr = link["cidr"]
+        sid = UUID(str(link["source_node_id"]))
+        tid = UUID(str(link["target_node_id"]))
+        src = node_by_id.get(sid)
+        tgt = node_by_id.get(tid)
+        if src is None or tgt is None:
+            continue
+        legacy_links.append((src["name"], tgt["name"], link["network_name"]))
+        src_type = NodeType(src.get("node_type", NodeType.GENERIC.value))
+        tgt_type = NodeType(tgt.get("node_type", NodeType.GENERIC.value))
+        s_ip = _resolve_endpoint_ip(
+            link_ip=link.get("source_endpoint_ip"),
+            node_ip=src.get("ip_address"),
+            multinet=multinet,
+            node_type=src_type,
+            degree=degrees.get(sid, 0),
+            is_router_endpoint=src_type == NodeType.ROUTER,
+        )
+        t_ip = _resolve_endpoint_ip(
+            link_ip=link.get("target_endpoint_ip"),
+            node_ip=tgt.get("ip_address"),
+            multinet=multinet,
+            node_type=tgt_type,
+            degree=degrees.get(tid, 0),
+            is_router_endpoint=tgt_type == NodeType.ROUTER,
+        )
+        plan_links_list.append(
+            PlanLinkDetail(
+                link_id=UUID(str(link["id"])),
+                source_node_id=sid,
+                target_node_id=tid,
+                source_name=src["name"],
+                target_name=tgt["name"],
+                network_name=link["network_name"],
+                cidr=link.get("cidr"),
+                gateway=link.get("gateway"),
+                vlan_tag=link.get("vlan_tag"),
+                source_ip=s_ip,
+                target_ip=t_ip,
+            )
+        )
+
+    def _plan_node_from_snap(raw: dict) -> PlanNode:
+        return PlanNode(
+            id=UUID(str(raw["id"])),
+            name=raw["name"],
+            image=raw.get("image"),
+            ip_address=raw.get("ip_address"),
+            node_type=raw.get("node_type", NodeType.GENERIC.value),
+            runtime_config=extract_node_runtime_config(raw.get("config")),
+        )
+
+    plan_nodes = tuple(_plan_node_from_snap(n) for n in sorted(snap_nodes, key=lambda x: x["name"]))
+    node_names = tuple(n.name for n in plan_nodes)
+    alloc_mode = resolve_network_allocation_mode(topology, network_allocation_mode)
+
+    return DeploymentPlan(
+        topology_id=topology_id,
+        runtime_target=runtime_target,
+        networking_mode=networking_mode,
+        steps=DEFAULT_PLAN_STEPS,
+        nodes=plan_nodes,
+        node_names=node_names,
+        links=tuple(legacy_links),
+        plan_links=tuple(plan_links_list),
+        segmented_networks=multinet,
+        subnet_cidr=subnet_cidr,
+        network_allocation_mode=alloc_mode,
+        deployment_id=deployment_id,
+        project_id=project_id,
+        requested_by_user_id=requested_by_user_id,
+    )
+
+
 def build_deployment_plan(
     topology: Topology,
     *,
@@ -114,12 +222,32 @@ def build_deployment_plan(
     project_id: UUID | None = None,
     requested_by_user_id: UUID | None = None,
     network_allocation_mode: str | None = None,
+    effective_config: dict | None = None,
 ) -> DeploymentPlan:
     """
     Produce a provider-neutral plan from ORM state.
 
-    Expects ``topology.nodes`` and ``topology.links`` to be pre-loaded.
+    Expects ``topology.nodes`` and ``topology.links`` to be pre-loaded unless
+    ``effective_config`` supplies an alternate snapshot (profile/version deploy).
     """
+    eff = effective_config or {}
+    eff_topo = eff.get("topology") or {}
+    runtime_target = eff_topo.get("runtime_target") or topology.runtime_target
+    networking_mode = eff_topo.get("networking_mode") or topology.networking_mode
+
+    if effective_config and eff.get("nodes") is not None:
+        return _build_plan_from_effective_config(
+            topology_id=topology.id,
+            runtime_target=runtime_target,
+            networking_mode=networking_mode,
+            effective_config=effective_config,
+            deployment_id=deployment_id,
+            project_id=project_id if project_id is not None else topology.project_id,
+            requested_by_user_id=requested_by_user_id,
+            network_allocation_mode=network_allocation_mode,
+            topology=topology,
+        )
+
     node_by_id = {n.id: n for n in topology.nodes}
     multinet = topology_is_segmented_multinet(topology)
     degrees = _node_degrees(topology)

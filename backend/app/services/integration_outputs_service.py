@@ -604,6 +604,8 @@ def build_deployment_integration_outputs(
             "output_languages": list(OUTPUT_LANGUAGE_KEYS),
             "internal_only_note": INTERNAL_ONLY_NOTE,
             "api_endpoint": f"{api_base}/deployments/{dep.id}/integration-outputs",
+            "topology_version_id": str(dep.topology_version_id) if dep.topology_version_id else None,
+            "deployment_profile_id": str(dep.deployment_profile_id) if dep.deployment_profile_id else None,
         },
     )
 

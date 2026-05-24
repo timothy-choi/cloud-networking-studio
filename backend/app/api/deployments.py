@@ -111,8 +111,15 @@ def deploy_topology(
 ) -> Deployment | JSONResponse:
     """Run deployment against the topology's runtime target (real Docker when target is docker)."""
     mode = body.network_allocation_mode if body else None
+    profile_id = body.profile_id if body else None
+    topology_version_id = body.topology_version_id if body else None
     out = topology_deploy_execution.execute_topology_deploy(
-        db, user, topology_id, network_allocation_mode=mode
+        db,
+        user,
+        topology_id,
+        network_allocation_mode=mode,
+        profile_id=profile_id,
+        topology_version_id=topology_version_id,
     )
     if isinstance(out, JSONResponse):
         return out

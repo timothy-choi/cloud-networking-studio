@@ -40,6 +40,13 @@ from app.services.access_control import (
 )
 from app.services.audit_service import record_audit
 from app.services.quota_service import ensure_topology_node_quota
+from app.services import topology_version_service as version_svc
+
+
+def _maybe_autosave_topology_version(db: Session, topology_id: UUID, user: User) -> None:
+    topo = version_svc.load_topology_with_graph(db, topology_id)
+    if topo is not None:
+        version_svc.maybe_autosave_version(db, topo, user)
 
 router = APIRouter(prefix="/topologies", tags=["topologies"])
 
@@ -245,6 +252,7 @@ def create_topology_node(
         config=config,
     )
     db.add(node)
+    _maybe_autosave_topology_version(db, topology_id, user)
     db.commit()
     db.refresh(node)
     return node
@@ -305,6 +313,7 @@ def create_topology_link(
         config=body.config,
     )
     db.add(link)
+    _maybe_autosave_topology_version(db, topology_id, user)
     db.commit()
     db.refresh(link)
     return link
@@ -351,6 +360,7 @@ def patch_topology(
         actor_user_id=user.id,
         status="success",
     )
+    _maybe_autosave_topology_version(db, topology_id, user)
     db.commit()
     db.refresh(topo)
     nc, lc = _counts_for_topology(db, topology_id)
@@ -395,6 +405,7 @@ def patch_topology_node(
         data["config"] = next_config
     for key, val in data.items():
         setattr(node, key, val)
+    _maybe_autosave_topology_version(db, topology_id, user)
     db.commit()
     db.refresh(node)
     return node
@@ -419,6 +430,7 @@ def delete_topology_node(
             detail="Node not found",
         )
     db.delete(node)
+    _maybe_autosave_topology_version(db, topology_id, user)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -447,6 +459,7 @@ def patch_topology_link(
         link.config = _merge_json_dict(link.config, data.pop("config"))
     for key, val in data.items():
         setattr(link, key, val)
+    _maybe_autosave_topology_version(db, topology_id, user)
     db.commit()
     db.refresh(link)
     return link
@@ -471,5 +484,6 @@ def delete_topology_link(
             detail="Link not found",
         )
     db.delete(link)
+    _maybe_autosave_topology_version(db, topology_id, user)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

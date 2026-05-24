@@ -57,6 +57,18 @@ class DeploymentResponse(BaseModel):
     topology_id: UUID
     status: DeploymentStatus = Field(description="Coarse deployment lifecycle state.")
     runtime_target: str = Field(description="Runtime key copied from the topology at deploy time.")
+    topology_version_id: UUID | None = Field(
+        default=None,
+        description="Topology version snapshot used for this deployment.",
+    )
+    deployment_profile_id: UUID | None = Field(
+        default=None,
+        description="Deployment profile applied for env/runtime overrides.",
+    )
+    effective_config_json: dict | None = Field(
+        default=None,
+        description="Resolved config after profile overrides (secrets redacted in exports).",
+    )
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime

@@ -34,7 +34,11 @@ from app.services.deployment_timeline_service import record_timeline_event
 from app.services.deployment_validation import validate_topology_for_deploy
 from app.services.quota_service import ensure_can_deploy_project, ensure_topology_node_quota
 from app.core.config import settings
+from app.core.secret_masking import scrub_sensitive_dict
 from app.services.rate_limit_service import check_rate_limit
+from app.services.effective_config_service import build_effective_config, effective_config_summary
+from app.services import deployment_profile_service as profile_svc
+from app.services import topology_version_service as version_svc
 
 
 def _notify_deploy_outcome(
@@ -100,12 +104,49 @@ def _topology_for_deploy(db: Session, user: User, topology_id: UUID) -> Topology
     return db.execute(stmt).scalar_one()
 
 
+def _notify_prod_like_deploy(
+    db: Session,
+    *,
+    topo: Topology,
+    user: User,
+    deployment: Deployment,
+    profile_name: str,
+    event: str,
+    reason: str | None = None,
+) -> None:
+    try:
+        from app.services.notification_service import notify_project_owners
+
+        body = f"Prod-like deployment {event} for topology '{topo.name}' (profile: {profile_name})."
+        if reason:
+            body += f" Reason: {reason}"
+        notify_project_owners(
+            db,
+            topo.project_id,
+            type="deployment.prod_like",
+            title=f"Prod-like deploy {event}: {topo.name}",
+            message=body,
+            severity="warning" if event == "failed" else "info",
+            metadata=scrub_sensitive_dict(
+                {
+                    "topology_id": str(topo.id),
+                    "deployment_id": str(deployment.id),
+                    "event": event,
+                }
+            ),
+        )
+    except Exception:
+        pass
+
+
 def execute_topology_deploy(
     db: Session,
     user: User,
     topology_id: UUID,
     *,
     network_allocation_mode: str | None = None,
+    profile_id: UUID | None = None,
+    topology_version_id: UUID | None = None,
 ) -> Deployment | JSONResponse:
     """Create and run a deployment for ``topology_id``; same semantics as ``POST /topologies/{id}/deploy``."""
     topo = _topology_for_deploy(db, user, topology_id)
@@ -117,6 +158,52 @@ def execute_topology_deploy(
     )
     ensure_topology_node_quota(db, topology_id, adding=0, user_id=user.id, project_id=topo.project_id)
     alloc_mode = resolve_network_allocation_mode(topo, network_allocation_mode)
+
+    profile = profile_svc.get_profile(db, topology_id, profile_id) if profile_id else None
+    if profile_id and profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment profile not found")
+
+    version_row = None
+    base_snapshot = None
+    if topology_version_id:
+        version_row = version_svc.get_version_for_topology(db, topology_id, topology_version_id)
+        if version_row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topology version not found")
+        base_snapshot = version_row.snapshot_json
+    else:
+        deploy_version = version_svc.create_topology_version(
+            db,
+            topology=topo,
+            created_by=user,
+            source="deploy",
+            name="Deploy snapshot",
+        )
+        version_row = deploy_version
+        base_snapshot = deploy_version.snapshot_json
+        record_audit(
+            db,
+            action="topology.version.created",
+            resource_type="topology_version",
+            resource_id=deploy_version.id,
+            project_id=topo.project_id,
+            actor_user_id=user.id,
+            status="success",
+            metadata=scrub_sensitive_dict(
+                {
+                    "topology_id": str(topology_id),
+                    "version_number": deploy_version.version_number,
+                    "source": "deploy",
+                }
+            ),
+        )
+
+    effective = build_effective_config(
+        snapshot=base_snapshot,
+        profile=profile,
+        network_allocation_mode=alloc_mode if network_allocation_mode is not None else None,
+    )
+    eff_runtime = (effective.get("topology") or {}).get("runtime_target") or topo.runtime_target
+
     if network_allocation_mode is not None:
         topo.config = merge_allocation_mode_into_config(topo.config, alloc_mode)
         db.flush()
@@ -147,7 +234,10 @@ def execute_topology_deploy(
     deployment = Deployment(
         topology_id=topology_id,
         status=DeploymentStatus.PENDING,
-        runtime_target=topo.runtime_target,
+        runtime_target=eff_runtime,
+        topology_version_id=version_row.id if version_row else None,
+        deployment_profile_id=profile.id if profile else None,
+        effective_config_json=scrub_sensitive_dict(effective),
     )
     db.add(deployment)
     db.flush()
@@ -167,8 +257,26 @@ def execute_topology_deploy(
         project_id=topo.project_id,
         actor_user_id=user.id,
         status="pending",
-        metadata={"topology_id": str(topology_id)},
+        metadata=scrub_sensitive_dict(
+            {
+                "topology_id": str(topology_id),
+                "topology_version_id": str(version_row.id) if version_row else None,
+                "deployment_profile_id": str(profile.id) if profile else None,
+                "profile_type": profile.profile_type if profile else None,
+                "effective_summary": effective_config_summary(effective),
+            }
+        ),
     )
+
+    if profile and profile.profile_type == "prod_like":
+        _notify_prod_like_deploy(
+            db,
+            topo=topo,
+            user=user,
+            deployment=deployment,
+            profile_name=profile.name,
+            event="started",
+        )
 
     deployment.started_at = datetime.now(UTC)
     _append_event(db, deployment.id, "Deployment pending — record created.")
@@ -206,6 +314,16 @@ def execute_topology_deploy(
             metadata={"reason": "validation_failed"},
         )
         _notify_deploy_outcome(db, user=user, topo=topo, deployment=deployment, succeeded=False, reason=joined)
+        if profile and profile.profile_type == "prod_like":
+            _notify_prod_like_deploy(
+                db,
+                topo=topo,
+                user=user,
+                deployment=deployment,
+                profile_name=profile.name,
+                event="failed",
+                reason=joined,
+            )
         db.commit()
         loaded = _load_deployment_full(db, deployment.id)
         from app.schemas.deployment import DeploymentResponse
@@ -224,6 +342,13 @@ def execute_topology_deploy(
         event_type=TimelineEventType.DEPLOY_STARTED,
         message="Deployment started — invoking runtime provider.",
         status="running",
+        metadata=scrub_sensitive_dict(
+            {
+                "topology_version_id": str(version_row.id) if version_row else None,
+                "deployment_profile_id": str(profile.id) if profile else None,
+                "profile_type": profile.profile_type if profile else None,
+            }
+        ),
     )
     _append_event(
         db,
@@ -237,6 +362,7 @@ def execute_topology_deploy(
         deployment_id=deployment.id,
         requested_by_user_id=user.id,
         network_allocation_mode=alloc_mode,
+        effective_config=effective,
     )
 
     try:
@@ -286,6 +412,16 @@ def execute_topology_deploy(
         _notify_deploy_outcome(
             db, user=user, topo=topo, deployment=deployment, succeeded=False, reason=exc.message
         )
+        if profile and profile.profile_type == "prod_like":
+            _notify_prod_like_deploy(
+                db,
+                topo=topo,
+                user=user,
+                deployment=deployment,
+                profile_name=profile.name,
+                event="failed",
+                reason=exc.message,
+            )
         _append_event(
             db,
             deployment.id,
@@ -335,6 +471,16 @@ def execute_topology_deploy(
             status="failure",
         )
         _notify_deploy_outcome(db, user=user, topo=topo, deployment=deployment, succeeded=False, reason=str(exc))
+        if profile and profile.profile_type == "prod_like":
+            _notify_prod_like_deploy(
+                db,
+                topo=topo,
+                user=user,
+                deployment=deployment,
+                profile_name=profile.name,
+                event="failed",
+                reason=str(exc),
+            )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -372,6 +518,15 @@ def execute_topology_deploy(
         status="success",
     )
     _notify_deploy_outcome(db, user=user, topo=topo, deployment=deployment, succeeded=True)
+    if profile and profile.profile_type == "prod_like":
+        _notify_prod_like_deploy(
+            db,
+            topo=topo,
+            user=user,
+            deployment=deployment,
+            profile_name=profile.name,
+            event="succeeded",
+        )
     if outcome.runtime_access:
         resources = outcome.runtime_access.get("resources") or []
         service_count = sum(

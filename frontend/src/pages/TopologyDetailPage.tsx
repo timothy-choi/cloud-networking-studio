@@ -32,6 +32,9 @@ import { RuntimeAccessPanel } from '../components/runtime/RuntimeAccessPanel';
 import { SaveAsTemplateModal } from '../components/templates/SaveAsTemplateModal';
 import { Spinner } from '../components/Spinner';
 import { TopologyWorkspace } from '../components/topology/TopologyWorkspace';
+import { TopologyVersionsPanel } from '../components/topology/TopologyVersionsPanel';
+import { DeploymentProfilesPanel } from '../components/topology/DeploymentProfilesPanel';
+import { DeployModal } from '../components/topology/DeployModal';
 import { IaCExportPanel } from '../components/topology/IaCExportPanel';
 import { TrafficValidationSection } from '../components/traffic/TrafficValidationSection';
 import { useDeploymentEvents } from '../hooks/useDeploymentEvents';
@@ -123,6 +126,7 @@ export function TopologyDetailPage() {
   const [pageToast, setPageToast] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [deployModalOpen, setDeployModalOpen] = useState(false);
   const [networkAllocationMode, setNetworkAllocationMode] =
     useState<NetworkAllocationMode>('managed');
   const [allocationModeSaving, setAllocationModeSaving] = useState(false);
@@ -139,6 +143,7 @@ export function TopologyDetailPage() {
 
   const deploymentStatus = runtime?.deployment_status ?? null;
   const viewerMode = topology?.my_role === 'viewer';
+  const isOwner = topology?.my_role === 'owner';
   const viewerHint =
     'View-only access: ask a project owner or member to deploy, edit, or delete resources.';
   const opLocked = busy !== null || viewerMode;
@@ -413,6 +418,22 @@ export function TopologyDetailPage() {
         />
       ) : null}
 
+      <DeployModal
+        open={deployModalOpen}
+        onClose={() => setDeployModalOpen(false)}
+        topologyId={id}
+        runtimeTarget={topology?.runtime_target ?? 'docker'}
+        deployWarnings={deployReadiness.warnings}
+        blockingReasons={deployReadiness.blockingReasons}
+        networkAllocationMode={networkAllocationMode}
+        onNetworkAllocationModeChange={setNetworkAllocationMode}
+        onDeploy={async (opts) => {
+          await wrap('deploy', async () => {
+            await deployTopology(id, opts);
+          });
+        }}
+      />
+
       {degraded && (
         <div
           role="alert"
@@ -446,6 +467,23 @@ export function TopologyDetailPage() {
       {topology && (
         <CollapsibleSection title="IaC Export" defaultOpen>
           <IaCExportPanel topologyId={id} />
+        </CollapsibleSection>
+      )}
+
+      {topology && (
+        <CollapsibleSection title="Versions" defaultOpen={false}>
+          <TopologyVersionsPanel
+            topologyId={id}
+            readOnly={viewerMode}
+            isOwner={isOwner}
+            onRollback={() => void refreshLive()}
+          />
+        </CollapsibleSection>
+      )}
+
+      {topology && (
+        <CollapsibleSection title="Deployment profiles" defaultOpen={false}>
+          <DeploymentProfilesPanel topologyId={id} readOnly={viewerMode} isOwner={isOwner} />
         </CollapsibleSection>
       )}
 
@@ -554,11 +592,7 @@ export function TopologyDetailPage() {
                       ? 'Deploy allowed — review warnings above.'
                       : undefined
             }
-            onClick={() =>
-              wrap('deploy', async () => {
-                await deployTopology(id, { network_allocation_mode: networkAllocationMode });
-              })
-            }
+            onClick={() => setDeployModalOpen(true)}
             className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 cns-disabled-control dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
           >
             Deploy to runtime
@@ -729,11 +763,7 @@ export function TopologyDetailPage() {
               type="button"
               disabled={opLocked || !deployReadiness.deployable}
               title={viewerMode ? viewerHint : undefined}
-              onClick={() =>
-                wrap('deploy-retry', async () => {
-                  await deployTopology(id, { network_allocation_mode: networkAllocationMode });
-                })
-              }
+              onClick={() => setDeployModalOpen(true)}
               className="mt-3 rounded-lg bg-red-800 px-4 py-2 text-xs font-semibold text-white hover:bg-red-900 disabled:opacity-50 dark:bg-red-700 dark:hover:bg-red-600"
             >
               Retry deployment

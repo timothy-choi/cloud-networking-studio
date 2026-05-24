@@ -7,7 +7,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, Uuid
+from sqlalchemy import DateTime, Enum, ForeignKey, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -67,6 +67,19 @@ class Deployment(Base):
     runtime_target: Mapped[str] = mapped_column(String(64))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    topology_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("topology_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    deployment_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("deployment_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    effective_config_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now

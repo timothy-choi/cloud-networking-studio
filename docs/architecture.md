@@ -44,6 +44,8 @@ flowchart TB
 | **PostgreSQL** | Users, projects, topologies, deployments, versions, profiles, events, audit |
 | **Runtime provider** | Abstracts deploy/destroy/inspect/reconcile/heal; Docker is primary |
 | **Go runner** | Optional sidecar for richer deploy plans and runtime operations (`RUNTIME_EXECUTOR=go`) |
+
+Observability: `GET /runtime/runner-status`, `GET /runtime/operations/recent`, runner `/health` · `/status` · `/version`. See [GO_RUNNER.md](GO_RUNNER.md).
 | **Caddy** | TLS termination and `/api` reverse proxy on EC2 stacks |
 
 ---

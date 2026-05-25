@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 
 import { PlatformMetricsCard } from '../components/metrics/PlatformMetricsCard';
+import { RunnerStatusPanel } from '../components/runtime/RunnerStatusPanel';
 
 export function PlatformMetricsPage() {
   return (
@@ -16,6 +17,15 @@ export function PlatformMetricsPage() {
           Cross-project observability: deployments, runtime health, quotas, cleanup, and API traffic.
         </p>
       </div>
+      <section className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900/80">
+        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Runtime provider / Go runner</h2>
+        <p className="mt-1 text-xs text-cns-muted">
+          Live probe of backend executor mode, Go runner reachability, Docker/Kubernetes probes, and recent delegated operations.
+        </p>
+        <div className="mt-4">
+          <RunnerStatusPanel />
+        </div>
+      </section>
       <section className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900/80">
         <PlatformMetricsCard />
       </section>

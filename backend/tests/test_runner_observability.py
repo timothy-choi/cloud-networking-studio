@@ -12,6 +12,7 @@ def test_runner_status_unreachable_when_executor_go(client, monkeypatch):
     from app.core import config
     from app.runtime import go_runner_client as grc
 
+    monkeypatch.setenv("RUNTIME_EXECUTOR", "go")
     monkeypatch.setattr(config.settings, "runtime_executor", "go")
 
     def boom(_self):
@@ -27,17 +28,17 @@ def test_runner_status_unreachable_when_executor_go(client, monkeypatch):
     assert body["runner_reachable"] is False
     assert body["runtime_executor"] == "go"
     err = body.get("last_runtime_error")
-    assert err is None or isinstance(err, dict)
-    if isinstance(err, dict):
-        assert "unavailable" in (err.get("message") or "").lower()
-    else:
-        assert "unavailable" in (body.get("message") or "").lower()
+    assert isinstance(err, dict)
+    assert err.get("operation") == "runner_status"
+    msg = (err.get("message") or body.get("message") or "").lower()
+    assert "unavailable" in msg or "refused" in msg or "name resolution" in msg
 
 
 def test_runner_status_reachable_when_mocked(client, monkeypatch):
     from app.core import config
     from app.runtime import go_runner_client as grc
 
+    monkeypatch.setenv("RUNTIME_EXECUTOR", "go")
     monkeypatch.setattr(config.settings, "runtime_executor", "go")
 
     def fake_status(_self):
@@ -67,6 +68,7 @@ def test_runtime_status_includes_runner_block(client, monkeypatch):
     from app.core import config
     from app.runtime import go_runner_client as grc
 
+    monkeypatch.setenv("RUNTIME_EXECUTOR", "go")
     monkeypatch.setattr(config.settings, "runtime_executor", "go")
 
     def fake_get_runtime_status(_self):

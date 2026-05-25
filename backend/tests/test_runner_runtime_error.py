@@ -27,6 +27,7 @@ def test_stale_status_error_not_active(client, monkeypatch):
         timestamp=datetime.now(UTC) - timedelta(minutes=10),
     )
 
+    monkeypatch.setenv("RUNTIME_EXECUTOR", "go")
     monkeypatch.setattr(config.settings, "runtime_executor", "go")
 
     def fake_get_runtime_status(_self):
@@ -71,6 +72,7 @@ def test_successful_status_check_clears_probe_error(client, monkeypatch):
         status_code=503,
     )
 
+    monkeypatch.setenv("RUNTIME_EXECUTOR", "go")
     monkeypatch.setattr(config.settings, "runtime_executor", "go")
 
     def fake_get_runtime_status(_self):

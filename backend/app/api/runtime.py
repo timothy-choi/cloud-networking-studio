@@ -18,6 +18,7 @@ from app.models.user import User
 from app.runtime.go_runner_client import effective_runtime_executor
 from app.runtime.runner_operation_history import list_recent_runner_operations
 from app.runtime.runner_runtime_error import (
+    clear_runtime_error_after_probe_success,
     clear_runtime_error_if_operation_succeeded,
     get_runtime_error,
     set_runtime_error,
@@ -52,6 +53,20 @@ def _active_runtime_error() -> LastRuntimeErrorDetail | None:
     return LastRuntimeErrorDetail.model_validate(payload)
 
 
+def _normalize_runner_unreachable_message(exc: Exception | str) -> str:
+    raw = str(exc).strip()
+    lower = raw.lower()
+    if not raw:
+        return "Go runner unavailable"
+    if "unavailable" in lower:
+        return raw[:500]
+    if isinstance(exc, httpx.ConnectError) or any(
+        token in lower for token in ("name resolution", "connection refused", "connect error", "errno")
+    ):
+        return f"Go runner unavailable: {raw}"[:500]
+    return raw[:500]
+
+
 def _runner_detail_from_payload(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "runner_status": data.get("runner_status") or data.get("status"),
@@ -75,10 +90,12 @@ def _fetch_runner_status_detail() -> tuple[dict[str, Any] | None, str | None, in
     try:
         data = GoRunnerClient.from_settings().get_runner_status()
     except httpx.HTTPStatusError as exc:
-        msg = str(exc.response.text or exc.response.reason_phrase or exc)[:500]
+        msg = _normalize_runner_unreachable_message(
+            str(exc.response.text or exc.response.reason_phrase or exc)
+        )
         return None, msg, exc.response.status_code
     except (httpx.HTTPError, ValueError) as exc:
-        return None, str(exc)[:500], None
+        return None, _normalize_runner_unreachable_message(exc), None
     if not isinstance(data, dict):
         return None, "Go runner returned invalid JSON for /status", None
     return data, None, None
@@ -102,14 +119,12 @@ def _runner_status_response(*, checked_at: datetime | None = None) -> RunnerStat
     data, err, status_code = _fetch_runner_status_detail()
     if data is None:
         msg = err or "Go runner unavailable"
+        set_runtime_error(
+            operation="runner_status",
+            message=msg,
+            status_code=status_code,
+        )
         active_err = _active_runtime_error()
-        if active_err is None:
-            set_runtime_error(
-                operation="runner_status",
-                message=msg,
-                status_code=status_code,
-            )
-            active_err = _active_runtime_error()
         return RunnerStatusDetailResponse(
             runner_reachable=False,
             runtime_executor=executor,
@@ -121,6 +136,7 @@ def _runner_status_response(*, checked_at: datetime | None = None) -> RunnerStat
         )
 
     detail = _runner_detail_from_payload(data)
+    clear_runtime_error_after_probe_success("runner_status")
     return RunnerStatusDetailResponse(
         runner_reachable=True,
         runtime_executor=executor,
@@ -222,6 +238,8 @@ def get_runtime_executor_status() -> dict[str, Any]:
                 operation="runtime_status",
                 message=str(merged.get("message") or merged.get("status") or "degraded"),
             )
+        else:
+            clear_runtime_error_after_probe_success("runtime_status")
         active_err = _active_runtime_error()
         merged["last_runtime_error"] = active_err.model_dump(mode="json") if active_err else None
         runner_detail = _runner_detail_from_payload(data)
@@ -241,7 +259,14 @@ def get_runtime_executor_status() -> dict[str, Any]:
 )
 def recheck_runner_status() -> dict[str, Any]:
     """Force a fresh runner/runtime status probe (clears stale probe errors on success)."""
-    return get_runtime_executor_status()
+    body = get_runtime_executor_status()
+    if effective_runtime_executor() == "go":
+        _runner_status_response()
+        active_err = _active_runtime_error()
+        body["last_runtime_error"] = active_err.model_dump(mode="json") if active_err else None
+        if isinstance(body.get("runner"), dict):
+            body["runner"]["last_runtime_error"] = body["last_runtime_error"]
+    return body
 
 
 @router.get(

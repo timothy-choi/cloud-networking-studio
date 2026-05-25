@@ -84,7 +84,6 @@ def update_target(
     config_json: dict | None = None,
     credentials_ref: str | None = None,
     status: str | None = None,
-    *,
     update_name: bool = False,
     update_config_json: bool = False,
     update_credentials_ref: bool = False,

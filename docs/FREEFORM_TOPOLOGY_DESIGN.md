@@ -94,4 +94,4 @@ cd frontend && npm run test && npm run build
 ## Related docs
 
 - [RUNTIME_TEMPLATES.md](./RUNTIME_TEMPLATES.md) — persisted template library
-- [architecture.md](./architecture.md) — control plane & runner overview
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — control plane & runner overview

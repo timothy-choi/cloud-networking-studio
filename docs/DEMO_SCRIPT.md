@@ -1,101 +1,79 @@
-# Demo script (UI and CLI)
+# Demo script (~10 min)
 
-Use this document to run a **repeatable** demo: what to click or type, and **what each step proves**. For automation, the authoritative shell script is [`scripts/demo_full_flow.sh`](../scripts/demo_full_flow.sh).
+Repeatable walkthrough for recruiters and interviewers. Automated equivalent: [`scripts/demo_full_flow.sh`](../scripts/demo_full_flow.sh) (flat + routed labs; no versioning UI).
 
-**Prerequisites:** Postgres + backend (`uvicorn`) + Docker Engine; for UI, `npm run dev` in `frontend/` with API reachable (Vite proxy to port 8000 is the default).
+**Prerequisites:** Postgres, backend (`uvicorn`), Docker Engine, frontend (`npm run dev`). API at `http://localhost:8000`, UI at `http://localhost:5174`.
 
 ---
 
-## Part A — Flat topology (single segment)
+## Core flow (UI)
 
-**Story:** two workloads on **one** L2 segment; reachability; failure; reconcile/heal; teardown.
+| Step | Action | Proves |
+|------|--------|--------|
+| 1 | **Register / login** at `/register` or `/login` | Auth; starter project created on register |
+| 2 | **Create project** (project selector on dashboard) or use starter project | Project scoping + RBAC |
+| 3 | **Create topology** — blank or from **Templates** | Topology CRUD |
+| 4 | **Studio** — add **Host**, **Router**, **Service** nodes; connect **links**; set CIDR/gateway if needed; **Save layout** | Graph persisted (nodes, links, positions) |
+| 5 | **Deploy to runtime** — watch deployment events | Control plane → Docker apply |
+| 6 | **Runtime Access** — endpoints, networks/interfaces, container status | Live inspection vs saved intent |
+| 7 | **Traffic** — Run ping / HTTP test | Exec-based data-plane validation |
+| 8 | **Failure** — stop or restart a node; optional **Reconcile** → **Heal** | Drift detection and recovery |
+| 9 | **Integration outputs** — Runtime Access → **Use outside CNS**; copy or download env/CI files | Deployment-scoped integration artifacts |
+| 10 | **IaC export** — topology page → **IaC Export** panel; preview or download Terraform/Ansible/Compose | Topology-scoped IaC generation (export only) |
+| 11 | **Save version** — **Versions** panel → save snapshot (manual or after deploy) | Immutable topology history |
+| 12 | Edit graph → **Rollback** to prior version (choose mode if prompted) | Version restore; optional destroy before rollback |
+| 13 | **Deployment profile** — create profile (env/image overrides) → **Deploy** with profile selected | Effective config merge at deploy time |
+| 14 | **Destroy** deployment | Labeled Docker teardown |
 
-### A.1 UI flow (exact)
+**One-liner for deploy:** “We compile the graph into a plan and materialize Docker networks and containers.”
 
-1. **Open dashboard** — `http://localhost:5174` (or your Vite URL).  
-   *Proves:* UI loads against live API.
+---
 
-2. **Create blank topology** — use dashboard control to create an empty topology; open its **detail** page.  
-   *Proves:* CRUD path for topology records.
+## Quick flat lab (5 min)
 
-3. **Topology studio** — add **Host** and **Service** (toolbar), connect them (drag handle or **Link mode**), optionally edit link **CIDR** in the inspector, **Save layout**.  
-   *Proves:* graph is persisted (nodes, links, `editor_position`).
+Skip routing if time is short:
 
-4. **Runtime actions** — **Deploy to runtime**. Watch **deployment events** and the graph animation.  
-   *Proves:* deploy pipeline, event stream, Docker provisioning.
+1. Blank topology → Host + Service on one link → Deploy  
+2. Ping + HTTP → Stop service → Heal → Destroy  
 
-5. **Traffic** — **Run ping test** and **Run HTTP test** (or use **Runtime actions** buttons). Open **Traffic validation**.  
-   *Proves:* exec-based probes between containers; persisted traffic test rows.
+Template shortcut: dashboard **Start demo (optional)** clones `client-service` and deploys.
 
-6. **Failure** — **Stop service node** (injection). Refresh; graph shows degraded/stopped state where wired.  
-   *Proves:* failure injection API + runtime reflection.
+---
 
-7. **Recovery** — **Reconcile**, then **Heal deployment** (order matters for the story: detect drift, then remediate). Re-run ping.  
-   *Proves:* reconcile output + heal restarts; return to steady state.
+## Routed lab (optional +5 min)
 
-8. **Teardown** — **Destroy deployment**.  
-   *Proves:* labeled resources torn down without orphaning unrelated Docker objects.
+1. Empty topology → **Use template** → **Routed host → router → service**  
+2. Deploy → inspect router interfaces on two segments (`net-a` / `net-b`)  
+3. **Run routed ping/HTTP** → restart router → reconcile/heal → destroy  
 
-### A.2 CLI flow (exact)
+CLI: second half of `./scripts/demo_full_flow.sh` automates `10.72.0.0/24` / `10.73.0.0/24` labs.
 
-Run from repo root (same as README):
+---
+
+## CLI smoke (no UI)
 
 ```bash
-chmod +x scripts/demo_full_flow.sh   # once
+chmod +x scripts/demo_full_flow.sh
 API_BASE=http://127.0.0.1:8000 ./scripts/demo_full_flow.sh
 ```
 
-The script’s **first half** performs: health → create topology → create host + service nodes → one link → deploy → runtime GET → ping + HTTP → stop/restart style failures → reconcile → heal → destroy.
+Production/staging API-only:
 
-*Proves:* identical story as UI, suitable for screen recording with `jq` pretty output.
-
----
-
-## Part B — Routed multi-network topology
-
-**Story:** **two** bridge segments (`net-a`, `net-b`), a **router** with two NICs, static endpoints/gateways, **cross-subnet** ping and HTTP, **router restart**, reconcile/heal, second destroy.
-
-### B.1 UI flow (exact)
-
-1. **New blank topology** → open detail page.
-
-2. **Template** — in the studio toolbar, **Use template** → **Routed host → router → service** (appends nodes/links; does not clear existing content — start from empty for clarity).
-
-3. **Inspect** — select each **link**; confirm `net-a` / `net-b`, gateways `10.72.0.1` / `10.73.0.1`, and endpoint IPs match the template.  
-   *Proves:* multi-segment intent is visible and editable.
-
-4. **Save layout** → **Deploy to runtime**. Inspect **Runtime networks & interfaces** (router `eth0`/`eth1`, forwarding flags, route snippets).  
-   *Proves:* segmented networks + router attachment + observability fields.
-
-5. **Routed traffic & validation** — run **Run routed ping** and **Run routed HTTP**; optional segment pings and **Restart router node**, then **Reconcile** / **Heal**, then routed ping again.  
-   *Proves:* L3 path through router; resilience after container restart.
-
-6. **Destroy deployment**.
-
-### B.2 CLI flow (exact)
-
-The script’s **second half** (after the flat lab) builds fixed **10.72.0.0/24** and **10.73.0.0/24** labs: `host-a`, `router-1`, `service-b` (busybox), two links with gateways and endpoint IPs, deploy, multi-segment runtime inspection, ping/HTTP including host→service, router restart via `POST .../failures/restart-node`, reconcile, heal, ping again, destroy.
-
-*Proves:* full multinet story is automated and matches API contracts the UI uses.
+```bash
+CNS_BASE_URL=https://api-staging.cloudnetstudio.com \
+CNS_SMOKE_API_ONLY=1 \
+./scripts/prod_smoke_test.sh
+```
 
 ---
 
-## What to say in one sentence per phase
+## Troubleshooting
 
-| Phase | One-liner |
-|-------|-----------|
-| Deploy | “We compile the graph into a plan and materialize Docker networks and containers.” |
-| Traffic | “We prove the data plane by exec’ing ping and HTTP from real containers.” |
-| Failure | “We inject stop/restart/kill to create real drift.” |
-| Reconcile / heal | “We compare intent to actuals, then restart what’s broken.” |
-| Routed | “Multiple `network_name`s become multiple bridges; the router forwards between segments.” |
+| Issue | Check |
+|-------|--------|
+| Empty UI / 502 | Backend running; Vite proxy to port 8000 |
+| Deploy fails | Docker running; deployment events JSON; node `image` set |
+| Traffic fails | Containers running; HTTP target listens on expected port |
+| Auth errors | `AUTH_REQUIRE_LOGIN` and JWT on protected routes |
 
----
-
-## Troubleshooting (demo night)
-
-- **502 / empty UI** — backend not running or wrong `VITE`/proxy target.
-- **Deploy fails** — Docker not running; port/subnet collisions; read deployment events JSON.
-- **Traffic fails** — workloads not running; wrong node IDs; for HTTP, target must listen on expected port (busybox lab uses provider/test expectations as in demo script).
-
-See [local-development.md](local-development.md).
+See [OPERATIONS.md](OPERATIONS.md) · [local-development.md](local-development.md)

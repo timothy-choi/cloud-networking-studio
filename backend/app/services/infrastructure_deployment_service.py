@@ -154,8 +154,7 @@ def _register_runtime_targets(
     return created
 
 
-def run_validate_and_plan(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
-    started = time.monotonic()
+def run_validate(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
     try:
         deployment.status = "validating"
         deployment.events_json = append_event(deployment.events_json, "validate_started")
@@ -167,6 +166,34 @@ def run_validate_and_plan(db: Session, *, deployment: InfrastructureDeployment, 
         tf_fmt = _new_execution(db, deployment=deployment, execution_type="terraform", mode="fmt")
         tf_svc.execute_fmt(db, execution=tf_fmt, deployment=deployment)
 
+        deployment.status = "pending"
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "validate_completed",
+            message="Terraform validate/fmt succeeded",
+        )
+        deployment.error_message = None
+    except ValueError as exc:
+        deployment.status = "failed"
+        deployment.error_message = str(exc)
+        deployment.events_json = append_event(deployment.events_json, "failed", message=str(exc))
+        deployment.metrics_json = increment_counter(deployment.metrics_json, "failure_count")
+    db.flush()
+    record_audit(
+        db,
+        action="infrastructure_deployment.validate",
+        resource_type="infrastructure_deployment",
+        resource_id=deployment.id,
+        project_id=deployment.project_id,
+        actor_user_id=actor.id,
+        status=deployment.status,
+    )
+    return deployment
+
+
+def run_plan(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
+    started = time.monotonic()
+    try:
         deployment.status = "planning"
         deployment.events_json = append_event(deployment.events_json, "plan_started")
         db.flush()
@@ -211,6 +238,13 @@ def run_validate_and_plan(db: Session, *, deployment: InfrastructureDeployment, 
         status=deployment.status,
     )
     return deployment
+
+
+def run_validate_and_plan(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
+    deployment = run_validate(db, deployment=deployment, actor=actor)
+    if deployment.status == "failed":
+        return deployment
+    return run_plan(db, deployment=deployment, actor=actor)
 
 
 def confirm_and_apply(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:

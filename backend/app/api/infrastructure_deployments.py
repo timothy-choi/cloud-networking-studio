@@ -134,7 +134,46 @@ def create_infrastructure_deployment(
             provider=body.provider,
             variables=body.variables,
         )
-        deployment = infra_svc.run_validate_and_plan(db, deployment=deployment, actor=user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(deployment)
+    return _to_deployment(deployment)
+
+
+@router.post(
+    "/infrastructure-deployments/{deployment_id}/validate",
+    response_model=InfrastructureDeploymentResponse,
+)
+def validate_infrastructure_deployment(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> InfrastructureDeploymentResponse:
+    deployment = _get_deployment_for_user(db, user, deployment_id)
+    require_topology_editor(db, user, deployment.topology_id)
+    try:
+        deployment = infra_svc.run_validate(db, deployment=deployment, actor=user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(deployment)
+    return _to_deployment(deployment)
+
+
+@router.post(
+    "/infrastructure-deployments/{deployment_id}/plan",
+    response_model=InfrastructureDeploymentResponse,
+)
+def plan_infrastructure_deployment(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> InfrastructureDeploymentResponse:
+    deployment = _get_deployment_for_user(db, user, deployment_id)
+    require_topology_editor(db, user, deployment.topology_id)
+    try:
+        deployment = infra_svc.run_plan(db, deployment=deployment, actor=user)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()

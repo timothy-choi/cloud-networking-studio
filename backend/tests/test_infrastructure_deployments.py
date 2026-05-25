@@ -107,9 +107,17 @@ def test_create_infra_deployment_plan_and_confirm(client_strict, monkeypatch):
     )
     assert create.status_code == 201, create.text
     body = create.json()
-    assert body["status"] == "awaiting_confirmation"
-    assert body["plan_summary_json"]["vm_count"] == 1
+    assert body["status"] == "pending"
     deployment_id = body["id"]
+
+    validate = client_strict.post(f"/infrastructure-deployments/{deployment_id}/validate", headers=h)
+    assert validate.status_code == 200, validate.text
+
+    plan = client_strict.post(f"/infrastructure-deployments/{deployment_id}/plan", headers=h)
+    assert plan.status_code == 200, plan.text
+    planned = plan.json()
+    assert planned["status"] == "awaiting_confirmation"
+    assert planned["plan_summary_json"]["vm_count"] == 1
 
     execs = client_strict.get(f"/infrastructure-deployments/{deployment_id}/executions", headers=h)
     assert execs.status_code == 200
@@ -167,12 +175,15 @@ def test_destroy_infrastructure_deployment(client_strict, monkeypatch):
         headers=h,
         json={"name": "destroy-me", "template_id": "local-mock", "provider": "local"},
     ).json()
+    dep_id = created["id"]
+    client_strict.post(f"/infrastructure-deployments/{dep_id}/validate", headers=h)
+    client_strict.post(f"/infrastructure-deployments/{dep_id}/plan", headers=h)
     client_strict.post(
-        f"/infrastructure-deployments/{created['id']}/confirm",
+        f"/infrastructure-deployments/{dep_id}/confirm",
         headers=h,
         json={"confirm": True},
     )
-    destroyed = client_strict.post(f"/infrastructure-deployments/{created['id']}/destroy", headers=h)
+    destroyed = client_strict.post(f"/infrastructure-deployments/{dep_id}/destroy", headers=h)
     assert destroyed.status_code == 200
     assert destroyed.json()["status"] == "destroyed"
 

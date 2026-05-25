@@ -80,6 +80,18 @@ export async function createInfrastructureDeployment(
   });
 }
 
+export async function validateInfrastructureDeployment(deploymentId: string): Promise<InfrastructureDeployment> {
+  return apiFetch<InfrastructureDeployment>(`/infrastructure-deployments/${deploymentId}/validate`, {
+    method: 'POST',
+  });
+}
+
+export async function planInfrastructureDeployment(deploymentId: string): Promise<InfrastructureDeployment> {
+  return apiFetch<InfrastructureDeployment>(`/infrastructure-deployments/${deploymentId}/plan`, {
+    method: 'POST',
+  });
+}
+
 export async function getInfrastructureDeployment(deploymentId: string): Promise<InfrastructureDeployment> {
   return apiFetch<InfrastructureDeployment>(`/infrastructure-deployments/${deploymentId}`);
 }

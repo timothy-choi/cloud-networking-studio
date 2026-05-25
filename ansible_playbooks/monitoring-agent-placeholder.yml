@@ -1,0 +1,9 @@
+---
+# Placeholder monitoring agent configuration (Step 57C).
+- name: Monitoring agent placeholder
+  hosts: cns_runtime
+  become: true
+  tasks:
+    - name: Log monitoring placeholder
+      ansible.builtin.debug:
+        msg: "Monitoring agent installation is a future platform extension."

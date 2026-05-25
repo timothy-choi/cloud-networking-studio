@@ -1,0 +1,21 @@
+---
+# Whitelisted playbook: install Docker Compose plugin (Step 57C).
+- name: Install Docker Compose
+  hosts: cns_runtime
+  become: true
+  tasks:
+    - name: Install docker-compose-plugin package (placeholder)
+      ansible.builtin.package:
+        name: docker-compose-plugin
+        state: present
+      ignore_errors: true
+
+    - name: Verify docker compose availability
+      ansible.builtin.command: docker compose version
+      register: compose_version
+      changed_when: false
+      failed_when: false
+
+    - name: Report compose version
+      ansible.builtin.debug:
+        msg: "{{ compose_version.stdout | default('docker compose not available') }}"

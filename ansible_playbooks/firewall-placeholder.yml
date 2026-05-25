@@ -1,0 +1,9 @@
+---
+# Placeholder firewall configuration (Step 57C).
+- name: Firewall placeholder
+  hosts: cns_runtime
+  become: true
+  tasks:
+    - name: Log firewall placeholder
+      ansible.builtin.debug:
+        msg: "Firewall configuration is managed by cloud security groups / future platform policy."

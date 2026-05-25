@@ -48,8 +48,12 @@ services:
     environment:
       # docker (default) or kubernetes — use docker-compose.k8s-runtime.yml overlay for Kubernetes.
       RUNTIME_PROVIDER: ${RUNTIME_PROVIDER:-docker}
+      CNS_INFRA_TEMPLATES_ROOT: /opt/cns/infra_templates
+      CNS_ANSIBLE_PLAYBOOKS_ROOT: /opt/cns/ansible_playbooks
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./infra_templates:/opt/cns/infra_templates:ro
+      - ./ansible_playbooks:/opt/cns/ansible_playbooks:ro
     expose:
       - "8090"
     networks: [cns]
@@ -72,6 +76,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/cns/secrets:/opt/cns/secrets:ro
+      - ./infra_templates:/opt/cns/infra_templates:ro
+      - ./ansible_playbooks:/opt/cns/ansible_playbooks:ro
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://cns_user:cns_password@postgres:5432/cloud_networking_studio}
       CNS_ENVIRONMENT: ${CNS_ENVIRONMENT:-production}
@@ -84,6 +90,8 @@ services:
       AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-local-dev-only-change-AUTH_SECRET_KEY-in-production-min-32-chars}
       RUNTIME_EXECUTOR: ${RUNTIME_EXECUTOR:-go}
       GO_RUNNER_URL: ${GO_RUNNER_URL:-http://runner:8090}
+      CNS_INFRA_TEMPLATES_ROOT: /opt/cns/infra_templates
+      CNS_ANSIBLE_PLAYBOOKS_ROOT: /opt/cns/ansible_playbooks
     networks: [cns]
     depends_on:
       postgres:

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.deployment_target import DeploymentTarget
     from app.models.external_deployment import ExternalDeployment
     from app.models.external_deployment_job import ExternalDeploymentJob
+    from app.models.infrastructure_deployment import InfrastructureDeployment
     from app.models.project_invitation import ProjectInvitation
     from app.models.project_membership import ProjectMembership
     from app.models.topology import Topology
@@ -77,6 +78,11 @@ class Project(Base):
         passive_deletes=True,
     )
     external_deployments: Mapped[list["ExternalDeployment"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    infrastructure_deployments: Mapped[list["InfrastructureDeployment"]] = relationship(
         back_populates="project",
         cascade="all, delete-orphan",
         passive_deletes=True,

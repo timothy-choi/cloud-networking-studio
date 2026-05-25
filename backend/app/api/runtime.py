@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -14,13 +15,19 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.deployment import DeploymentEvent, DeploymentEventLevel
 from app.models.user import User
-from app.services import runtime_state_service as runtime_svc
+from app.runtime.go_runner_client import effective_runtime_executor
+from app.runtime.runner_operation_history import list_recent_runner_operations
+from app.schemas.runner_status import (
+    RecentRunnerOperationsResponse,
+    RunnerOperationRecordResponse,
+    RunnerStatusDetailResponse,
+)
 from app.services.access_control import (
     get_node_for_user,
     get_topology_for_user,
     require_deployment_editor,
 )
-from app.runtime.go_runner_client import effective_runtime_executor
+from app.services import runtime_state_service as runtime_svc
 from app.schemas.runtime import (
     ReconciliationResponse,
     RuntimeLogsResponse,
@@ -32,6 +39,73 @@ from app.schemas.runtime import (
 router = APIRouter(tags=["runtime"])
 
 _last_runtime_status_error: str | None = None
+
+
+def _runner_detail_from_payload(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "runner_status": data.get("runner_status") or data.get("status"),
+        "status": data.get("status"),
+        "runtime_provider": data.get("runtime_provider"),
+        "docker_reachable": data.get("docker_reachable"),
+        "kubernetes_reachable": data.get("kubernetes_reachable"),
+        "current_context": data.get("current_context") or "",
+        "version": data.get("version"),
+        "git_sha": data.get("git_sha"),
+        "build_time": data.get("build_time"),
+        "supported_operations": data.get("supported_operations") or [],
+        "last_runtime_error": data.get("last_runtime_error"),
+        "message": data.get("message"),
+    }
+
+
+def _fetch_runner_status_detail() -> tuple[dict[str, Any] | None, str | None]:
+    """Returns (runner_payload, error_message)."""
+    from app.runtime.go_runner_client import GoRunnerClient
+
+    try:
+        data = GoRunnerClient.from_settings().get_runner_status()
+    except (httpx.HTTPError, ValueError) as exc:
+        return None, str(exc)[:500]
+    if not isinstance(data, dict):
+        return None, "Go runner returned invalid JSON for /status"
+    return data, None
+
+
+def _runner_status_response(*, checked_at: datetime | None = None) -> RunnerStatusDetailResponse:
+    from app.core.config import settings
+
+    checked = checked_at or datetime.now(UTC)
+    executor = effective_runtime_executor()
+    if executor != "go":
+        return RunnerStatusDetailResponse(
+            runner_reachable=False,
+            runtime_executor=executor,
+            runner_status="not_configured",
+            status="not_configured",
+            message="Go runner is not configured (RUNTIME_EXECUTOR=python)",
+            checked_at=checked,
+        )
+
+    data, err = _fetch_runner_status_detail()
+    if data is None:
+        msg = err or "Go runner unavailable"
+        return RunnerStatusDetailResponse(
+            runner_reachable=False,
+            runtime_executor=executor,
+            runner_status="unreachable",
+            status="degraded",
+            message=msg,
+            last_runtime_error=msg,
+            checked_at=checked,
+        )
+
+    detail = _runner_detail_from_payload(data)
+    return RunnerStatusDetailResponse(
+        runner_reachable=True,
+        runtime_executor=executor,
+        checked_at=checked,
+        **detail,
+    )
 
 
 def _python_executor_runtime_status() -> dict[str, Any]:
@@ -91,10 +165,12 @@ def get_runtime_executor_status() -> dict[str, Any]:
     if effective_runtime_executor() == "go":
         from app.runtime.go_runner_client import GoRunnerClient
 
+        checked_at = datetime.now(UTC)
         try:
             data = GoRunnerClient.from_settings().get_runtime_status()
         except (httpx.HTTPError, ValueError):
             _last_runtime_status_error = "Go runner unavailable"
+            runner_block = _runner_status_response(checked_at=checked_at)
             return {
                 **base,
                 "status": "degraded",
@@ -105,6 +181,8 @@ def get_runtime_executor_status() -> dict[str, Any]:
                 "current_context": "",
                 "message": "Go runner unavailable",
                 "last_runtime_error": _last_runtime_status_error,
+                "runner": runner_block.model_dump(mode="json"),
+                "checked_at": checked_at.isoformat(),
             }
         if not isinstance(data, dict):
             raise HTTPException(
@@ -118,10 +196,36 @@ def get_runtime_executor_status() -> dict[str, Any]:
         else:
             _last_runtime_status_error = None
         merged["last_runtime_error"] = _last_runtime_status_error
+        merged["runner"] = _runner_detail_from_payload(data)
+        merged["checked_at"] = checked_at.isoformat()
         return merged
 
     body = {**base, **_python_executor_runtime_status()}
+    body["checked_at"] = datetime.now(UTC).isoformat()
     return body
+
+
+@router.get(
+    "/runtime/runner-status",
+    response_model=RunnerStatusDetailResponse,
+    summary="Go runner observability status",
+)
+def get_runner_status() -> RunnerStatusDetailResponse:
+    """Probe the Go runner process (when RUNTIME_EXECUTOR=go)."""
+    return _runner_status_response()
+
+
+@router.get(
+    "/runtime/operations/recent",
+    response_model=RecentRunnerOperationsResponse,
+    summary="Recent backend → Go runner operations",
+)
+def get_recent_runner_operations(
+    limit: int = Query(default=20, ge=1, le=50),
+) -> RecentRunnerOperationsResponse:
+    rows = list_recent_runner_operations(limit=limit)
+    ops = [RunnerOperationRecordResponse.model_validate(row) for row in rows]
+    return RecentRunnerOperationsResponse(operations=ops, count=len(ops))
 
 
 def _topology_http(session, topology_id: UUID):

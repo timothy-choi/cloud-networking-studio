@@ -52,6 +52,39 @@ When `RUNTIME_EXECUTOR=go` and `runtime_target` is `docker`, the API uses **`GoH
 - **`GET /runtime/status`** (also **`GET /api/runtime/status`** behind Caddy) — public probe, no auth.
   - **`RUNTIME_EXECUTOR=python`** — returns JSON including `backend_status`, `runtime_executor`, `docker_reachable`, and related probe fields.
   - **`RUNTIME_EXECUTOR=go`** — merges JSON from **`GET {GO_RUNNER_URL}/runtime/status`**. If the runner is unreachable, the API still returns **HTTP 200** with `status: degraded`, `runner_reachable: false`, and `message` describing the failure (so dashboards can render without treating the probe as a hard outage). When the runner uses Kubernetes, expect **`kubernetes_reachable`**, **`current_context`**, and **`runtime_provider`** reflecting the runner configuration (see [Kubernetes runtime](KUBERNETES_RUNTIME.md)).
+  - Includes a nested **`runner`** object (version, supported operations) and **`checked_at`** timestamp when executor=go.
+
+- **`GET /runtime/runner-status`** — dedicated Go runner probe (version, build metadata, supported operations, reachability).
+
+- **`GET /runtime/operations/recent`** — in-memory ring buffer of recent backend → runner delegations (`operation`, `duration_ms`, `request_id`, masked errors). No secrets logged.
+
+### Runner HTTP endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /health` | Liveness (`status`, `runner_status`) |
+| `GET /status` | Rich runner status (provider probes, version, supported operations) |
+| `GET /version` | Build metadata (`version`, `git_sha`, `build_time`) |
+| `GET /runtime/status` | Back-compat alias of `/status` shape |
+| `GET /runtime/operations/recent` | Runner-side operation history (in-memory) |
+
+Build metadata is injected at Docker build time via `-ldflags` (`RUNNER_VERSION`, `RUNNER_GIT_SHA`, `RUNNER_BUILD_TIME`).
+
+### Operation tracing
+
+- Backend forwards **`X-Request-ID`** on all runner HTTP calls (including status probes).
+- Backend logs `operation`, `deployment_id`, `topology_id`, `duration_ms`, `status` — never tokens or secrets.
+- Runner middleware logs the same fields for mutating routes (`deploy`, `destroy`, `logs`, `exec`, `health_check`, `traffic_test`).
+
+### Troubleshooting runner unreachable
+
+1. Confirm `RUNTIME_EXECUTOR=go` and `GO_RUNNER_URL` (default `http://runner:8090` in Compose).
+2. From the API container: `curl -s http://runner:8090/health`.
+3. Check runner logs for Docker socket / kubeconfig init errors.
+4. **`GET /runtime/runner-status`** or Platform metrics → **Runtime provider / Go runner** panel shows last error and probe timestamps.
+5. Staging/prod: ensure the `runner` service is in the same Compose project and backend `depends_on` runner.
+
+See [OPERATIONS.md](OPERATIONS.md) for broader runbooks.
 
 ## Docker Compose
 

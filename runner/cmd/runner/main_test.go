@@ -5,11 +5,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/api"
 )
 
-func TestWithRequestIdLoggingReadsHeader(t *testing.T) {
+func TestWithOperationTracingReadsHeader(t *testing.T) {
 	var seen string
-	h := withRequestIdLogging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := api.WithOperationTracing("docker", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = strings.TrimSpace(r.Header.Get("X-Request-ID"))
 		w.WriteHeader(http.StatusOK)
 	}))

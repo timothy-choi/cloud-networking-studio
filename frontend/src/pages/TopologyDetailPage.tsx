@@ -50,7 +50,7 @@ import {
 import { deriveControlPlanePhase } from '../lib/deploymentUiPhase';
 import { formatLinkEdgeLabel } from '../lib/flowTopology';
 import { inferRoutedLabRoles, latestTrafficBetweenSorted, scanDeploymentEventsForRoutedIssues } from '../lib/routedTopology';
-import { deriveRuntimeHealth, hasStoppedContainers } from '../lib/runtimeHealth';
+import { deriveRuntimeHealth, deploymentRuntimeActive, hasStoppedContainers } from '../lib/runtimeHealth';
 import { formatOperatorError, type OperatorErrorPresentation } from '../lib/operatorHints';
 import type { DeploymentStatus } from '../types/deployment';
 
@@ -109,6 +109,8 @@ export function TopologyDetailPage() {
   } = useTopologyRuntime(id || undefined);
 
   const deploymentId = runtime?.latest_deployment_id ?? null;
+  const runtimeActive = deploymentRuntimeActive(runtime);
+  const activeDeploymentId = runtimeActive ? deploymentId : null;
 
   const {
     events,
@@ -147,7 +149,12 @@ export function TopologyDetailPage() {
   const viewerHint =
     'View-only access: ask a project owner or member to deploy, edit, or delete resources.';
   const opLocked = busy !== null || viewerMode;
-  const showDestroy = Boolean(deploymentId && deployAllowsDestroy(deploymentStatus));
+  const showDestroy = Boolean(activeDeploymentId && deployAllowsDestroy(deploymentStatus));
+  const showCleanedUpBanner =
+    Boolean(deploymentId) &&
+    !runtimeActive &&
+    (runtime?.status === 'destroyed' || deploymentStatus === 'stopped');
+  const noActiveDeploymentHint = runtimeActive ? null : 'No active deployment.';
   const degraded = hasStoppedContainers(runtime);
   const healthTier = deriveRuntimeHealth(runtime, topology?.status ?? 'draft');
 
@@ -314,7 +321,7 @@ export function TopologyDetailPage() {
             <div className="mt-3">
               <RuntimeHealthBadges
                 topologyStatus={topology.status}
-                deploymentStatus={deploymentStatus}
+                deploymentStatus={runtimeActive ? deploymentStatus : 'stopped'}
                 runtimeTier={healthTier}
                 pollLive
               />
@@ -446,7 +453,17 @@ export function TopologyDetailPage() {
         </div>
       )}
 
-      {runtime?.topology_sync_status === 'out_of_sync' && deploymentId ? (
+      {showCleanedUpBanner ? (
+        <div
+          role="alert"
+          className="rounded-lg border border-zinc-400/60 bg-zinc-50 px-4 py-3 text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-900/50 dark:text-zinc-100"
+        >
+          <strong className="font-semibold">Deployment was cleaned up/destroyed.</strong>{' '}
+          {runtime?.message ?? 'Redeploy to create runtime resources again.'}
+        </div>
+      ) : null}
+
+      {runtime?.topology_sync_status === 'out_of_sync' && runtimeActive && deploymentId ? (
         <div
           role="alert"
           className="rounded-lg border border-amber-500/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-600 dark:bg-amber-950/35 dark:text-amber-100"
@@ -509,8 +526,13 @@ export function TopologyDetailPage() {
         />
       ) : null}
 
-      {topology && deploymentId ? (
-        <RuntimeAccessPanel deploymentId={deploymentId} viewerMode={viewerMode} />
+      {topology && activeDeploymentId ? (
+        <RuntimeAccessPanel deploymentId={activeDeploymentId} viewerMode={viewerMode} />
+      ) : topology && deploymentId && !runtimeActive ? (
+        <SectionEmptyState
+          title="No active deployment"
+          description="Runtime resources were cleaned up or destroyed. Deploy again to access endpoints, logs, and traffic tests."
+        />
       ) : null}
 
       {topology && (
@@ -618,10 +640,12 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !hostTarget}
+            disabled={opLocked || !runtimeActive || !hostTarget}
             title={
               viewerMode
                 ? viewerHint
+                : !runtimeActive
+                  ? noActiveDeploymentHint ?? undefined
                 : busy !== null
                   ? 'Wait for the current action to finish.'
                   : !hostTarget
@@ -643,10 +667,12 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !hostTarget}
+            disabled={opLocked || !runtimeActive || !hostTarget}
             title={
               viewerMode
                 ? viewerHint
+                : !runtimeActive
+                  ? noActiveDeploymentHint ?? undefined
                 : busy !== null
                   ? 'Wait for the current action to finish.'
                   : !hostTarget
@@ -669,10 +695,12 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !serviceNode}
+            disabled={opLocked || !runtimeActive || !serviceNode}
             title={
               viewerMode
                 ? viewerHint
+                : !runtimeActive
+                  ? noActiveDeploymentHint ?? undefined
                 : busy !== null
                   ? 'Wait for the current action to finish.'
                   : !serviceNode
@@ -693,19 +721,19 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !deploymentId}
+            disabled={opLocked || !activeDeploymentId}
             title={
               viewerMode
                 ? viewerHint
                 : busy !== null
                   ? 'Wait for the current action to finish.'
-                  : !deploymentId
-                    ? 'Deploy the topology first so there is an active deployment.'
+                  : !activeDeploymentId
+                    ? noActiveDeploymentHint ?? 'Deploy the topology first so there is an active deployment.'
                     : undefined
             }
             onClick={() =>
               wrap('reconcile', async () => {
-                await reconcileDeployment(deploymentId!);
+                await reconcileDeployment(activeDeploymentId!);
               })
             }
             className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-50 cns-disabled-control dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
@@ -714,21 +742,21 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !deploymentId}
+            disabled={opLocked || !activeDeploymentId}
             title={
               viewerMode
                 ? viewerHint
                 : busy !== null
                   ? 'Wait for the current action to finish.'
-                  : !deploymentId
-                    ? 'Deploy the topology first — heal applies to the latest deployment.'
+                  : !activeDeploymentId
+                    ? noActiveDeploymentHint ?? 'Deploy the topology first — heal applies to the latest deployment.'
                     : degraded
                       ? 'Runs orchestrator heal — recommended when workloads are stopped.'
                       : undefined
             }
             onClick={() =>
               wrap('heal', async () => {
-                await healDeployment(deploymentId!);
+                await healDeployment(activeDeploymentId!);
               })
             }
             className={`rounded-lg border px-4 py-2 text-sm font-semibold shadow-sm cns-disabled-control motion-safe:transition ${
@@ -739,14 +767,14 @@ export function TopologyDetailPage() {
           >
             Heal deployment
           </button>
-          {showDestroy && deploymentId && (
+          {showDestroy && activeDeploymentId && (
             <button
               type="button"
               disabled={opLocked}
               title={viewerMode ? viewerHint : busy !== null ? 'Wait for the current action to finish.' : undefined}
               onClick={() =>
                 wrap('destroy', async () => {
-                  await destroyDeployment(deploymentId);
+                  await destroyDeployment(activeDeploymentId);
                 })
               }
               className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-900 hover:bg-red-100 cns-disabled-control dark:border-red-900 dark:bg-red-950/50 dark:text-red-200 dark:hover:bg-red-950/80"
@@ -864,8 +892,14 @@ export function TopologyDetailPage() {
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={opLocked || !canDirectedTraffic}
-            title={!canDirectedTraffic ? 'Pick two different nodes as source and target.' : undefined}
+            disabled={opLocked || !runtimeActive || !canDirectedTraffic}
+            title={
+              !runtimeActive
+                ? noActiveDeploymentHint ?? undefined
+                : !canDirectedTraffic
+                  ? 'Pick two different nodes as source and target.'
+                  : undefined
+            }
             onClick={() =>
               wrap('ping-sel', async () => {
                 await runPingTest(id, { source_node_id: trafficSrc, target_node_id: trafficTgt, count: 3 });
@@ -877,8 +911,14 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !canDirectedTraffic}
-            title={!canDirectedTraffic ? 'Pick two different nodes as source and target.' : undefined}
+            disabled={opLocked || !runtimeActive || !canDirectedTraffic}
+            title={
+              !runtimeActive
+                ? noActiveDeploymentHint ?? undefined
+                : !canDirectedTraffic
+                  ? 'Pick two different nodes as source and target.'
+                  : undefined
+            }
             onClick={() =>
               wrap('http-sel', async () => {
                 await runHttpTest(id, {
@@ -895,7 +935,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !routedRoles.host || !routedRoles.router}
+            disabled={opLocked || !runtimeActive || !routedRoles.host || !routedRoles.router}
             onClick={() =>
               wrap('ping-host-router', async () => {
                 await runPingTest(id, {
@@ -911,7 +951,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !routedRoles.host || !routedRoles.router}
+            disabled={opLocked || !runtimeActive || !routedRoles.host || !routedRoles.router}
             onClick={() =>
               wrap('ping-router-host', async () => {
                 await runPingTest(id, {
@@ -927,7 +967,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !routedRoles.router || !routedRoles.service}
+            disabled={opLocked || !runtimeActive || !routedRoles.router || !routedRoles.service}
             onClick={() =>
               wrap('ping-router-svc', async () => {
                 await runPingTest(id, {
@@ -943,7 +983,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !routedRoles.host || !routedRoles.service}
+            disabled={opLocked || !runtimeActive || !routedRoles.host || !routedRoles.service}
             onClick={() =>
               wrap('routed-ping', async () => {
                 await runPingTest(id, {
@@ -959,7 +999,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !routedRoles.host || !routedRoles.service}
+            disabled={opLocked || !runtimeActive || !routedRoles.host || !routedRoles.service}
             onClick={() =>
               wrap('routed-http', async () => {
                 await runHttpTest(id, {
@@ -976,7 +1016,7 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !routedRoles.service || !routedRoles.host}
+            disabled={opLocked || !runtimeActive || !routedRoles.service || !routedRoles.host}
             onClick={() =>
               wrap('ping-svc-host', async () => {
                 await runPingTest(id, {
@@ -992,10 +1032,10 @@ export function TopologyDetailPage() {
           </button>
           <button
             type="button"
-            disabled={opLocked || !routedRoles.router || !deploymentId}
+            disabled={opLocked || !runtimeActive || !routedRoles.router}
             title={
-              !deploymentId
-                ? 'Deploy first so the router container exists.'
+              !runtimeActive
+                ? noActiveDeploymentHint ?? undefined
                 : !routedRoles.router
                   ? 'No router node in this topology.'
                   : undefined
@@ -1098,7 +1138,14 @@ export function TopologyDetailPage() {
       <DeploymentLifecycleTimeline events={events} trafficTests={trafficTests} failures={failures} />
       {deploymentId ? <DeploymentOperationTimeline deploymentId={deploymentId} /> : null}
       {deploymentId ? (
-        <DeploymentCleanupPanel deploymentId={deploymentId} viewerMode={viewerMode} />
+        <DeploymentCleanupPanel
+          deploymentId={deploymentId}
+          viewerMode={viewerMode}
+          onCleanupComplete={({ message }) => {
+            if (message) setPageToast(message);
+            void refreshLive();
+          }}
+        />
       ) : null}
       {deploymentId ? <DeploymentMetricsPanel deploymentId={deploymentId} /> : null}
 

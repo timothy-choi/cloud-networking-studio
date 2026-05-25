@@ -7,9 +7,11 @@ import { ApiErrorDisplay } from '../errors/ApiErrorDisplay';
 export function DeploymentCleanupPanel({
   deploymentId,
   viewerMode,
+  onCleanupComplete,
 }: {
   deploymentId: string | null;
   viewerMode?: boolean;
+  onCleanupComplete?: (result: { message?: string | null; partial?: boolean }) => void;
 }) {
   const [status, setStatus] = useState<DeploymentCleanupStatusResponse | null>(null);
   const [err, setErr] = useState<unknown>(null);
@@ -43,7 +45,13 @@ export function DeploymentCleanupPanel({
     setErr(null);
     try {
       const out = await runDeploymentCleanup(deploymentId);
-      setNote(out.ok ? 'Cleanup completed (best-effort).' : 'Cleanup finished with warnings.');
+      const msg =
+        out.message ??
+        (out.partial
+          ? 'Cleanup partially completed; some resources remain.'
+          : 'Cleanup completed; deployment marked destroyed.');
+      setNote(msg);
+      onCleanupComplete?.({ message: msg, partial: out.partial });
       await load();
     } catch (e) {
       setErr(e);
@@ -60,13 +68,22 @@ export function DeploymentCleanupPanel({
       </div>
       <div className="space-y-2 px-3 py-3 text-xs">
         {err ? <ApiErrorDisplay error={err} /> : null}
-        {note ? <p className="text-emerald-800 dark:text-emerald-300">{note}</p> : null}
+        {note ? (
+          <p className={note.includes('partial') ? 'text-amber-800 dark:text-amber-300' : 'text-emerald-800 dark:text-emerald-300'}>
+            {note}
+          </p>
+        ) : null}
         {status ? (
           <>
             <div className="flex flex-wrap gap-2">
               <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] dark:bg-zinc-800">
                 status: {status.status}
               </span>
+              {status.cleanup_status ? (
+                <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] dark:bg-zinc-800">
+                  cleanup: {status.cleanup_status}
+                </span>
+              ) : null}
               {status.expired ? (
                 <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-900 dark:bg-amber-950 dark:text-amber-200">
                   TTL expired
@@ -87,17 +104,22 @@ export function DeploymentCleanupPanel({
               <dd className="text-right text-zinc-800 dark:text-zinc-200">
                 {status.deployment_ttl_hours > 0 ? status.deployment_ttl_hours : 'disabled'}
               </dd>
-              {status.expires_at ? (
+              {status.last_cleanup_at ? (
                 <>
-                  <dt>Expires</dt>
+                  <dt>Last cleanup</dt>
                   <dd className="text-right font-mono text-[10px] text-zinc-800 dark:text-zinc-200">
-                    {new Date(status.expires_at).toLocaleString()}
+                    {new Date(status.last_cleanup_at).toLocaleString()}
                   </dd>
                 </>
               ) : null}
             </dl>
             {status.reasons.length > 0 ? (
               <p className="text-[11px] text-cns-muted">Reasons: {status.reasons.join(', ')}</p>
+            ) : null}
+            {!status.eligible_for_cleanup && status.cleanup_status === 'clean' ? (
+              <p className="text-[11px] text-cns-muted">
+                Resources cleaned — redeploy to create runtime workloads again.
+              </p>
             ) : null}
           </>
         ) : !err ? (

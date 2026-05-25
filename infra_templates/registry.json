@@ -1,0 +1,50 @@
+{
+  "templates": {
+    "local-mock": {
+      "description": "Local mock VM for development and CI (no cloud credentials).",
+      "supported_providers": ["local", "mock"],
+      "terraform_dir": "local-mock",
+      "ansible_playbooks": ["install-docker", "install-docker-compose", "cns-runtime-dirs"]
+    },
+    "gcp-vm": {
+      "description": "GCP Compute Engine VM with Docker runtime preparation.",
+      "supported_providers": ["gcp"],
+      "terraform_dir": "gcp-vm",
+      "ansible_playbooks": ["install-docker", "install-docker-compose", "cns-runtime-dirs"]
+    },
+    "aws-ec2": {
+      "description": "AWS EC2 instance with Docker runtime preparation.",
+      "supported_providers": ["aws"],
+      "terraform_dir": "aws-ec2",
+      "ansible_playbooks": ["install-docker", "install-docker-compose", "cns-runtime-dirs"]
+    },
+    "docker-vm": {
+      "description": "Generic Docker-ready VM (provider-agnostic module composition).",
+      "supported_providers": ["local", "mock", "gcp", "aws"],
+      "terraform_dir": "docker-vm",
+      "ansible_playbooks": ["install-docker", "install-docker-compose", "cns-runtime-dirs"]
+    }
+  },
+  "playbooks": {
+    "install-docker": {
+      "file": "install-docker.yml",
+      "description": "Install Docker engine on target hosts."
+    },
+    "install-docker-compose": {
+      "file": "install-docker-compose.yml",
+      "description": "Install Docker Compose plugin."
+    },
+    "cns-runtime-dirs": {
+      "file": "cns-runtime-dirs.yml",
+      "description": "Create CNS runtime directories on hosts."
+    },
+    "monitoring-agent-placeholder": {
+      "file": "monitoring-agent-placeholder.yml",
+      "description": "Placeholder monitoring agent configuration."
+    },
+    "firewall-placeholder": {
+      "file": "firewall-placeholder.yml",
+      "description": "Placeholder firewall configuration."
+    }
+  }
+}

@@ -96,6 +96,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /deployments/{id}/logs", s.handleDeploymentLogs)
 	mux.HandleFunc("GET /deployments/{id}", s.handleGetDeploymentID)
 	mux.HandleFunc("POST /traffic-tests", s.handleTraffic)
+	mux.HandleFunc("POST /infra/executions", s.handlePostInfraExecution)
 	return mux
 }
 
@@ -104,7 +105,7 @@ func (s *Server) ctx(r *http.Request) (context.Context, context.CancelFunc) {
 }
 
 func (s *Server) supportedOperations() []string {
-	ops := []string{"deploy", "destroy", "logs", "exec", "health_check", "traffic_test", "terminal"}
+	ops := []string{"deploy", "destroy", "logs", "exec", "health_check", "traffic_test", "terminal", "infra_terraform", "infra_ansible"}
 	if s.provider == "kubernetes" {
 		// Terminal attach is backend/docker-py today; runner handles cluster exec paths.
 		return ops

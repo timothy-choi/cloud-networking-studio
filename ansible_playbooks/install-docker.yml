@@ -1,0 +1,23 @@
+---
+# Whitelisted playbook: install Docker engine (Step 57C).
+- name: Install Docker
+  hosts: cns_runtime
+  become: true
+  tasks:
+    - name: Ensure apt cache is updated
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Install docker.io package (placeholder)
+      ansible.builtin.package:
+        name: docker.io
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Ensure docker service is enabled
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+      ignore_errors: true

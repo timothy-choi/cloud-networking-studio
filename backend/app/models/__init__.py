@@ -38,6 +38,8 @@ from app.models.deployment_profile import DeploymentProfile
 from app.models.deployment_target import DeploymentTarget
 from app.models.external_deployment import ExternalDeployment
 from app.models.external_deployment_job import ExternalDeploymentJob
+from app.models.infrastructure_deployment import InfrastructureDeployment
+from app.models.infrastructure_execution import InfrastructureExecution
 from app.models.topology_version import TopologyVersion
 from app.models.traffic_test import TrafficTest, TrafficTestResult, TrafficTestStatus, TrafficTestType
 from app.models.failure_injection import (
@@ -62,6 +64,8 @@ __all__ = [
     "DeploymentTarget",
     "ExternalDeployment",
     "ExternalDeploymentJob",
+    "InfrastructureDeployment",
+    "InfrastructureExecution",
     "TopologyVersion",
     "DeploymentEvent",
     "DeploymentEventLevel",

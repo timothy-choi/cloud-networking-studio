@@ -119,7 +119,13 @@ def test_create_validate_job_and_logs(client_strict, monkeypatch, tmp_path):
 def test_plan_job_returns_artifact_refs(client_strict):
     h = _register(client_strict)
     pid, tid = _project_and_topology(client_strict, h)
-    target = _create_target(client_strict, h, pid, target_type="terraform")
+    target = _create_target(
+        client_strict,
+        h,
+        pid,
+        target_type="kubernetes",
+        config_json={"namespace": "cns-lab", "context": "staging"},
+    )
 
     jr = client_strict.post(
         f"/topologies/{tid}/external-deployment-jobs",
@@ -131,6 +137,7 @@ def test_plan_job_returns_artifact_refs(client_strict):
     assert job["status"] == "succeeded"
     assert job["artifact_refs"]
     assert job["artifact_refs"][0]["type"] == "plan_summary"
+    assert job["artifact_refs"][0]["target_type"] == "kubernetes"
 
 
 def test_apply_mode_rejected_for_non_remote_docker(client_strict):
@@ -140,8 +147,8 @@ def test_apply_mode_rejected_for_non_remote_docker(client_strict):
         client_strict,
         h,
         pid,
-        target_type="terraform",
-        config_json={"backend": "local"},
+        target_type="kubernetes",
+        config_json={"namespace": "cns-lab", "context": "staging"},
     )
 
     jr = client_strict.post(
@@ -151,6 +158,25 @@ def test_apply_mode_rejected_for_non_remote_docker(client_strict):
     )
     assert jr.status_code == 400
     assert "not enabled" in jr.json()["detail"].lower()
+
+
+def test_legacy_infra_target_types_rejected_at_create(client_strict):
+    h = _register(client_strict)
+    pid, _ = _project_and_topology(client_strict, h)
+
+    for target_type, config_json in (
+        ("terraform", {"backend": "local"}),
+        ("ansible", {"host": "10.0.0.1"}),
+    ):
+        r = client_strict.post(
+            f"/projects/{pid}/deployment-targets",
+            headers=h,
+            json={"name": f"Legacy {target_type}", "target_type": target_type, "config_json": config_json},
+        )
+        assert r.status_code == 400, r.text
+        detail = r.json()["detail"]
+        assert "runtime target" in detail.lower()
+        assert "Infrastructure Deployments" in detail
 
 
 def test_viewer_cannot_create_target_or_job(client_strict, monkeypatch):
@@ -201,9 +227,14 @@ def test_secrets_scrubbed_from_target_config(client_strict):
         headers=h,
         json={
             "name": "Secret host",
-            "target_type": "ansible",
-            "config_json": {"password": "super-secret", "host": "10.0.0.1"},
-            "credentials_ref": "env:ANSIBLE_VAULT",
+            "target_type": "remote_docker",
+            "config_json": {
+                "password": "super-secret",
+                "host": "10.0.0.1",
+                "ssh_user": "ubuntu",
+                "remote_workdir": "/opt/cns-external-deployments",
+            },
+            "credentials_ref": "env:CNS_EXTERNAL_DEPLOY_SSH_KEY_PATH",
         },
     )
     assert r.status_code == 201, r.text

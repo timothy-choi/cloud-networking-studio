@@ -1,6 +1,6 @@
 """Add external_deployments table (Step 57B).
 
-Revision ID: 20260531_external_deployment_remote
+Revision ID: 20260531_ext_deployments
 Revises: 20260530_external_deploy
 """
 
@@ -11,7 +11,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "20260531_external_deployment_remote"
+revision: str = "20260531_ext_deployments"
 down_revision: Union[str, None] = "20260530_external_deploy"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

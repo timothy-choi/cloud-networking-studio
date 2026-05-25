@@ -113,6 +113,9 @@ async def lifespan(app: FastAPI):
     with SessionLocal() as db:
         expire_stale_terminal_sessions(db)
         db.commit()
+    from app.services.remote_ssh_runtime import log_remote_ssh_runtime_status
+
+    log_remote_ssh_runtime_status()
     yield
 
 

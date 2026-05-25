@@ -51,20 +51,65 @@ Compose project name: `cns-ext-{job_id[:8]}`
 
 SSH private keys are **never** stored in `config_json` or the database.
 
-Supported references (dev/local):
+Supported references:
 
 | Reference | Resolution |
 |-----------|------------|
-| `dev:default` | Server env `CNS_EXTERNAL_DEPLOY_SSH_KEY_PATH` → path to PEM file |
-| `env:VAR_NAME` | Server env `VAR_NAME` → path to PEM file |
+| `env:CNS_REMOTE_DOCKER_SSH_KEY_PATH` | Server env → path to PEM file (recommended for staging/prod) |
+| `env:VAR_NAME` | Any server env var → path to PEM file |
+| `dev:default` | `CNS_REMOTE_DOCKER_SSH_KEY_PATH` or `CNS_EXTERNAL_DEPLOY_SSH_KEY_PATH` |
 
-Example production setup:
+### Staging / production credential setup
 
-```bash
-export CNS_EXTERNAL_DEPLOY_SSH_KEY_PATH=/run/secrets/cns-external-ssh.pem
+The backend container includes **`openssh-client`** (`ssh` and `scp` binaries) and mounts host secrets read-only:
+
+```yaml
+# docker-compose.prod.yml (backend service)
+environment:
+  CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-}
+volumes:
+  - /opt/cns/secrets:/opt/cns/secrets:ro
 ```
 
-Target `credentials_ref`: `dev:default` or `env:CNS_EXTERNAL_DEPLOY_SSH_KEY_PATH`
+**One-time on the CNS host (staging EC2 or production):**
+
+```bash
+sudo install -d -m 0750 /opt/cns/secrets
+sudo install -m 0600 /path/to/private-key.pem /opt/cns/secrets/gcp-remote-docker-key
+sudo chown ubuntu:ubuntu /opt/cns/secrets/gcp-remote-docker-key
+```
+
+**Staging deploy** writes `.env.staging` on each deploy with a non-empty path:
+
+```bash
+CNS_REMOTE_DOCKER_SSH_KEY_PATH=/opt/cns/secrets/gcp-remote-docker-key
+```
+
+Resolution order in `scripts/staging_deploy_remote.sh`:
+
+1. GitHub variable/secret `CNS_REMOTE_DOCKER_SSH_KEY_PATH` (if set)
+2. Existing non-empty value in `.env.staging` (never overwritten with blank)
+3. Default `/opt/cns/secrets/gcp-remote-docker-key`
+
+Set repository variable `CNS_REMOTE_DOCKER_SSH_KEY_PATH` to override the default path.
+
+Target `credentials_ref`: `env:CNS_REMOTE_DOCKER_SSH_KEY_PATH`
+
+### Add public key to remote Docker VM
+
+On the **target** host (e.g. GCP VM), install the **public** key for the private key mounted in CNS:
+
+```bash
+# On your laptop — copy public key material (never commit private keys)
+ssh-copy-id -i /path/to/key.pub ubuntu@YOUR_GCP_VM_IP
+
+# Or manually on the target VM:
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+echo 'ssh-ed25519 AAAA...your-public-key...' >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+Ensure Docker and Compose v2 are installed and the SSH user can run `docker compose` without a TTY.
 
 ## Remote host setup
 
@@ -127,12 +172,27 @@ Both can coexist; external deploy does not stop or replace internal runtime depl
 
 ## Troubleshooting
 
-| Symptom | Check |
-|---------|-------|
-| Validate fails: missing config | Ensure `host`, `ssh_user`, `remote_workdir` in config |
-| credentials_ref error | Set `CNS_EXTERNAL_DEPLOY_SSH_KEY_PATH` or `env:VAR` on API server |
-| SSH connection refused | Security group / firewall, `ssh_port`, host reachable from API |
-| docker compose failed | Remote user in `docker` group; compose plugin installed |
-| Destroy disabled | No active external deployment for selected target |
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `credentials_ref env:CNS_REMOTE_DOCKER_SSH_KEY_PATH is not set on the server` | Env var blank in backend container | Set in `.env.staging` / `.env`; redeploy backend; verify `printenv CNS_REMOTE_DOCKER_SSH_KEY_PATH` |
+| `SSH key path is configured but not readable by backend container` | Key missing or wrong permissions | Install key at configured path; mode `0600`; ensure `/opt/cns/secrets` is mounted |
+| `SSH/SCP client is missing from backend container` | Old backend image without `openssh-client` | Rebuild backend image (`docker compose up -d --build backend`) |
+| `SSH permission denied. Check public key is installed for ssh_user on target host.` | Public key not in target `authorized_keys` | Run `ssh-copy-id` or add pubkey to target VM |
+| Validate fails: missing config | Incomplete target config | Ensure `host`, `ssh_user`, `remote_workdir` |
+| SSH connection refused | Network/firewall | Security group, `ssh_port`, routing from CNS host to target |
+| docker compose failed on remote | Docker not installed or user lacks docker group | Install Docker Compose plugin; add user to `docker` group |
+| Destroy disabled | No active external deployment | Apply first, or select correct target |
 
-Job logs include masked output from SSH/SCP and compose commands — never raw key material.
+### Staging deploy verification (safe checks)
+
+After **Deploy staging**, the remote script prints (no key contents):
+
+```bash
+grep CNS_REMOTE_DOCKER_SSH_KEY_PATH .env.staging
+docker compose exec backend printenv CNS_REMOTE_DOCKER_SSH_KEY_PATH
+docker compose exec backend test -r "$CNS_REMOTE_DOCKER_SSH_KEY_PATH"
+docker compose exec backend command -v ssh
+docker compose exec backend command -v scp
+```
+
+Job logs include masked SSH/SCP output — never raw private key material.

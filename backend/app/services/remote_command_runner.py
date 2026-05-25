@@ -6,6 +6,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.services.remote_ssh_runtime import ensure_ssh_client_installed, raise_for_ssh_failure
+
 
 @dataclass(frozen=True)
 class RemoteCommandResult:
@@ -71,14 +73,18 @@ class SubprocessRemoteCommandRunner:
         *,
         timeout_seconds: int = 120,
     ) -> RemoteCommandResult:
+        ensure_ssh_client_installed()
         cmd = self._ssh_base(conn) + [remote_command]
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError("SSH/SCP client is missing from backend container") from exc
         return RemoteCommandResult(proc.returncode, proc.stdout or "", proc.stderr or "")
 
     def upload_files(
@@ -89,9 +95,10 @@ class SubprocessRemoteCommandRunner:
         *,
         timeout_seconds: int = 120,
     ) -> RemoteCommandResult:
-        mkdir = self.run_ssh(conn, f"mkdir -p {remote_dir}", timeout_seconds=timeout_seconds)
+        ensure_ssh_client_installed()
+        mkdir = self._run_ssh_no_raise(conn, f"mkdir -p {remote_dir}", timeout_seconds=timeout_seconds)
         if not mkdir.ok:
-            return mkdir
+            raise_for_ssh_failure(mkdir, context="SSH mkdir")
         scp_base = [
             "scp",
             "-i",
@@ -107,18 +114,39 @@ class SubprocessRemoteCommandRunner:
         errors: list[str] = []
         for local_path, remote_name in local_paths:
             remote_target = f"{conn.user}@{conn.host}:{remote_dir}/{remote_name}"
-            proc = subprocess.run(
-                scp_base + [local_path, remote_target],
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
-            )
+            try:
+                proc = subprocess.run(
+                    scp_base + [local_path, remote_target],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                    check=False,
+                )
+            except FileNotFoundError as exc:
+                raise ValueError("SSH/SCP client is missing from backend container") from exc
             outputs.append(proc.stdout or "")
             errors.append(proc.stderr or "")
             if proc.returncode != 0:
-                return RemoteCommandResult(proc.returncode, "\n".join(outputs), "\n".join(errors))
+                result = RemoteCommandResult(proc.returncode, "\n".join(outputs), "\n".join(errors))
+                raise_for_ssh_failure(result, context="SCP upload")
         return RemoteCommandResult(0, "\n".join(outputs), "\n".join(errors))
+
+    def _run_ssh_no_raise(
+        self,
+        conn: RemoteHostConnection,
+        remote_command: str,
+        *,
+        timeout_seconds: int = 120,
+    ) -> RemoteCommandResult:
+        cmd = self._ssh_base(conn) + [remote_command]
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        return RemoteCommandResult(proc.returncode, proc.stdout or "", proc.stderr or "")
 
 
 _runner: RemoteCommandRunner | None = None

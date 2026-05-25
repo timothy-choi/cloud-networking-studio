@@ -21,6 +21,7 @@ from app.services import external_deployment_service as ext_dep_svc
 from app.services import topology_iac_export_service as iac_svc
 from app.services.remote_command_runner import RemoteHostConnection, get_remote_command_runner
 from app.services.remote_credentials_service import resolve_ssh_key_path
+from app.services.remote_ssh_runtime import ensure_ssh_client_installed, raise_for_ssh_failure
 
 DOCKER_COMPOSE_FILENAME = iac_svc.DOCKER_COMPOSE_FILENAME
 ENV_FILENAME = ".env.cns"
@@ -153,6 +154,7 @@ def execute_validate(
 ) -> tuple[str, list[dict[str, Any]]]:
     log = JobLogBuffer()
     log.append(f"[remote-docker] validate job={job.id}")
+    ensure_ssh_client_installed()
     cfg = parse_remote_docker_config(target.config_json)
     log.append(f"[remote-docker] host={cfg.host} user={cfg.ssh_user} port={cfg.ssh_port}")
 
@@ -173,7 +175,7 @@ def execute_validate(
         if result.stderr.strip():
             log.append(result.stderr.strip())
         if not result.ok:
-            raise ValueError(f"Remote check failed ({label}): exit {result.exit_code}")
+            raise_for_ssh_failure(result, context=label)
 
     bundle = iac_svc.load_topology_export_bundle(db, topology.id)
     warnings, unsupported, todos = iac_svc.validate_topology_export(bundle)
@@ -243,6 +245,7 @@ def execute_apply(
 ) -> tuple[str, list[dict[str, Any]]]:
     log = JobLogBuffer()
     log.append(f"[remote-docker] apply job={job.id}")
+    ensure_ssh_client_installed()
     cfg = parse_remote_docker_config(target.config_json)
     conn = _connection(target, cfg)
     runner = get_remote_command_runner()
@@ -280,8 +283,6 @@ def execute_apply(
         upload_result = runner.upload_files(conn, uploads, remote_dir)
         if upload_result.stdout.strip():
             log.append(upload_result.stdout.strip())
-        if not upload_result.ok:
-            raise ValueError(f"SCP upload failed: exit {upload_result.exit_code}")
 
     compose_cmd = (
         f"cd {remote_dir} && docker compose -f {DOCKER_COMPOSE_FILENAME} "
@@ -335,6 +336,7 @@ def execute_destroy(
 ) -> tuple[str, list[dict[str, Any]]]:
     log = JobLogBuffer()
     log.append(f"[remote-docker] destroy job={job.id}")
+    ensure_ssh_client_installed()
     cfg = parse_remote_docker_config(target.config_json)
     conn = _connection(target, cfg)
     runner = get_remote_command_runner()

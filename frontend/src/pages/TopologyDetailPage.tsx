@@ -34,6 +34,7 @@ import { Spinner } from '../components/Spinner';
 import { TopologyWorkspace } from '../components/topology/TopologyWorkspace';
 import { TopologyVersionsPanel } from '../components/topology/TopologyVersionsPanel';
 import { DeploymentProfilesPanel } from '../components/topology/DeploymentProfilesPanel';
+import { ExternalDeploymentsPanel } from '../components/topology/ExternalDeploymentsPanel';
 import { DeployModal } from '../components/topology/DeployModal';
 import { IaCExportPanel } from '../components/topology/IaCExportPanel';
 import { TrafficValidationSection } from '../components/traffic/TrafficValidationSection';
@@ -513,6 +514,16 @@ export function TopologyDetailPage() {
           <DeploymentProfilesPanel topologyId={id} readOnly={viewerMode} isOwner={isOwner} />
         </CollapsibleSection>
       )}
+
+      {topology?.project_id ? (
+        <CollapsibleSection title="External Deployments" defaultOpen={false}>
+          <ExternalDeploymentsPanel
+            topologyId={id}
+            projectId={topology.project_id}
+            readOnly={viewerMode}
+          />
+        </CollapsibleSection>
+      ) : null}
 
       {topology && !deploymentId ? (
         <SectionEmptyState

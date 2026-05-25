@@ -12,6 +12,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 
 if TYPE_CHECKING:
+    from app.models.deployment_target import DeploymentTarget
+    from app.models.external_deployment_job import ExternalDeploymentJob
     from app.models.project_invitation import ProjectInvitation
     from app.models.project_membership import ProjectMembership
     from app.models.topology import Topology
@@ -59,6 +61,16 @@ class Project(Base):
         passive_deletes=True,
     )
     invitations: Mapped[list["ProjectInvitation"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    deployment_targets: Mapped[list["DeploymentTarget"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    external_deployment_jobs: Mapped[list["ExternalDeploymentJob"]] = relationship(
         back_populates="project",
         cascade="all, delete-orphan",
         passive_deletes=True,

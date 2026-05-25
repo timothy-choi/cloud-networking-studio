@@ -25,6 +25,8 @@ from app.api.topologies import router as topologies_router
 from app.api.topology_exports import router as topology_exports_router
 from app.api.topology_versions import router as topology_versions_router
 from app.api.deployment_profiles import router as deployment_profiles_router
+from app.api.deployment_targets import router as deployment_targets_router
+from app.api.external_deployment_jobs import router as external_deployment_jobs_router
 from app.api.traffic_tests import router as traffic_tests_router
 from app.core.config import settings
 from app.db.session import Base, engine
@@ -131,6 +133,8 @@ app.include_router(project_invitations_router)
 app.include_router(topologies_router)
 app.include_router(topology_versions_router)
 app.include_router(deployment_profiles_router)
+app.include_router(deployment_targets_router)
+app.include_router(external_deployment_jobs_router)
 app.include_router(topology_exports_router)
 app.include_router(templates_router)
 app.include_router(deployments_router)

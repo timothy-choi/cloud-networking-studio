@@ -27,6 +27,7 @@ class RunnerOperationRecord:
     deployment_id: str | None
     topology_id: str | None
     error_message: str | None
+    status_code: int | None
     created_at: datetime
 
 
@@ -54,6 +55,7 @@ def record_runner_operation(
     deployment_id: UUID | str | None = None,
     topology_id: UUID | str | None = None,
     error_message: str | None = None,
+    status_code: int | None = None,
 ) -> None:
     dep = str(deployment_id) if deployment_id is not None else None
     topo = str(topology_id) if topology_id is not None else None
@@ -66,6 +68,7 @@ def record_runner_operation(
         deployment_id=dep,
         topology_id=topo,
         error_message=_mask_error(error_message),
+        status_code=int(status_code) if status_code is not None else None,
         created_at=datetime.now(UTC),
     )
     with _lock:
@@ -89,6 +92,7 @@ def list_recent_runner_operations(limit: int = 20) -> list[dict[str, Any]]:
             "deployment_id": r.deployment_id,
             "topology_id": r.topology_id,
             "error_message": r.error_message,
+            "status_code": r.status_code,
             "created_at": r.created_at.isoformat(),
         }
         for r in rows

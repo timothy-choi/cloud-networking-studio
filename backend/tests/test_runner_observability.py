@@ -26,7 +26,12 @@ def test_runner_status_unreachable_when_executor_go(client, monkeypatch):
     body = r.json()
     assert body["runner_reachable"] is False
     assert body["runtime_executor"] == "go"
-    assert "unavailable" in (body.get("message") or "").lower() or body.get("last_runtime_error")
+    err = body.get("last_runtime_error")
+    assert err is None or isinstance(err, dict)
+    if isinstance(err, dict):
+        assert "unavailable" in (err.get("message") or "").lower()
+    else:
+        assert "unavailable" in (body.get("message") or "").lower()
 
 
 def test_runner_status_reachable_when_mocked(client, monkeypatch):

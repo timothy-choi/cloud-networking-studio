@@ -16,3 +16,7 @@ export function getRunnerStatus(): Promise<RunnerStatusDetail> {
 export function getRecentRunnerOperations(limit = 20): Promise<RecentRunnerOperationsResponse> {
   return apiFetch<RecentRunnerOperationsResponse>(`/runtime/operations/recent?limit=${limit}`);
 }
+
+export function recheckRunnerStatus(): Promise<RuntimeStatusResponse> {
+  return apiFetch<RuntimeStatusResponse>('/runtime/runner-recheck', { method: 'POST' });
+}

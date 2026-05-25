@@ -89,18 +89,44 @@ type DeploymentResponse struct {
 }
 
 type RuntimeStatus struct {
-	Status              string `json:"status"`
-	RuntimeProvider     string `json:"runtime_provider"`
-	DockerReachable     bool   `json:"docker_reachable"`
-	KubernetesReachable bool   `json:"kubernetes_reachable"`
-	CurrentContext      string `json:"current_context,omitempty"`
-	KubeconfigSource    string `json:"kubeconfig_source,omitempty"`
-	KubernetesInitError string `json:"kubernetes_init_error,omitempty"`
-	Message             string `json:"message,omitempty"`
-	BackendStatus       string `json:"backend_status,omitempty"`
-	RuntimeExecutor     string `json:"runtime_executor,omitempty"`
-	RunnerReachable     *bool  `json:"runner_reachable,omitempty"`
-	LastRuntimeError    string `json:"last_runtime_error,omitempty"`
+	RunnerStatus        string   `json:"runner_status,omitempty"`
+	Status              string   `json:"status"`
+	RuntimeProvider     string   `json:"runtime_provider"`
+	DockerReachable     bool     `json:"docker_reachable"`
+	KubernetesReachable bool     `json:"kubernetes_reachable"`
+	CurrentContext      string   `json:"current_context,omitempty"`
+	KubeconfigSource    string   `json:"kubeconfig_source,omitempty"`
+	KubernetesInitError string   `json:"kubernetes_init_error,omitempty"`
+	Message             string   `json:"message,omitempty"`
+	Version             string   `json:"version,omitempty"`
+	GitSHA              string   `json:"git_sha,omitempty"`
+	BuildTime           string   `json:"build_time,omitempty"`
+	SupportedOperations []string `json:"supported_operations,omitempty"`
+	BackendStatus       string   `json:"backend_status,omitempty"`
+	RuntimeExecutor     string   `json:"runtime_executor,omitempty"`
+	RunnerReachable     *bool    `json:"runner_reachable,omitempty"`
+	LastRuntimeError    string   `json:"last_runtime_error,omitempty"`
+}
+
+// VersionInfo is returned by GET /version.
+type VersionInfo struct {
+	Service   string `json:"service"`
+	Version   string `json:"version"`
+	GitSHA    string `json:"git_sha,omitempty"`
+	BuildTime string `json:"build_time,omitempty"`
+}
+
+// OperationRecordDTO mirrors observability.OperationRecord for JSON export.
+type OperationRecordDTO struct {
+	Operation    string `json:"operation"`
+	Provider     string `json:"provider"`
+	Status       string `json:"status"`
+	DurationMs   int64  `json:"duration_ms"`
+	RequestID    string `json:"request_id,omitempty"`
+	DeploymentID string `json:"deployment_id,omitempty"`
+	TopologyID   string `json:"topology_id,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	CreatedAt    string `json:"created_at"`
 }
 
 type ResourceRef struct {

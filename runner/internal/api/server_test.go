@@ -13,7 +13,6 @@ import (
 
 func TestHealth(t *testing.T) {
 	s := &Server{cli: nil}
-	// health handler does not use docker client
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -26,8 +25,67 @@ func TestHealth(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["status"] != "ok" {
+	if body["status"] != "ok" || body["runner_status"] != "ok" {
 		t.Fatalf("body %+v", body)
+	}
+}
+
+func TestVersion(t *testing.T) {
+	s := &Server{provider: "docker", cli: nil}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /version", s.handleVersion)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/version", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var body struct {
+		Service string `json:"service"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Service != "cns-runner" || body.Version == "" {
+		t.Fatalf("unexpected %+v", body)
+	}
+}
+
+func TestStatusSupportedOperations(t *testing.T) {
+	s := &Server{provider: "docker", cli: nil}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /status", s.handleStatus)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var st struct {
+		RunnerStatus        string   `json:"runner_status"`
+		SupportedOperations []string `json:"supported_operations"`
+		Version             string   `json:"version"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.RunnerStatus != "degraded" {
+		t.Fatalf("runner_status %+v", st)
+	}
+	want := map[string]bool{
+		"deploy": true, "destroy": true, "logs": true, "exec": true,
+		"health_check": true, "traffic_test": true, "terminal": true,
+	}
+	for _, op := range st.SupportedOperations {
+		if !want[op] {
+			t.Fatalf("unexpected op %q in %+v", op, st.SupportedOperations)
+		}
+		delete(want, op)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing ops %+v got %+v", want, st.SupportedOperations)
+	}
+	if st.Version == "" {
+		t.Fatalf("version missing")
 	}
 }
 

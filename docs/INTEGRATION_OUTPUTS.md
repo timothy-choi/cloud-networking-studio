@@ -9,7 +9,7 @@ Use them when you want to:
 - Wire GitHub Actions to deploy, test, and destroy CNS labs
 - Mount service URLs into your own Compose or ConfigMap
 
-**Not included yet:** Terraform or Ansible export (planned for a later step).
+**Related (topology-scoped IaC):** Terraform, Ansible, Docker Compose, and Kubernetes exports live under `GET /api/topologies/{topology_id}/exports/*` — see [ARCHITECTURE.md](ARCHITECTURE.md) and the **IaC Export** panel on the topology page. Integration outputs here are **deployment-scoped** snippets for apps and CI.
 
 ## API
 
@@ -132,6 +132,15 @@ Each block has a **Copy** button and a **Download** button (per file). Use **Dow
 - [Service exposure](./SERVICE_EXPOSURE.md) — publish external URLs
 - [Runtime usability](./RUNTIME_USABILITY.md) — viewer vs member permissions
 
-## Future: IaC export
+## Topology IaC export (separate feature)
 
-Terraform and Ansible modules for wiring CNS outputs into infrastructure-as-code are **not** part of Step 51A. This endpoint and UI focus on copy-paste integration for apps and pipelines.
+| Endpoint | Output |
+|----------|--------|
+| `GET .../exports/preview` | Validation warnings + file list |
+| `GET .../exports/terraform` | Terraform bundle |
+| `GET .../exports/ansible` | Ansible bundle |
+| `GET .../exports/docker-compose` | Compose file |
+| `GET .../exports/kubernetes` | Kubernetes manifests |
+| `GET .../exports/archive` | Zip of all exports |
+
+These are **generated artifacts** from topology intent — useful for demos and handoff, not a managed Terraform/Ansible apply pipeline.

@@ -1,373 +1,131 @@
 # Cloud Networking Studio
 
-**Design topologies, deploy to real containers, run traffic tests, inject failures, reconcile drift, and stream deployment events** — a control-plane style API for cloud and networking experimentation with a **Docker-backed runtime provider**.
+**Cloud Networking Studio (CNS)** is a full-stack cloud and networking lab platform: model topologies as graphs (nodes, links, services), deploy them to **Docker** (with an optional **Go runtime executor**), inspect live runtime state, run traffic and failure experiments, export integration artifacts and IaC, and operate deployments with versioning, profiles, and team roles. It is a **portfolio-grade control plane** — not a commercial SaaS — with **staging and production** deploy paths you can demo end-to-end.
 
 ---
 
-## What Cloud Networking Studio is
+## Features
 
-**Cloud Networking Studio (CNS)** is a portfolio-grade **control plane**: you describe a network as a **persisted graph** (topologies, nodes, links with CIDRs, gateways, and optional per-segment endpoint IPs). The backend **plans** a deployment, a **Docker runtime provider** creates **real bridge networks and containers**, and the API exposes **runtime inspection**, **synthetic traffic tests** (ping / HTTP), **failure injection**, **reconciliation** against live Docker state, and **healing** — with an **append-only deployment event** stream suitable for demos and debugging.
+- **Projects & auth** — JWT login, project scoping, roles (viewer / member / owner), email invitations, API tokens
+- **Topology studio** — React Flow editor; nodes (host, router, service, …), links with CIDR/gateway; flat and multi-segment routed labs
+- **Deploy & runtime** — Real Docker networks/containers; deployment events; runtime inspection; reconcile / heal; destroy
+- **Traffic & failures** — ICMP/HTTP tests from inside the lab; stop/restart container failure injection
+- **Integration outputs** — Env snippets, scripts, CI examples, downloadable files per deployment
+- **IaC export** — Docker Compose, Kubernetes, **Terraform**, and **Ansible** zip downloads (preview with validation warnings)
+- **Versioning & profiles** — Save topology versions, diff, rollback (with optional destroy); deployment profiles for env/image overrides
+- **Observability & ops** — Platform/project/deployment metrics, notifications, audit logs, onboarding checklist
 
-A **React dashboard** (`frontend/`) provides a topology list, a **React Flow** studio (manual editing + templates), deploy/runtime controls, traffic history, and raw JSON views — all backed by the same REST API as `curl` and the automated demo script.
-
-### Show this in an interview (about five minutes)
-
-Use this path when a recruiter or hiring manager is watching your screen — no need to narrate every file in the repo.
-
-1. **Sign in** (or register — a starter project is created for you).
-2. On the **Dashboard**, optionally click **Start demo (optional)** so a built-in template deploys and the lab opens in one step; otherwise pick a topology from the list.
-3. Open **Runtime Access** on the topology: run a **ping** or **HTTP** traffic test, skim **deployment events**, then **destroy** to show clean teardown.
-4. If they want the system story, open **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**; for a spoken script and troubleshooting, use **[docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md)**.
+**Experimental / optional:** `runtime_target=kubernetes` via the Go runner (Docker remains the default for local and production EC2 stacks). See [docs/KUBERNETES_RUNTIME.md](docs/KUBERNETES_RUNTIME.md).
 
 ---
 
-## Key features
-
-| Area | What you get |
-|------|----------------|
-| **Topology** | CRUD for topologies, nodes, and links; per-link **CIDR**, **gateway**, **VLAN tag** (documentation), **per-link endpoint IPs** for static addressing |
-| **Flat topology** | Single logical segment: one primary `network_name` pattern; classic host + service on one Docker bridge lab |
-| **Routed / multi-network** | **Multiple distinct `network_name` values** → **segmented** mode: multiple user-defined bridges, **router** nodes on more than one segment, **IPv4 forwarding**, **default routes on leaves** toward the segment router |
-| **Deployment** | `POST .../deploy` → real networks/containers; **destroy** for teardown; deployment status on records |
-| **Events** | Per-deployment **event stream** (provision steps, warnings, errors) |
-| **Runtime** | Topology- and deployment-scoped **runtime** JSON, container logs/stats, NIC lists with synthetic `eth*` ordering |
-| **Controller** | Manual **reconcile** pass and per-deployment **heal** |
-| **Traffic tests** | **ICMP** and **HTTP** checks executed from one container toward another node’s workload |
-| **Failure injection** | **Stop**, **restart**, or **kill** a node’s backing container |
-| **CI & quality** | **GitHub Actions** — pytest, frontend build, **production Compose** + HTTP smoke ([docs/CI.md](docs/CI.md)); **`scripts/demo_full_flow.sh`** for flat + routed smoke |
-| **Onboarding & demo** | Dashboard **checklist** with auto-detected progress, optional **Start demo** (built-in template + deploy), and `GET/POST /onboarding/*` APIs ([docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md)) |
-
----
-
-## Flat vs routed (terminology)
-
-| Mode | Topology shape | Docker picture (simplified) |
-|------|------------------|-----------------------------|
-| **Flat** | One segment (e.g. one link / one `network_name`) | One lab bridge; two containers on the same L2 domain |
-| **Routed** | Two+ segments (e.g. `net-a` and `net-b`) + a **router** node participating in the graph | Two bridges; router container attached to both; cross-segment traffic goes **L3 through the router** |
-
----
-
-## Architecture at a glance
-
-The system separates **declarative intent** (PostgreSQL-backed topology and deployment records) from **imperative execution** (runtime provider using the Docker SDK). Operators (or the UI) trigger **reconcile** and **heal**. **Deployment events** are an append-only audit trail.
+## Architecture (short)
 
 ```mermaid
 flowchart LR
-  subgraph control["Control plane"]
-    API[FastAPI]
-    DB[(PostgreSQL)]
-    SVC[Services]
-  end
-  subgraph data["State"]
-    TOPO[Topology graph]
-    DEP[Deployments + events]
-  end
-  subgraph run["Runtime"]
-    RP[Runtime provider]
-    DK[Docker Engine]
-  end
-  API --> SVC --> DB
-  TOPO --> DEP
-  SVC --> RP --> DK
-  API --> TOPO
+  UI[React SPA] --> API[FastAPI]
+  API --> DB[(PostgreSQL)]
+  API --> SVC[Services]
+  SVC --> RP[Runtime provider]
+  RP --> DK[Docker Engine]
+  API -. optional .-> RUN[Go runner]
+  RUN --> DK
 ```
 
-An optional **Go runtime executor** can sit alongside FastAPI for richer deploy plans and runtime payloads (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)); local Docker-only demos still work when the executor is off.
+**Intent** lives in Postgres (topologies, deployments, versions, profiles). **Execution** goes through a provider boundary (Python Docker SDK and/or Go runner). The UI and `curl` use the same REST API.
 
-**Portfolio-friendly docs (start here):**
-
-- [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — **Step 32** dashboard metrics, deployment timeline phases, operator-facing errors
-- [docs/AUTH.md](docs/AUTH.md) — **Step 34** users, projects, JWT auth, env vars, local vs production
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — control plane, topology model, Docker provider, traffic, failures, reconcile/heal (interviewer-oriented)
-- [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md) — **5-minute demo script** (Docker / Kubernetes / CLI), recruiter talking points, troubleshooting
-- [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) — exact **UI** and **CLI** demo steps and what each proves
-- [docs/RESUME_NOTES.md](docs/RESUME_NOTES.md) — **three resume bullets**, talking points, challenges solved
-- [docs/CICD_DEPLOYMENT.md](docs/CICD_DEPLOYMENT.md) — **Step 31** production deploy (EC2 Caddy HTTPS on **`api.cloudnetstudio.com`**, Vercel **`app`**, Cloudflare **DNS only**)
-- [docs/STAGING_DEPLOYMENT.md](docs/STAGING_DEPLOYMENT.md) — **Step 55** staging deploy (`api-staging`, isolated `cns-staging` stack, manual from any branch)
-- [docs/CI.md](docs/CI.md) — what GitHub Actions runs (including production Compose smoke)
-
-**Technical deep dives:**
-
-[docs/system-architecture.md](docs/system-architecture.md) · [docs/runtime-provider.md](docs/runtime-provider.md) · [docs/failure-recovery.md](docs/failure-recovery.md) · [docs/traffic-testing.md](docs/traffic-testing.md)
+Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---
 
-## System capabilities
+## Tech stack
 
-- **Intent vs actuals:** persisted desired topology vs live Docker state; drift surfaced by **reconciliation**.
-- **Provider abstraction:** runtime behavior sits behind a **provider interface**; **Docker** is the primary implementation today.
-- **Orchestration-shaped API:** deploy, destroy, inspect, reconcile, heal — familiar to platform and SRE workflows.
-- **Observable runs:** structured deployment events for demos and future dashboards.
-- **Network modeling:** links carry **network_name**, **CIDR**, optional **gateway**, and endpoint IPs; **segmented** labs map each segment to its own Docker network with deterministic **`eth*`** ordering in runtime inspection.
-
----
-
-## Continuous integration
-
-Workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
-
-**Triggers:** push to **`main`**, and **all pull requests**.
-
-**Jobs (any failure fails the run):**
-
-| Job | What it validates |
-|-----|-------------------|
-| **Backend (pytest)** | Python 3.12, Postgres 16 service, `pytest tests/ -q` with `CNS_USE_FAKE_DOCKER=1` |
-| **Frontend (production build)** | Node 22, `npm ci`, `npm run test`, `npm run build` |
-| **Docker (backend image)** | `docker build -f backend/Dockerfile ./backend` |
-| **Docker (frontend image)** | `docker build -f frontend/Dockerfile ./frontend` |
-| **Compose (prod config)** | `docker compose -f docker-compose.prod.yml config --quiet` |
-
-**Badge placeholders** (replace `OWNER` and `REPO` with your GitHub path):
-
-```markdown
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
-```
+| Layer | Stack |
+|-------|--------|
+| Frontend | React, TypeScript, Vite, React Flow, Tailwind |
+| Backend | Python 3.12, FastAPI, SQLAlchemy, Alembic |
+| Data | PostgreSQL |
+| Runtime | Docker Engine; optional `cns-runner` (Go) |
+| Infra | Terraform (EC2/VPC), Ansible playbooks, GitHub Actions, Caddy, Vercel (SPA) |
 
 ---
 
-## Screenshots (placeholders for your portfolio)
+## Quick demo (≈5 min)
 
-Add images under `docs/images/` (or your portfolio site) and link them here. Suggested captures:
+1. **Register / sign in** → dashboard (starter project created on register).
+2. **Create or open a topology** → add nodes/links or use a template → **Deploy**.
+3. **Runtime Access** → run **ping** or **HTTP** traffic test → view deployment events.
+4. Optional: **Save version** → edit graph → **Rollback**; **Integration outputs** or **IaC export** download.
+5. **Destroy** deployment to tear down labeled Docker resources.
 
-| Slot | What to capture |
-|------|-----------------|
-| **Dashboard** | Topology list + health / create controls |
-| **Topology studio — flat** | Host + service on one segment; edge label showing CIDR |
-| **Topology studio — routed** | `host-a` — `net-a` — `router-1` — `net-b` — `service-b`; distinct edge colors; router badges |
-| **Inspector** | Link form showing gateway + source/target endpoint IPs with node names |
-| **Deployment** | Deployment timeline / event strip after **Deploy** |
-| **Runtime** | Collapsible runtime section: networks, node→container mapping, router `eth0`/`eth1`, route snippet |
-| **Traffic validation** | Last ping / HTTP cards + history for cross-segment tests |
-| **Failure + heal** | Stopped container state → **Reconcile** → **Heal** → green traffic again |
-| **Onboarding** | Dashboard **getting started** card, optional **Start demo**, API-driven checklist ([docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md)) |
-
-**Markdown image example (after you add files):**
-
-```markdown
-![Topology studio](docs/images/topology-studio-routed.png)
-```
+Scripted UI/CLI walkthrough: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) · automated smoke: `./scripts/demo_full_flow.sh`
 
 ---
 
-## Quickstart
+## Deployments
 
-### Prerequisites
+| Environment | Doc | Typical API | SPA |
+|-------------|-----|-------------|-----|
+| **Local** | [docs/OPERATIONS.md](docs/OPERATIONS.md) | `http://localhost:8000` | `http://localhost:5174` |
+| **Staging** | [docs/STAGING_DEPLOYMENT.md](docs/STAGING_DEPLOYMENT.md) | `https://api-staging.cloudnetstudio.com` | Vercel preview / `app-staging` |
+| **Production** | [docs/CICD_DEPLOYMENT.md](docs/CICD_DEPLOYMENT.md) | `https://api.cloudnetstudio.com` | Vercel production |
 
-- **Python 3.11+** (see `backend/requirements.txt`)
-- **PostgreSQL** (local or Docker; repo defaults use port **5433** — see [docker-compose.yml](docker-compose.yml))
-- **Docker Engine** (for real networks, containers, traffic, and failure injection)
-- **`curl`** and **`jq`** (for the demo script)
-- **Node.js 20+** and **npm** (for the web UI in `frontend/`)
+Staging and production deploys are **manual GitHub Actions** workflows; they are operated demos, not multi-tenant production SaaS.
 
-### Database
+---
 
-**Option A — lightweight dev Postgres** ([`docker-compose.yml`](docker-compose.yml)):
+## Local run
+
+**Prerequisites:** Python 3.11+, Node 20+, PostgreSQL, Docker Engine (for real deploys).
 
 ```bash
+# Database (host port 5433)
 docker compose up -d postgres
 export DATABASE_URL="postgresql://cns_user:cns_password@127.0.0.1:5433/cloud_networking_studio"
-```
 
-**Option B — production-style compose** (same **5433** mapping; use when testing the full stack or aligning with [`docker-compose.prod.yml`](docker-compose.prod.yml)):
-
-```bash
-docker compose -f docker-compose.prod.yml up -d postgres
-export DATABASE_URL="postgresql://cns_user:cns_password@127.0.0.1:5433/cloud_networking_studio"
-```
-
-Then run **`pytest`** from **`backend/`** (defaults match **`backend/tests/conftest.py`**). See [docs/testing.md](docs/testing.md) and [docs/RDS.md](docs/RDS.md) for RDS vs local Postgres.
-
-After **auth / project / topology schema** changes, a stale Postgres volume may miss tables such as **`users`**. Reset the volume instead of reusing it silently:
-
-```bash
-docker compose down -v
-docker compose up -d --build
-```
-
-(Same idea with **`docker compose -f docker-compose.prod.yml …`**.) Details: [docs/AUTH.md](docs/AUTH.md).
-
-### Backend
-
-```bash
-cd backend
-pip install -r requirements.txt
-# Optional: copy backend/.env.example → backend/.env and set AUTH_SECRET_KEY / AUTH_REQUIRE_LOGIN (see docs/AUTH.md)
+# Backend
+cd backend && pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Frontend (separate terminal)
+cd frontend && npm install && npm run dev
 ```
 
-- **OpenAPI UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Health:** `GET /health`
+- API docs: http://localhost:8000/docs  
+- UI: http://localhost:5174 (Vite proxies `/api` → port 8000)
 
-### Frontend (dashboard)
-
-```bash
-cd frontend
-cp .env.example .env   # optional — defaults use Vite proxy (/api → http://127.0.0.1:8000)
-npm install
-npm run dev
-```
-
-Open **http://localhost:5174**. During **`npm run dev`**, the UI uses **`/api/...`** on the same origin and **Vite proxies** to FastAPI on **8000**. Keep **`uvicorn`** running on **8000** while using the UI. **Sign in or register** so the app stores a JWT; the dashboard does not load until **`GET /auth/me`** succeeds with that token. For **`curl`** against **`AUTH_REQUIRE_LOGIN=false`**, unauthenticated calls still hit the implicit dev user on most routes (see [docs/AUTH.md](docs/AUTH.md)).
-
-**First-run onboarding:** the dashboard shows a **getting started** checklist (with **Start demo (optional)** to clone the built-in `client-service` template into a `CNS Quick demo` project, deploy, and open the lab). Progress syncs from `GET /onboarding/status` and auto-detects common actions where possible. Full walkthrough: [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md).
-
-**Production build:**
-
-```bash
-cd frontend
-npm run build
-npm run preview   # optional — serves dist/
-```
-
-**What the UI covers:** sign-in / register when auth is required, **project** selector and create-project flow, dashboard (health, **project-scoped** topology list), topology detail with **React Flow studio** (nodes/links, templates including **routed host → router → service**, inspector with link addressing, deployment planning), **Runtime actions** (deploy, traffic, stop-node, reconcile, heal, destroy), **Routed traffic & validation** (directed ping/HTTP, quick-path buttons), deployment events, and raw JSON panels.
-
-### Topology studio (visual builder)
-
-- **Add nodes** (host, service, router, switch) or **Use template** (client/server, tiers, load balancer, router/switch, mesh, **routed host → router → service**).
-- **Connect** nodes (handles or **Link mode**); edit **CIDR / gateway / endpoint IPs** in the inspector.
-- **Save layout** persists `config.editor_position` via PATCH.
-- **Keyboard:** Delete/Backspace removes selection; **⌘/Ctrl+S** saves layout; **⌘/Ctrl+D** duplicates node; **F** fits view.
+After schema changes: `docker compose down -v && docker compose up -d --build` if tables are missing. More: [docs/OPERATIONS.md](docs/OPERATIONS.md) · [docs/AUTH.md](docs/AUTH.md)
 
 ---
 
-## Demo commands
+## Why this project
 
-**Automated (recommended)** — flat lab immediately followed by routed multinet lab:
+CNS demonstrates skills recruiters and interviewers often look for in platform and networking roles:
 
-```bash
-chmod +x scripts/demo_full_flow.sh   # once
-./scripts/demo_full_flow.sh
-```
+- **Model vs runtime separation** — persisted graph intent vs imperative Docker apply
+- **Orchestration-shaped APIs** — deploy, destroy, reconcile, heal, event streams
+- **Real networking labs** — multi-segment routing, traffic validation, failure injection
+- **Production-shaped delivery** — CI, staging/prod workflows, Terraform, smoke tests, CORS/auth hardening
 
-```bash
-API_BASE=http://127.0.0.1:8000 ./scripts/demo_full_flow.sh
-```
-
-Step-by-step narration for **UI** and **CLI**: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
-
-**Production-style stack** (Compose **Postgres** on host **5433**, API, static UI, Caddy on port **80**): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/RDS.md](docs/RDS.md) · [docs/EC2_RUNBOOK.md](docs/EC2_RUNBOOK.md) · `docker-compose.prod.yml` · copy [.env.example](.env.example) to `.env`.
+It is intentionally **honest about scope**: one control plane, Docker-first runtime, portfolio deployment — not claiming full multi-region HA or managed Kubernetes as a product.
 
 ---
 
-## Routed topology example (curl)
-
-Same addressing as `scripts/demo_full_flow.sh` part B: **10.72.0.0/24** (`net-a`) and **10.73.0.0/24** (`net-b`). Replace `TOPOLOGY_ID`, `HOST_ID`, `ROUTER_ID`, `SERVICE_ID` with UUIDs returned by your API. If **`AUTH_REQUIRE_LOGIN=true`**, add **`-H "Authorization: Bearer $TOKEN"`** to each request (see [docs/AUTH.md](docs/AUTH.md)).
-
-```bash
-API=http://localhost:8000
-
-# Topology
-curl -s -X POST "$API/topologies" -H 'Content-Type: application/json' \
-  -d '{"name":"Routed readme demo","description":"two segments","runtime_target":"docker","networking_mode":"docker_bridge","status":"draft"}' | jq .
-
-# Nodes: host-a (10.72.0.10), router-1, service-b (10.73.0.20, busybox)
-curl -s -X POST "$API/topologies/TOPOLOGY_ID/nodes" -H 'Content-Type: application/json' \
-  -d '{"name":"host-a","node_type":"host","image":"alpine:latest","ip_address":"10.72.0.10","config":null}' | jq .
-curl -s -X POST "$API/topologies/TOPOLOGY_ID/nodes" -H 'Content-Type: application/json' \
-  -d '{"name":"router-1","node_type":"router","image":"alpine:latest","ip_address":null,"config":null}' | jq .
-curl -s -X POST "$API/topologies/TOPOLOGY_ID/nodes" -H 'Content-Type: application/json' \
-  -d '{"name":"service-b","node_type":"generic","image":"busybox:1.36","ip_address":"10.73.0.20","config":null}' | jq .
-
-# Links: host→router on net-a; router→service on net-b
-curl -s -X POST "$API/topologies/TOPOLOGY_ID/links" -H 'Content-Type: application/json' \
-  -d '{"source_node_id":"HOST_ID","target_node_id":"ROUTER_ID","network_name":"net-a","cidr":"10.72.0.0/24","gateway":"10.72.0.1","source_endpoint_ip":"10.72.0.10","target_endpoint_ip":"10.72.0.1","config":null}' | jq .
-curl -s -X POST "$API/topologies/TOPOLOGY_ID/links" -H 'Content-Type: application/json' \
-  -d '{"source_node_id":"ROUTER_ID","target_node_id":"SERVICE_ID","network_name":"net-b","cidr":"10.73.0.0/24","gateway":"10.73.0.1","source_endpoint_ip":"10.73.0.1","target_endpoint_ip":"10.73.0.20","config":null}' | jq .
-
-# Deploy + cross-segment traffic (use returned deployment id for reconcile/heal)
-curl -s -X POST "$API/topologies/TOPOLOGY_ID/deploy" | jq .
-curl -s -X POST "$API/topologies/TOPOLOGY_ID/traffic-tests/ping" -H 'Content-Type: application/json' \
-  -d '{"source_node_id":"HOST_ID","target_node_id":"SERVICE_ID","count":3}' | jq .
-curl -s -X POST "$API/topologies/TOPOLOGY_ID/traffic-tests/http" -H 'Content-Type: application/json' \
-  -d '{"source_node_id":"HOST_ID","target_node_id":"SERVICE_ID","path":"/","port":80}' | jq .
-```
-
-In the **UI**, you can append the same graph with **Use template → Routed host → router → service** instead of typing `curl`.
-
----
-
-## API examples (short)
-
-Replace UUIDs with values from your session.
-
-```bash
-curl -s -X POST "http://localhost:8000/topologies/<topology_id>/deploy" | jq .
-curl -s "http://localhost:8000/deployments/<deployment_id>/runtime" | jq .
-curl -s -X POST "http://localhost:8000/topologies/<topology_id>/traffic-tests/ping" \
-  -H "Content-Type: application/json" \
-  -d '{"source_node_id":"<uuid>","target_node_id":"<uuid>","count":3}' | jq .
-curl -s -X POST "http://localhost:8000/deployments/<deployment_id>/reconcile" | jq .
-curl -s -X POST "http://localhost:8000/deployments/<deployment_id>/heal" | jq .
-curl -s -X POST "http://localhost:8000/deployments/<deployment_id>/destroy" | jq .
-```
-
-Full Docker naming and labels: [docs/runtime-provider.md](docs/runtime-provider.md).
-
----
-
-## Demo flow (`scripts/demo_full_flow.sh`)
-
-**A. Flat single-bridge lab** — host + service, one link, deploy, runtime, ping/HTTP, failures, reconcile/heal, destroy.
-
-**B. Routed lab** — `host-a → router-1 → service-b` across **net-a** / **net-b**, cross-segment ping/HTTP, **router restart**, reconcile/heal, destroy.
-
-This script is the **authoritative smoke test** next to `pytest`.
-
----
-
-## Failure injection & healing
-
-**Failure injection** applies Docker-level actions to a node’s container (stop / restart / kill semantics per provider), creating **real drift**.
-
-**Reconciliation** compares desired records to live Docker (networks, containers, stopped processes).
-
-**Healing** attempts to restore stopped or missing pieces for a deployment.
-
-Details: [docs/failure-recovery.md](docs/failure-recovery.md)
-
----
-
-## Roadmap
-
-| Horizon | Direction |
-|---------|-----------|
-| **Near** | Authn/z, multi-tenant guardrails, richer metrics on deployments |
-| **Near** | Metrics export (Prometheus), structured logging, trace IDs |
-| **Mid** | Additional runtime targets (e.g. Kubernetes, compose stacks) |
-| **Mid** | Richer network policies, bandwidth/latency emulation |
-| **Long** | Plugin telemetry providers, chaos schedules, collaboration |
-
-UI notes: [docs/frontend-mvp-and-observability.md](docs/frontend-mvp-and-observability.md)
-
----
-
-## Documentation index
-
-**Note:** The long-form diagram doc was renamed to **[docs/system-architecture.md](docs/system-architecture.md)** so it sits beside **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** on case-insensitive file systems (macOS default volumes).
+## Documentation
 
 | Doc | Purpose |
 |-----|---------|
-| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Step 32: dashboard metrics, deployment timeline, operator error hints |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production Compose, EC2, troubleshooting, next infra steps |
-| [docs/EC2_RUNBOOK.md](docs/EC2_RUNBOOK.md) | Single-instance EC2: Docker, clone, `.env`, compose, smoke, cleanup |
-| [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | Exact UI + CLI demo flows |
-| [docs/RESUME_NOTES.md](docs/RESUME_NOTES.md) | Three resume bullets, talking points, challenges |
-| [docs/system-architecture.md](docs/system-architecture.md) | Detailed design, diagrams, API flow |
-| [docs/runtime-provider.md](docs/runtime-provider.md) | Docker mapping, lifecycle, labels |
-| [docs/failure-recovery.md](docs/failure-recovery.md) | Reconciliation, healing, failure injection |
-| [docs/traffic-testing.md](docs/traffic-testing.md) | Ping/HTTP execution model |
-| [docs/repository-layout.md](docs/repository-layout.md) | Repository layout |
-| [docs/local-development.md](docs/local-development.md) | Dev setup, troubleshooting |
-| [docs/testing.md](docs/testing.md) | Running tests locally / CI |
-| [docs/recruiter-highlights.md](docs/recruiter-highlights.md) | Extra bullets and pitch variants |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
-
----
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, flows, versioning/profiles |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Local dev, deploy, smoke tests, troubleshooting |
+| [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | Step-by-step demo (UI + CLI) |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Implemented vs planned |
+| [docs/AUTH.md](docs/AUTH.md) | Auth, projects, tokens |
+| [docs/TOPOLOGY_VERSIONING_AND_PROFILES.md](docs/TOPOLOGY_VERSIONING_AND_PROFILES.md) | Versions, rollback, profiles |
+| [docs/TEAM_COLLABORATION.md](docs/TEAM_COLLABORATION.md) | Roles and invitations |
+| [docs/CI.md](docs/CI.md) | GitHub Actions CI |
 
 ---
 
 ## License
 
-License not specified in this repository; add a `LICENSE` file when you publish publicly.
+No `LICENSE` file in this repository yet; add one before public distribution.

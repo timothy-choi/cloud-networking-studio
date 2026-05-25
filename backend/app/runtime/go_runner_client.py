@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+import time
+from collections.abc import Callable
+from typing import Any, TypeVar
 from uuid import UUID
 
 import httpx
 
 from app.core.config import settings
 from app.core.request_context import get_request_id
+from app.runtime.runner_operation_history import record_runner_operation
 
 _log = logging.getLogger(__name__)
 from app.models.deployment import DeploymentEventLevel
 from app.services.deployment_planner import DeploymentPlan
+
+T = TypeVar("T")
 
 
 class GoRunnerDeployError(Exception):
@@ -49,38 +54,161 @@ class GoRunnerClient:
         )
 
     def health(self) -> dict[str, Any]:
-        with httpx.Client(timeout=min(10.0, self._timeout)) as client:
-            r = client.get(f"{self._base}/health")
-            r.raise_for_status()
-            return r.json()
+        return self._probe_get("/health", operation="health")
+
+    def get_version(self) -> dict[str, Any]:
+        return self._probe_get("/version", operation="version")
+
+    def get_runner_status(self) -> dict[str, Any]:
+        """GET ``/status`` on the runner (rich observability payload)."""
+        return self._probe_get("/status", operation="status")
 
     def get_runtime_status(self) -> dict[str, Any]:
         """GET ``/runtime/status`` on the runner (short timeout)."""
+        return self._probe_get("/runtime/status", operation="runtime_status")
+
+    def get_recent_operations(self, *, limit: int = 20) -> dict[str, Any]:
         timeout = min(10.0, self._timeout)
-        kw: dict = {"base_url": self._base, "timeout": httpx.Timeout(timeout)}
-        if self._transport is not None:
-            kw["transport"] = self._transport
-        with httpx.Client(**kw) as client:
-            r = client.get("/runtime/status")
+        with self._client(timeout=timeout) as client:
+            r = client.get("/runtime/operations/recent", params={"limit": str(int(limit))})
         r.raise_for_status()
         data = r.json()
         if not isinstance(data, dict):
-            raise ValueError("runner /runtime/status returned non-object JSON")
+            raise ValueError("runner /runtime/operations/recent returned non-object JSON")
         return data
+
+    def _probe_get(self, path: str, *, operation: str) -> dict[str, Any]:
+        timeout = min(10.0, self._timeout)
+        start = time.perf_counter()
+        rid = get_request_id()
+        provider = "unknown"
+        try:
+            with self._client(timeout=timeout) as client:
+                r = client.get(path)
+            r.raise_for_status()
+            data = r.json()
+            if not isinstance(data, dict):
+                raise ValueError(f"runner {path} returned non-object JSON")
+            provider = str(data.get("runtime_provider") or "unknown")
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            _log.info(
+                "go_runner operation=%s request_id=%s provider=%s duration_ms=%d status=ok",
+                operation,
+                rid or "",
+                provider,
+                duration_ms,
+            )
+            record_runner_operation(
+                operation=operation,
+                provider=provider,
+                status="ok",
+                duration_ms=duration_ms,
+                request_id=rid,
+            )
+            return data
+        except Exception as exc:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            err = str(exc)[:500]
+            _log.warning(
+                "go_runner operation=%s request_id=%s provider=%s duration_ms=%d status=error error=%s",
+                operation,
+                rid or "",
+                provider,
+                duration_ms,
+                err,
+            )
+            record_runner_operation(
+                operation=operation,
+                provider=provider,
+                status="error",
+                duration_ms=duration_ms,
+                request_id=rid,
+                error_message=err,
+            )
+            raise
 
     def _request_headers(self) -> dict[str, str]:
         rid = get_request_id()
         return {"X-Request-ID": rid} if rid else {}
 
-    def _client(self) -> httpx.Client:
+    def _client(self, *, timeout: float | None = None) -> httpx.Client:
         kw: dict = {
             "base_url": self._base,
-            "timeout": httpx.Timeout(self._timeout),
+            "timeout": httpx.Timeout(timeout if timeout is not None else self._timeout),
             "headers": self._request_headers(),
         }
         if self._transport is not None:
             kw["transport"] = self._transport
         return httpx.Client(**kw)
+
+    def _invoke(
+        self,
+        operation: str,
+        fn: Callable[[], T],
+        *,
+        deployment_id: UUID | None = None,
+        topology_id: UUID | None = None,
+        provider: str | None = None,
+    ) -> T:
+        start = time.perf_counter()
+        rid = get_request_id()
+        prov = provider or "unknown"
+        if deployment_id is not None:
+            log_runtime_op_delegation(operation, deployment_id)
+        _log.info(
+            "go_runner operation=%s request_id=%s deployment_id=%s topology_id=%s provider=%s",
+            operation,
+            rid or "",
+            str(deployment_id) if deployment_id else "",
+            str(topology_id) if topology_id else "",
+            prov,
+        )
+        try:
+            out = fn()
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            _log.info(
+                "go_runner operation=%s request_id=%s deployment_id=%s topology_id=%s provider=%s duration_ms=%d status=ok",
+                operation,
+                rid or "",
+                str(deployment_id) if deployment_id else "",
+                str(topology_id) if topology_id else "",
+                prov,
+                duration_ms,
+            )
+            record_runner_operation(
+                operation=operation,
+                provider=prov,
+                status="ok",
+                duration_ms=duration_ms,
+                request_id=rid,
+                deployment_id=deployment_id,
+                topology_id=topology_id,
+            )
+            return out
+        except Exception as exc:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            err = str(exc)[:500]
+            _log.warning(
+                "go_runner operation=%s request_id=%s deployment_id=%s topology_id=%s provider=%s duration_ms=%d status=error error=%s",
+                operation,
+                rid or "",
+                str(deployment_id) if deployment_id else "",
+                str(topology_id) if topology_id else "",
+                prov,
+                duration_ms,
+                err,
+            )
+            record_runner_operation(
+                operation=operation,
+                provider=prov,
+                status="error",
+                duration_ms=duration_ms,
+                request_id=rid,
+                deployment_id=deployment_id,
+                topology_id=topology_id,
+                error_message=err,
+            )
+            raise
 
     def deployment_request_body(self, plan: DeploymentPlan) -> dict[str, Any]:
         nodes: list[dict[str, Any]] = []
@@ -154,9 +282,22 @@ class GoRunnerClient:
         self, plan: DeploymentPlan
     ) -> tuple[list[tuple[DeploymentEventLevel, str]], dict[str, Any] | None]:
         payload = self.deployment_request_body(plan)
-        with self._client() as client:
-            r = client.post("/deployments", json=payload)
-        return _deployment_response_to_outcome(r)
+        dep_id = plan.deployment_id
+        topo_id = plan.topology_id
+        provider = plan.runtime_target or "docker"
+
+        def _call() -> tuple[list[tuple[DeploymentEventLevel, str]], dict[str, Any] | None]:
+            with self._client() as client:
+                r = client.post("/deployments", json=payload)
+            return _deployment_response_to_outcome(r)
+
+        return self._invoke(
+            "deploy",
+            _call,
+            deployment_id=dep_id,
+            topology_id=topo_id,
+            provider=provider,
+        )
 
     def delete_deployment(
         self,
@@ -168,17 +309,25 @@ class GoRunnerClient:
         params: dict[str, str] = {"topology_id": str(topology_id)}
         if project_id is not None:
             params["project_id"] = str(project_id)
-        with self._client() as client:
-            r = client.delete(
-                f"/deployments/{deployment_id}",
-                params=params,
-            )
-        data = _safe_json(r)
-        events = _events_from_runner_payload(data.get("events"))
-        if r.is_success:
-            return events
-        msg = str(data.get("error") or r.text or r.reason_phrase)
-        raise RuntimeError(f"go runner destroy failed ({r.status_code}): {msg}")
+        def _call() -> list[tuple[DeploymentEventLevel, str]]:
+            with self._client() as client:
+                r = client.delete(
+                    f"/deployments/{deployment_id}",
+                    params=params,
+                )
+            data = _safe_json(r)
+            events = _events_from_runner_payload(data.get("events"))
+            if r.is_success:
+                return events
+            msg = str(data.get("error") or r.text or r.reason_phrase)
+            raise RuntimeError(f"go runner destroy failed ({r.status_code}): {msg}")
+
+        return self._invoke(
+            "destroy",
+            _call,
+            deployment_id=deployment_id,
+            topology_id=topology_id,
+        )
 
     def get_deployment_logs(
         self,
@@ -196,29 +345,50 @@ class GoRunnerClient:
         }
         if project_id is not None:
             params["project_id"] = str(project_id)
-        with self._client() as client:
-            r = client.get(
-                f"/deployments/{deployment_id}/logs",
-                params=params,
-            )
-        data = _safe_json(r)
-        if r.status_code == 404:
-            return None
-        if not r.is_success:
-            return None
-        err = data.get("error")
-        if err:
-            return None
-        logs = data.get("logs")
-        return str(logs) if logs is not None else None
+        def _call() -> str | None:
+            with self._client() as client:
+                r = client.get(
+                    f"/deployments/{deployment_id}/logs",
+                    params=params,
+                )
+            data = _safe_json(r)
+            if r.status_code == 404:
+                return None
+            if not r.is_success:
+                return None
+            err = data.get("error")
+            if err:
+                return None
+            logs = data.get("logs")
+            return str(logs) if logs is not None else None
+
+        return self._invoke(
+            "logs",
+            _call,
+            deployment_id=deployment_id,
+            topology_id=topology_id,
+        )
 
     def post_traffic_test(self, body: dict[str, Any]) -> dict[str, Any]:
-        with self._client() as client:
-            r = client.post("/traffic-tests", json=body)
-        data = _safe_json(r)
-        if not r.is_success and not isinstance(data, dict):
-            raise RuntimeError(f"go runner traffic-test failed: {r.status_code} {r.text}")
-        return data
+        dep_raw = body.get("deployment_id")
+        dep_id = UUID(str(dep_raw)) if dep_raw else None
+        topo_raw = body.get("topology_id")
+        topo_id = UUID(str(topo_raw)) if topo_raw else None
+
+        def _call() -> dict[str, Any]:
+            with self._client() as client:
+                r = client.post("/traffic-tests", json=body)
+            data = _safe_json(r)
+            if not r.is_success and not isinstance(data, dict):
+                raise RuntimeError(f"go runner traffic-test failed: {r.status_code} {r.text}")
+            return data
+
+        return self._invoke(
+            "traffic_test",
+            _call,
+            deployment_id=dep_id,
+            topology_id=topo_id,
+        )
 
     def get_runtime_deployment_logs(
         self,
@@ -234,13 +404,22 @@ class GoRunnerClient:
         }
         if project_id is not None:
             params["project_id"] = str(project_id)
-        with self._client() as client:
-            r = client.get(f"/deployments/{deployment_id}/runtime/logs", params=params)
-        r.raise_for_status()
-        raw = r.json()
-        if not isinstance(raw, dict):
-            raise ValueError("runner returned non-object JSON for runtime logs")
-        return raw
+
+        def _call() -> dict[str, Any]:
+            with self._client() as client:
+                r = client.get(f"/deployments/{deployment_id}/runtime/logs", params=params)
+            r.raise_for_status()
+            raw = r.json()
+            if not isinstance(raw, dict):
+                raise ValueError("runner returned non-object JSON for runtime logs")
+            return raw
+
+        return self._invoke(
+            "logs",
+            _call,
+            deployment_id=deployment_id,
+            topology_id=topology_id,
+        )
 
     def get_runtime_service_logs(
         self,
@@ -254,16 +433,25 @@ class GoRunnerClient:
         params: dict[str, str] = {"topology_id": str(topology_id), "tail": str(int(tail))}
         if project_id is not None:
             params["project_id"] = str(project_id)
-        with self._client() as client:
-            r = client.get(
-                f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/logs",
-                params=params,
-            )
-        r.raise_for_status()
-        raw = r.json()
-        if not isinstance(raw, dict):
-            raise ValueError("runner returned non-object JSON for service logs")
-        return raw
+
+        def _call() -> dict[str, Any]:
+            with self._client() as client:
+                r = client.get(
+                    f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/logs",
+                    params=params,
+                )
+            r.raise_for_status()
+            raw = r.json()
+            if not isinstance(raw, dict):
+                raise ValueError("runner returned non-object JSON for service logs")
+            return raw
+
+        return self._invoke(
+            "logs",
+            _call,
+            deployment_id=deployment_id,
+            topology_id=topology_id,
+        )
 
     def post_runtime_service_health(
         self,
@@ -277,26 +465,46 @@ class GoRunnerClient:
         params: dict[str, str] = {"topology_id": str(topology_id)}
         if project_id is not None:
             params["project_id"] = str(project_id)
-        with self._client() as client:
-            r = client.post(
-                f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/health-check",
-                params=params,
-                json=body or {},
-            )
-        r.raise_for_status()
-        raw = r.json()
-        if not isinstance(raw, dict):
-            raise ValueError("runner returned non-object JSON for health check")
-        return raw
+
+        def _call() -> dict[str, Any]:
+            with self._client() as client:
+                r = client.post(
+                    f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/health-check",
+                    params=params,
+                    json=body or {},
+                )
+            r.raise_for_status()
+            raw = r.json()
+            if not isinstance(raw, dict):
+                raise ValueError("runner returned non-object JSON for health check")
+            return raw
+
+        return self._invoke(
+            "health_check",
+            _call,
+            deployment_id=deployment_id,
+            topology_id=topology_id,
+        )
 
     def post_runtime_traffic_test(self, deployment_id: UUID, body: dict[str, Any]) -> dict[str, Any]:
-        with self._client() as client:
-            r = client.post(f"/deployments/{deployment_id}/runtime/traffic-tests", json=body)
-        r.raise_for_status()
-        raw = r.json()
-        if not isinstance(raw, dict):
-            raise ValueError("runner returned non-object JSON for traffic test")
-        return raw
+        topo_raw = body.get("topology_id")
+        topo_id = UUID(str(topo_raw)) if topo_raw else None
+
+        def _call() -> dict[str, Any]:
+            with self._client() as client:
+                r = client.post(f"/deployments/{deployment_id}/runtime/traffic-tests", json=body)
+            r.raise_for_status()
+            raw = r.json()
+            if not isinstance(raw, dict):
+                raise ValueError("runner returned non-object JSON for traffic test")
+            return raw
+
+        return self._invoke(
+            "traffic_test",
+            _call,
+            deployment_id=deployment_id,
+            topology_id=topo_id,
+        )
 
     def post_runtime_service_exec(
         self,
@@ -310,17 +518,26 @@ class GoRunnerClient:
         params: dict[str, str] = {"topology_id": str(topology_id)}
         if project_id is not None:
             params["project_id"] = str(project_id)
-        with self._client() as client:
-            r = client.post(
-                f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/exec",
-                params=params,
-                json=body,
-            )
-        r.raise_for_status()
-        raw = r.json()
-        if not isinstance(raw, dict):
-            raise ValueError("runner returned non-object JSON for exec")
-        return raw
+
+        def _call() -> dict[str, Any]:
+            with self._client() as client:
+                r = client.post(
+                    f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/exec",
+                    params=params,
+                    json=body,
+                )
+            r.raise_for_status()
+            raw = r.json()
+            if not isinstance(raw, dict):
+                raise ValueError("runner returned non-object JSON for exec")
+            return raw
+
+        return self._invoke(
+            "exec",
+            _call,
+            deployment_id=deployment_id,
+            topology_id=topology_id,
+        )
 
     def post_runtime_service_restart(
         self,
@@ -333,16 +550,25 @@ class GoRunnerClient:
         params: dict[str, str] = {"topology_id": str(topology_id)}
         if project_id is not None:
             params["project_id"] = str(project_id)
-        with self._client() as client:
-            r = client.post(
-                f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/restart",
-                params=params,
-            )
-        r.raise_for_status()
-        raw = r.json()
-        if not isinstance(raw, dict):
-            raise ValueError("runner returned non-object JSON for restart")
-        return raw
+
+        def _call() -> dict[str, Any]:
+            with self._client() as client:
+                r = client.post(
+                    f"/deployments/{deployment_id}/runtime/services/{workload_node_id}/restart",
+                    params=params,
+                )
+            r.raise_for_status()
+            raw = r.json()
+            if not isinstance(raw, dict):
+                raise ValueError("runner returned non-object JSON for restart")
+            return raw
+
+        return self._invoke(
+            "restart",
+            _call,
+            deployment_id=deployment_id,
+            topology_id=topology_id,
+        )
 
 
 def _safe_json(r: httpx.Response) -> dict[str, Any]:

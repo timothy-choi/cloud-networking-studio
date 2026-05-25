@@ -14,7 +14,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/buildinfo"
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
+	"github.com/timothy-choi/cloud-networking-studio/runner/internal/observability"
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/runtime"
 	rdocker "github.com/timothy-choi/cloud-networking-studio/runner/internal/runtime/docker"
 	rk8s "github.com/timothy-choi/cloud-networking-studio/runner/internal/runtime/kubernetes"
@@ -79,7 +81,10 @@ func (s *Server) kubernetesUnavailableMessage() string {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /status", s.handleStatus)
+	mux.HandleFunc("GET /version", s.handleVersion)
 	mux.HandleFunc("GET /runtime/status", s.handleRuntimeStatus)
+	mux.HandleFunc("GET /runtime/operations/recent", s.handleRecentOperations)
 	mux.HandleFunc("POST /deployments", s.handlePostDeployment)
 	mux.HandleFunc("DELETE /deployments/{id}", s.handleDeleteDeploymentID)
 	mux.HandleFunc("POST /deployments/{id}/runtime/services/{service_id}/exec", s.handleRuntimeServiceExec)
@@ -98,23 +103,16 @@ func (s *Server) ctx(r *http.Request) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(r.Context(), 10*time.Minute)
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (s *Server) supportedOperations() []string {
+	ops := []string{"deploy", "destroy", "logs", "exec", "health_check", "traffic_test", "terminal"}
+	if s.provider == "kubernetes" {
+		// Terminal attach is backend/docker-py today; runner handles cluster exec paths.
+		return ops
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "cns-runner"})
+	return ops
 }
 
-func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	ctx, cancel := s.ctx(r)
-	defer cancel()
-
+func (s *Server) buildRuntimeStatus(ctx context.Context) model.RuntimeStatus {
 	prov := s.provider
 	if prov == "" {
 		prov = "docker"
@@ -124,6 +122,11 @@ func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 		CurrentContext:      s.k8sCtx,
 		KubeconfigSource:    s.kubeconfigSource,
 		KubernetesInitError: s.kubernetesInitErr,
+		Version:             buildinfo.Version,
+		GitSHA:              buildinfo.GitSHA,
+		BuildTime:           buildinfo.BuildTime,
+		SupportedOperations: s.supportedOperations(),
+		LastRuntimeError:    observability.LastRuntimeError(),
 	}
 
 	if s.cli != nil {
@@ -151,8 +154,10 @@ func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 	case "kubernetes":
 		if st.KubernetesReachable {
 			st.Status = "ok"
+			st.RunnerStatus = "ok"
 		} else {
 			st.Status = "degraded"
+			st.RunnerStatus = "degraded"
 			if st.KubernetesInitError == "" && s.kubernetesInitErr != "" {
 				st.KubernetesInitError = s.kubernetesInitErr
 			}
@@ -160,11 +165,90 @@ func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 	default:
 		if st.DockerReachable {
 			st.Status = "ok"
+			st.RunnerStatus = "ok"
 		} else {
 			st.Status = "degraded"
+			st.RunnerStatus = "degraded"
 		}
 	}
+	return st
+}
 
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":        "ok",
+		"service":       "cns-runner",
+		"runner_status": "ok",
+	})
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx, cancel := s.ctx(r)
+	defer cancel()
+	st := s.buildRuntimeStatus(ctx)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(st)
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(model.VersionInfo{
+		Service:   "cns-runner",
+		Version:   buildinfo.Version,
+		GitSHA:    buildinfo.GitSHA,
+		BuildTime: buildinfo.BuildTime,
+	})
+}
+
+func (s *Server) handleRecentOperations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := parseLimitQuery(r, 20, 50)
+	raw := observability.RecentOperations(limit)
+	out := make([]model.OperationRecordDTO, 0, len(raw))
+	for _, row := range raw {
+		out = append(out, model.OperationRecordDTO{
+			Operation:    row.Operation,
+			Provider:     row.Provider,
+			Status:       row.Status,
+			DurationMs:   row.DurationMs,
+			RequestID:    row.RequestID,
+			DeploymentID: row.DeploymentID,
+			TopologyID:   row.TopologyID,
+			ErrorMessage: row.ErrorMessage,
+			CreatedAt:    row.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"operations": out,
+		"count":      len(out),
+	})
+}
+
+func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx, cancel := s.ctx(r)
+	defer cancel()
+	st := s.buildRuntimeStatus(ctx)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(st)
 }

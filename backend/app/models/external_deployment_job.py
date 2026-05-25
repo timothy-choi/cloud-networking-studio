@@ -13,6 +13,7 @@ from app.db.session import Base
 
 if TYPE_CHECKING:
     from app.models.deployment_target import DeploymentTarget
+    from app.models.external_deployment import ExternalDeployment
     from app.models.project import Project
     from app.models.topology import Topology
     from app.models.user import User
@@ -69,3 +70,8 @@ class ExternalDeploymentJob(Base):
     topology: Mapped["Topology"] = relationship(back_populates="external_deployment_jobs")
     target: Mapped["DeploymentTarget"] = relationship(back_populates="external_jobs")
     created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_user_id])
+    external_deployments: Mapped[list["ExternalDeployment"]] = relationship(
+        back_populates="job",
+        foreign_keys="ExternalDeployment.job_id",
+        passive_deletes=True,
+    )

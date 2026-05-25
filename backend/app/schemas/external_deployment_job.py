@@ -10,7 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 JOB_MODES = frozenset({"validate", "plan", "apply", "destroy"})
 JOB_STATUSES = frozenset({"queued", "running", "succeeded", "failed", "cancelled"})
-ENABLED_JOB_MODES = frozenset({"validate", "plan"})
+
+
+def enabled_job_modes_for_target_type(target_type: str) -> frozenset[str]:
+    from app.services.external_deployment_job_service import enabled_modes_for_target
+
+    return enabled_modes_for_target(target_type)
 
 
 class ExternalDeploymentJobCreate(BaseModel):

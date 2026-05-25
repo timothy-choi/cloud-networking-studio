@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 
 if TYPE_CHECKING:
+    from app.models.external_deployment import ExternalDeployment
     from app.models.external_deployment_job import ExternalDeploymentJob
     from app.models.project import Project
     from app.models.user import User
@@ -52,6 +53,10 @@ class DeploymentTarget(Base):
     project: Mapped["Project"] = relationship(back_populates="deployment_targets")
     created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_user_id])
     external_jobs: Mapped[list["ExternalDeploymentJob"]] = relationship(
+        back_populates="target",
+        passive_deletes=True,
+    )
+    external_deployments: Mapped[list["ExternalDeployment"]] = relationship(
         back_populates="target",
         passive_deletes=True,
     )

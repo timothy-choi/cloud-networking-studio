@@ -34,8 +34,14 @@ def _create_target(client, headers, project_id: str, **overrides) -> dict:
     body = {
         "name": "Staging Docker Host",
         "target_type": "remote_docker",
-        "config_json": {"host": "docker.example.com", "port": 2376},
-        "credentials_ref": "vault://cns/staging/docker",
+        "config_json": {
+            "host": "docker.example.com",
+            "ssh_user": "ubuntu",
+            "ssh_port": 22,
+            "remote_workdir": "/opt/cns-external-deployments",
+            "supports_compose": True,
+        },
+        "credentials_ref": "dev:default",
         **overrides,
     }
     r = client.post(f"/projects/{project_id}/deployment-targets", headers=headers, json=body)
@@ -49,7 +55,7 @@ def test_create_and_list_deployment_targets(client_strict):
 
     target = _create_target(client_strict, h, pid)
     assert target["target_type"] == "remote_docker"
-    assert target["credentials_ref"] == "vault://cns/staging/docker"
+    assert target["credentials_ref"] == "dev:default"
     assert target["status"] == "active"
 
     lst = client_strict.get(f"/projects/{pid}/deployment-targets", headers=h)
@@ -61,34 +67,53 @@ def test_create_and_list_deployment_targets(client_strict):
     assert detail.json()["name"] == "Staging Docker Host"
 
 
-def test_create_validate_job_and_logs(client_strict):
-    h = _register(client_strict)
-    pid, tid = _project_and_topology(client_strict, h)
-    target = _create_target(client_strict, h, pid)
+def test_create_validate_job_and_logs(client_strict, monkeypatch, tmp_path):
+    key_file = tmp_path / "test.pem"
+    key_file.write_text("fake-key\n")
+    monkeypatch.setenv("CNS_EXTERNAL_DEPLOY_SSH_KEY_PATH", str(key_file))
 
-    jr = client_strict.post(
-        f"/topologies/{tid}/external-deployment-jobs",
-        headers=h,
-        json={"target_id": target["id"], "mode": "validate"},
-    )
-    assert jr.status_code == 201, jr.text
-    job = jr.json()
-    assert job["mode"] == "validate"
-    assert job["status"] == "succeeded"
-    assert job["logs"]
-    assert "stub" in job["logs"].lower() or "validation" in job["logs"].lower()
+    from app.services.remote_command_runner import RemoteCommandResult, set_remote_command_runner
 
-    gr = client_strict.get(f"/external-deployment-jobs/{job['id']}", headers=h)
-    assert gr.status_code == 200
-    assert gr.json()["status"] == "succeeded"
+    class _Runner:
+        def run_ssh(self, conn, remote_command, *, timeout_seconds=120):
+            return RemoteCommandResult(0, "Docker version 26.0.0", "")
 
-    lr = client_strict.get(f"/external-deployment-jobs/{job['id']}/logs", headers=h)
-    assert lr.status_code == 200
-    assert lr.json()["logs"] == job["logs"]
+        def upload_files(self, conn, local_paths, remote_dir, *, timeout_seconds=120):
+            return RemoteCommandResult(0, "", "")
 
-    lst = client_strict.get(f"/topologies/{tid}/external-deployment-jobs", headers=h)
-    assert lst.status_code == 200
-    assert any(j["id"] == job["id"] for j in lst.json()["items"])
+    set_remote_command_runner(_Runner())
+    try:
+        h = _register(client_strict)
+        pid, tid = _project_and_topology(client_strict, h)
+        target = _create_target(client_strict, h, pid)
+
+        jr = client_strict.post(
+            f"/topologies/{tid}/external-deployment-jobs",
+            headers=h,
+            json={"target_id": target["id"], "mode": "validate"},
+        )
+        assert jr.status_code == 201, jr.text
+        job = jr.json()
+        assert job["mode"] == "validate"
+        assert job["status"] == "succeeded"
+        assert job["logs"]
+        assert "[remote-docker]" in job["logs"].lower()
+        assert "validation succeeded" in job["logs"].lower()
+        assert str(key_file) not in job["logs"]
+
+        gr = client_strict.get(f"/external-deployment-jobs/{job['id']}", headers=h)
+        assert gr.status_code == 200
+        assert gr.json()["status"] == "succeeded"
+
+        lr = client_strict.get(f"/external-deployment-jobs/{job['id']}/logs", headers=h)
+        assert lr.status_code == 200
+        assert lr.json()["logs"] == job["logs"]
+
+        lst = client_strict.get(f"/topologies/{tid}/external-deployment-jobs", headers=h)
+        assert lst.status_code == 200
+        assert any(j["id"] == job["id"] for j in lst.json()["items"])
+    finally:
+        set_remote_command_runner(None)
 
 
 def test_plan_job_returns_artifact_refs(client_strict):
@@ -108,10 +133,16 @@ def test_plan_job_returns_artifact_refs(client_strict):
     assert job["artifact_refs"][0]["type"] == "plan_summary"
 
 
-def test_apply_mode_rejected(client_strict):
+def test_apply_mode_rejected_for_non_remote_docker(client_strict):
     h = _register(client_strict)
     pid, tid = _project_and_topology(client_strict, h)
-    target = _create_target(client_strict, h, pid)
+    target = _create_target(
+        client_strict,
+        h,
+        pid,
+        target_type="terraform",
+        config_json={"backend": "local"},
+    )
 
     jr = client_strict.post(
         f"/topologies/{tid}/external-deployment-jobs",

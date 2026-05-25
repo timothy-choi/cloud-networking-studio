@@ -102,13 +102,19 @@ def test_compose_backend_contains_env_and_secrets_mount():
 def test_remote_docker_executor_uses_runner_for_validate(client_strict, monkeypatch, tmp_path):
     key_file = tmp_path / "test.pem"
     key_file.write_text("fake-key\n", encoding="utf-8")
-    monkeypatch.setenv("CNS_EXTERNAL_DEPLOY_SSH_KEY_PATH", str(key_file))
+    monkeypatch.setenv("CNS_TEST_SSH_KEY_PATH", str(key_file))
+    monkeypatch.setattr(
+        "app.services.remote_docker_executor_service.ensure_ssh_client_installed",
+        lambda: None,
+    )
 
     commands: list[str] = []
 
     class _Runner:
         def run_ssh(self, conn, remote_command, *, timeout_seconds=120):
             commands.append(remote_command)
+            if "docker compose version" in remote_command:
+                return RemoteCommandResult(0, "Docker Compose version v2.27.0", "")
             return RemoteCommandResult(0, "Docker version 26.0.0", "")
 
         def upload_files(self, conn, local_paths, remote_dir, *, timeout_seconds=120):
@@ -131,7 +137,9 @@ def test_remote_docker_executor_uses_runner_for_validate(client_strict, monkeypa
             json={"target_id": target["id"], "mode": "validate"},
         )
         assert jr.status_code == 201, jr.text
-        assert jr.json()["status"] == "succeeded"
+        job = jr.json()
+        assert job["status"] == "succeeded", job.get("logs")
         assert any("docker --version" in cmd for cmd in commands)
+        assert any("docker compose version" in cmd for cmd in commands)
     finally:
         set_remote_command_runner(None)

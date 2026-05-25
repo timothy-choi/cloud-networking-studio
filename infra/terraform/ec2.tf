@@ -33,10 +33,11 @@ resource "aws_instance" "cns" {
   }
 
   user_data = templatefile("${path.module}/templates/user_data.sh.tpl", {
-    staging_bootstrap    = var.environment == "staging"
-    staging_cors_origins = var.staging_cors_origins
-    staging_api_host     = var.staging_api_host
-    staging_app_url      = var.staging_app_url
+    staging_bootstrap                  = var.environment == "staging"
+    staging_cors_origins                 = var.staging_cors_origins
+    staging_api_host                     = var.staging_api_host
+    staging_app_url                      = var.staging_app_url
+    staging_remote_docker_ssh_key_path   = var.staging_remote_docker_ssh_key_path
   })
 
   metadata_options {

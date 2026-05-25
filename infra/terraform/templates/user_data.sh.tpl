@@ -107,6 +107,8 @@ log "Docker bootstrap completed successfully"
 %{ if staging_bootstrap ~}
 # Staging bootstrap: seed .env.staging before first GitHub Actions deploy (cloud-init only runs once).
 STAGING_DIR="/home/ubuntu/cloud-networking-studio-staging"
+SECRETS_DIR="/opt/cns/secrets"
+install -d -m 0750 -o ubuntu -g ubuntu "$${SECRETS_DIR}"
 install -d -m 0750 -o ubuntu -g ubuntu "$${STAGING_DIR}"
 if [[ ! -f "$${STAGING_DIR}/.env.staging" ]]; then
   umask 077
@@ -119,6 +121,7 @@ CNS_SSLIP_HOST=${staging_api_host}
 CADDYFILE_CADDY=./deploy/Caddyfile.staging-https
 CNS_CADDY_AUTO_HTTPS=on
 CNS_FRONTEND_APP_URL=${staging_app_url}
+CNS_REMOTE_DOCKER_SSH_KEY_PATH=${staging_remote_docker_ssh_key_path}
 STAGING_ENV
   chown ubuntu:ubuntu "$${STAGING_DIR}/.env.staging"
   chmod 0600 "$${STAGING_DIR}/.env.staging"

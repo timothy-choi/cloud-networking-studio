@@ -1032,6 +1032,7 @@ def post_deployment_cleanup(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     topo = db.get(Topology, dep.topology_id)
+    audit_status = "warning" if out.get("partial") else "success"
     record_audit(
         db,
         action="deployment.cleanup",
@@ -1039,7 +1040,12 @@ def post_deployment_cleanup(
         resource_id=dep.id,
         project_id=topo.project_id if topo else None,
         actor_user_id=user.id,
-        status="success",
+        status=audit_status,
+        metadata={
+            "cleanup_status": out.get("cleanup_status"),
+            "partial": out.get("partial"),
+            "marked_destroyed": out.get("marked_destroyed"),
+        },
     )
     try:
         from app.services import email_templates as tpl
@@ -1050,14 +1056,15 @@ def post_deployment_cleanup(
             db,
             user.id,
             type="deployment.cleanup",
-            title="Deployment cleanup completed",
-            message=f"Runtime cleanup completed for deployment {dep.id}.",
-            severity="success",
+            title="Deployment cleanup completed" if not out.get("partial") else "Deployment cleanup partial",
+            message=str(out.get("message") or f"Runtime cleanup completed for deployment {dep.id}."),
+            severity="success" if not out.get("partial") else "warning",
             project_id=topo.project_id if topo else None,
             metadata={
                 "deployment_id": str(dep.id),
                 "topology_id": str(dep.topology_id),
                 "url": f"/topologies/{dep.topology_id}",
+                "partial": out.get("partial"),
             },
             send_email=False,
             email_subject=subj,
@@ -1071,6 +1078,11 @@ def post_deployment_cleanup(
         ok=bool(out.get("ok")),
         deployment_id=deployment_id,
         events=[{"message": e.get("message", "")} for e in out.get("events", [])],
+        cleanup_status=out.get("cleanup_status"),
+        deployment_status=out.get("deployment_status"),
+        partial=bool(out.get("partial")),
+        message=out.get("message"),
+        marked_destroyed=bool(out.get("marked_destroyed")),
     )
 
 

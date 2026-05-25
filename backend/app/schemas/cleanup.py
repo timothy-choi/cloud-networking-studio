@@ -10,6 +10,7 @@ from pydantic import BaseModel
 class DeploymentCleanupStatusResponse(BaseModel):
     deployment_id: UUID
     status: str
+    cleanup_status: str | None = None
     eligible_for_cleanup: bool
     reasons: list[str]
     runtime_resources_count: int
@@ -26,3 +27,8 @@ class DeploymentCleanupResponse(BaseModel):
     ok: bool
     deployment_id: UUID
     events: list[dict[str, str]]
+    cleanup_status: str | None = None
+    deployment_status: str | None = None
+    partial: bool = False
+    message: str | None = None
+    marked_destroyed: bool = False

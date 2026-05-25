@@ -105,6 +105,10 @@ class RuntimeTopologyResponse(BaseModel):
         default=None,
         description="Non-fatal drift or inspection issue (never implies HTTP 500).",
     )
+    message: str | None = Field(
+        default=None,
+        description="Human-readable runtime summary (e.g. after cleanup/destroy).",
+    )
     deployment_status: DeploymentStatus | None = None
     latest_deployment_id: UUID | None = None
     topology_sync_status: str | None = Field(

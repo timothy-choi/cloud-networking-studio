@@ -14,7 +14,9 @@ from app.db.session import Base
 
 if TYPE_CHECKING:
     from app.models.deployment import Deployment
+    from app.models.deployment_profile import DeploymentProfile
     from app.models.project import Project
+    from app.models.topology_version import TopologyVersion
 
 
 class TopologyStatus(str, enum.Enum):
@@ -89,6 +91,17 @@ class Topology(Base):
         passive_deletes=True,
     )
     deployments: Mapped[list[Deployment]] = relationship(
+        back_populates="topology",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    versions: Mapped[list["TopologyVersion"]] = relationship(
+        back_populates="topology",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="TopologyVersion.version_number.desc()",
+    )
+    deployment_profiles: Mapped[list["DeploymentProfile"]] = relationship(
         back_populates="topology",
         cascade="all, delete-orphan",
         passive_deletes=True,

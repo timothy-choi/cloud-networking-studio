@@ -7,9 +7,10 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, Uuid
+from sqlalchemy import DateTime, ForeignKey, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.db.coerced_enum import coerced_enum_column, register_legacy_enum_alias
 from app.db.session import Base
 
 if TYPE_CHECKING:
@@ -30,6 +31,21 @@ class DeploymentStatus(str, enum.Enum):
     STOPPED = "stopped"
 
 
+class TopologySyncStatus(str, enum.Enum):
+    """Whether deployment config still matches the topology definition."""
+
+    IN_SYNC = "in_sync"
+    OUT_OF_SYNC = "out_of_sync"
+
+
+class DeploymentCleanupStatus(str, enum.Enum):
+    """Result of tearing down runtime resources for a deployment."""
+
+    NONE = "none"
+    CLEAN = "clean"
+    PARTIAL_FAILED = "partial_failed"
+
+
 class DeploymentEventLevel(str, enum.Enum):
     """Severity for deployment log lines stored as relational events."""
 
@@ -39,8 +55,9 @@ class DeploymentEventLevel(str, enum.Enum):
     ERROR = "error"
 
 
-def _enum_column(enum_cls: type[enum.Enum]) -> Enum:
-    return Enum(enum_cls, native_enum=False, length=32)
+register_legacy_enum_alias(
+    DeploymentStatus, legacy_value="destroyed", canonical_value="stopped"
+)
 
 
 def _utc_now() -> datetime:
@@ -61,12 +78,35 @@ class Deployment(Base):
         index=True,
     )
     status: Mapped[DeploymentStatus] = mapped_column(
-        _enum_column(DeploymentStatus),
+        coerced_enum_column(DeploymentStatus),
         default=DeploymentStatus.PENDING,
     )
     runtime_target: Mapped[str] = mapped_column(String(64))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    topology_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("topology_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    deployment_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("deployment_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    effective_config_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    topology_sync_status: Mapped[TopologySyncStatus] = mapped_column(
+        coerced_enum_column(TopologySyncStatus),
+        default=TopologySyncStatus.IN_SYNC,
+        index=True,
+    )
+    cleanup_status: Mapped[DeploymentCleanupStatus] = mapped_column(
+        coerced_enum_column(DeploymentCleanupStatus),
+        default=DeploymentCleanupStatus.NONE,
+        index=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now
@@ -115,7 +155,7 @@ class DeploymentEvent(Base):
         index=True,
     )
     level: Mapped[DeploymentEventLevel] = mapped_column(
-        _enum_column(DeploymentEventLevel),
+        coerced_enum_column(DeploymentEventLevel),
         default=DeploymentEventLevel.INFO,
     )
     message: Mapped[str] = mapped_column(Text)

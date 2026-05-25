@@ -15,6 +15,7 @@ from app.models.deployment_runtime_resource import DeploymentRuntimeResource
 from app.models.deployment_runtime_terminal_session import DeploymentRuntimeTerminalSession
 from app.models.topology import Topology
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
+from app.services.deployment_destroy_service import _legacy_node_ids_from_deployment
 from app.services.deployment_service_exposure_service import mark_expired_exposures
 
 
@@ -138,8 +139,14 @@ def run_deployment_cleanup(db: Session, dep: Deployment) -> dict[str, Any]:
         raise ValueError("topology not found")
     expire_stale_terminal_sessions(db)
     mark_expired_exposures(db, dep.id)
+    legacy_node_ids = _legacy_node_ids_from_deployment(dep)
     provider = runtime_provider_for_topology(dep.runtime_target)
-    rows = provider.destroy(topo.id, dep.id, project_id=topo.project_id)
+    rows = provider.destroy(
+        topo.id,
+        dep.id,
+        project_id=topo.project_id,
+        legacy_node_ids=legacy_node_ids or None,
+    )
     db.add(
         DeploymentEvent(
             deployment_id=dep.id,

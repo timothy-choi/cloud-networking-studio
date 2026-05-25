@@ -20,6 +20,7 @@ from app.models.topology import Topology
 from app.models.user import User
 from app.services.access_control import get_deployment_for_user, require_deployment_editor
 from app.services import topology_deploy_execution as topology_deploy_execution
+from app.services.deployment_destroy_service import destroy_deployment_record
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
 from app.schemas.deploy import TopologyDeployRequest
 from app.schemas.deployment import DeploymentEventResponse, DeploymentResponse
@@ -111,8 +112,15 @@ def deploy_topology(
 ) -> Deployment | JSONResponse:
     """Run deployment against the topology's runtime target (real Docker when target is docker)."""
     mode = body.network_allocation_mode if body else None
+    profile_id = body.profile_id if body else None
+    topology_version_id = body.topology_version_id if body else None
     out = topology_deploy_execution.execute_topology_deploy(
-        db, user, topology_id, network_allocation_mode=mode
+        db,
+        user,
+        topology_id,
+        network_allocation_mode=mode,
+        profile_id=profile_id,
+        topology_version_id=topology_version_id,
     )
     if isinstance(out, JSONResponse):
         return out
@@ -139,94 +147,7 @@ def destroy_deployment(
             detail="Topology not found",
         )
 
-    provider = runtime_provider_for_topology(dep.runtime_target)
-
-    record_timeline_event(
-        db,
-        deployment_id=dep.id,
-        event_type=TimelineEventType.DESTROY_REQUESTED,
-        message="Destroy requested.",
-        status="info",
-    )
-    record_audit(
-        db,
-        action="deployment.destroy",
-        resource_type="deployment",
-        resource_id=dep.id,
-        project_id=topo.project_id if topo else None,
-        actor_user_id=user.id,
-        status="pending",
-    )
-
-    already_stopped = dep.status == DeploymentStatus.STOPPED
-    if already_stopped:
-        _append_event(
-            db,
-            dep.id,
-            "Destroy requested: deployment already stopped; running label-based Docker cleanup.",
-            DeploymentEventLevel.INFO,
-        )
-    else:
-        dep.status = DeploymentStatus.STOPPING
-        record_timeline_event(
-            db,
-            deployment_id=dep.id,
-            event_type=TimelineEventType.DESTROY_STARTED,
-            message="Destroy started — tearing down runtime resources.",
-            status="running",
-        )
-        _append_event(db, dep.id, "Deployment stopping — tearing down runtime resources.")
-        db.flush()
-
-    rows = provider.destroy(topo.id, dep.id, project_id=topo.project_id)
-
-    db.execute(
-        delete(DeploymentRuntimeResource).where(
-            DeploymentRuntimeResource.deployment_id == dep.id
-        )
-    )
-
-    for level, msg in rows:
-        db.add(
-            DeploymentEvent(
-                deployment_id=dep.id,
-                level=level,
-                message=msg,
-            )
-        )
-
-    dep.status = DeploymentStatus.STOPPED
-    dep.finished_at = datetime.now(UTC)
-    if already_stopped:
-        _append_event(
-            db,
-            dep.id,
-            "Destroy idempotent: deployment was already stopped; cleanup events recorded.",
-            DeploymentEventLevel.INFO,
-        )
-    else:
-        _append_event(
-            db,
-            dep.id,
-            "Deployment stopped — runtime resources destroyed (best-effort).",
-            DeploymentEventLevel.INFO,
-        )
-    record_timeline_event(
-        db,
-        deployment_id=dep.id,
-        event_type=TimelineEventType.DESTROY_SUCCEEDED,
-        message="Destroy succeeded.",
-        status="succeeded",
-    )
-    record_audit(
-        db,
-        action="deployment.destroy",
-        resource_type="deployment",
-        resource_id=dep.id,
-        project_id=topo.project_id if topo else None,
-        actor_user_id=user.id,
-        status="success",
-    )
+    destroy_deployment_record(db, dep=dep, topo=topo, actor=user)
     db.commit()
 
     return _load_deployment_full(db, deployment_id)

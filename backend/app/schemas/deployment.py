@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.deployment import DeploymentEventLevel, DeploymentStatus
+from app.models.deployment import DeploymentEventLevel, DeploymentStatus, TopologySyncStatus, DeploymentCleanupStatus
 
 
 class DeploymentEventResponse(BaseModel):
@@ -57,6 +57,26 @@ class DeploymentResponse(BaseModel):
     topology_id: UUID
     status: DeploymentStatus = Field(description="Coarse deployment lifecycle state.")
     runtime_target: str = Field(description="Runtime key copied from the topology at deploy time.")
+    topology_version_id: UUID | None = Field(
+        default=None,
+        description="Topology version snapshot used for this deployment.",
+    )
+    deployment_profile_id: UUID | None = Field(
+        default=None,
+        description="Deployment profile applied for env/runtime overrides.",
+    )
+    effective_config_json: dict | None = Field(
+        default=None,
+        description="Resolved config after profile overrides (secrets redacted in exports).",
+    )
+    topology_sync_status: TopologySyncStatus | None = Field(
+        default=None,
+        description="Whether this deployment still matches the topology definition.",
+    )
+    cleanup_status: DeploymentCleanupStatus | None = Field(
+        default=None,
+        description="Result of runtime resource teardown for this deployment.",
+    )
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime

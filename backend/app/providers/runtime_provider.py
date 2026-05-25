@@ -47,6 +47,7 @@ class RuntimeProvider(ABC):
         deployment_id: UUID,
         *,
         project_id: UUID | None = None,
+        legacy_node_ids: frozenset[UUID] | None = None,
     ) -> list[ProviderEvent]:
         """Tear down external resources created for this topology/deployment."""
 

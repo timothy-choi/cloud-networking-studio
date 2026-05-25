@@ -44,8 +44,10 @@ class GoHybridDockerRuntimeProvider(RuntimeProvider):
         deployment_id: UUID,
         *,
         project_id: UUID | None = None,
+        legacy_node_ids: frozenset[UUID] | None = None,
     ) -> list[ProviderEvent]:
         _log.info("runtime_executor=go delegating destroy to Go runner")
+        _ = legacy_node_ids
         return self._runner.delete_deployment(
             deployment_id, topology_id, project_id=project_id
         )

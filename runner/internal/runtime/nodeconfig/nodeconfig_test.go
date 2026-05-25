@@ -1,6 +1,7 @@
 package nodeconfig
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/timothy-choi/cloud-networking-studio/runner/internal/model"
@@ -33,5 +34,24 @@ func TestPlanNodeRuntimeMetaIncludesEnv(t *testing.T) {
 	meta := PlanNodeRuntimeMeta(pn, "busybox:latest", []string{"sleep", "infinity"})
 	if meta["env"] == "" {
 		t.Fatalf("expected env in metadata: %+v", meta)
+	}
+}
+
+func TestResolveImageDefaultsByNodeType(t *testing.T) {
+	img, err := ResolveImage(nil, "generic")
+	if err != nil || img != "nginx:alpine" {
+		t.Fatalf("generic default: got %q err=%v", img, err)
+	}
+	img, err = ResolveImage(nil, "host")
+	if err != nil || img != "alpine:latest" {
+		t.Fatalf("host default: got %q err=%v", img, err)
+	}
+}
+
+func TestResolveImageRejectsBlankExplicit(t *testing.T) {
+	blank := "   "
+	_, err := ResolveImage(&blank, "host")
+	if err == nil || !strings.Contains(err.Error(), "Node image is required") {
+		t.Fatalf("expected blank image error, got %v", err)
 	}
 }

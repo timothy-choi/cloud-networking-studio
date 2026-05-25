@@ -28,11 +28,14 @@ from app.models.deployment import (
     DeploymentEvent,
     DeploymentEventLevel,
     DeploymentStatus,
+    TopologySyncStatus,
 )
 from app.models.deployment_runtime_resource import DeploymentRuntimeResource
 from app.models.deployment_runtime_exec_result import DeploymentRuntimeExecResult
 from app.models.deployment_runtime_terminal_session import DeploymentRuntimeTerminalSession
 from app.models.deployment_service_exposure import DeploymentServiceExposure
+from app.models.deployment_profile import DeploymentProfile
+from app.models.topology_version import TopologyVersion
 from app.models.traffic_test import TrafficTest, TrafficTestResult, TrafficTestStatus, TrafficTestType
 from app.models.failure_injection import (
     FailureInjection,
@@ -52,9 +55,12 @@ __all__ = [
     "DeploymentRuntimeTerminalSession",
     "DeploymentRuntimeResource",
     "DeploymentServiceExposure",
+    "DeploymentProfile",
+    "TopologyVersion",
     "DeploymentEvent",
     "DeploymentEventLevel",
     "DeploymentStatus",
+    "TopologySyncStatus",
     "FailureInjection",
     "FailureInjectionFailureType",
     "FailureInjectionStatus",

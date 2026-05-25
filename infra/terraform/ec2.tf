@@ -32,26 +32,12 @@ resource "aws_instance" "cns" {
     encrypted   = true
   }
 
-  user_data = <<-EOF
-    #!/bin/bash
-    set -euxo pipefail
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y
-    apt-get install -y ca-certificates curl gnupg git jq
-
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-    . /etc/os-release
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $VERSION_CODENAME stable" > /etc/apt/sources.list.d/docker.list
-    apt-get update -y
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    systemctl enable docker
-    systemctl start docker
-    if id ubuntu >/dev/null 2>&1; then
-      usermod -aG docker ubuntu || true
-    fi
-  EOF
+  user_data = templatefile("${path.module}/templates/user_data.sh.tpl", {
+    staging_bootstrap    = var.environment == "staging"
+    staging_cors_origins = var.staging_cors_origins
+    staging_api_host     = var.staging_api_host
+    staging_app_url      = var.staging_app_url
+  })
 
   metadata_options {
     http_endpoint               = "enabled"

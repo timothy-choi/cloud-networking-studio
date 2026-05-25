@@ -32,6 +32,19 @@ from app.services.runtime_access_payload import (
 
 _log = logging.getLogger(__name__)
 
+# In-memory container names for fake-docker integration tests (keyed by deployment id).
+_FAKE_CONTAINERS_BY_DEPLOYMENT: dict[str, set[str]] = defaultdict(set)
+
+
+def fake_register_deployment_containers(deployment_id: UUID, *names: str) -> None:
+    """Register simulated containers for a deployment (tests / fake provider)."""
+    _FAKE_CONTAINERS_BY_DEPLOYMENT[str(deployment_id)].update(names)
+
+
+def fake_remaining_containers(deployment_id: UUID) -> set[str]:
+    """Return simulated containers still tracked for a deployment."""
+    return set(_FAKE_CONTAINERS_BY_DEPLOYMENT.get(str(deployment_id), set()))
+
 
 def topology_network_name(topology_id: UUID) -> str:
     short = str(topology_id).replace("-", "")[:12]
@@ -529,6 +542,9 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
             ]
         )
         ra = build_fake_runtime_access_from_plan(plan)
+        if plan.deployment_id is not None:
+            names = {f"cns-{pn.name}" for pn in plan.nodes}
+            _FAKE_CONTAINERS_BY_DEPLOYMENT[str(plan.deployment_id)] = names
         return DeployOutcome(events=events, runtime_access=ra or None)
 
     def destroy(
@@ -537,14 +553,23 @@ class FakeDockerRuntimeProvider(RuntimeProvider):
         deployment_id: UUID,
         *,
         project_id: UUID | None = None,
+        legacy_node_ids: frozenset[UUID] | None = None,
     ) -> list[ProviderEvent]:
-        _ = project_id
-        return [
-            (
-                DeploymentEventLevel.INFO,
-                f"Destroy simulated for topology {topology_id} deployment {deployment_id} (no Docker socket)",
-            ),
+        _ = (project_id, legacy_node_ids)
+        key = str(deployment_id)
+        removed = sorted(_FAKE_CONTAINERS_BY_DEPLOYMENT.pop(key, set()))
+        msg = (
+            f"Destroy simulated for topology {topology_id} deployment {deployment_id} "
+            f"(no Docker socket)"
+        )
+        events: list[ProviderEvent] = [
+            (DeploymentEventLevel.INFO, msg),
         ]
+        for name in removed:
+            events.append(
+                (DeploymentEventLevel.INFO, f"Removed container: {name}"),
+            )
+        return events
 
     def inspect_topology_runtime(self, topology_id: UUID) -> ProviderRuntimeSnapshot:
         _ = topology_id
@@ -626,7 +651,15 @@ class DockerRuntimeProvider(RuntimeProvider):
     """Real Docker engine orchestration for bridge networks + containers."""
 
     def __init__(self, client: docker.DockerClient | None = None) -> None:
-        self._client = client or docker.from_env()
+        self._client_error: str | None = None
+        if client is not None:
+            self._client = client
+        else:
+            try:
+                self._client = docker.from_env()
+            except Exception as exc:  # noqa: BLE001 — probe only; callers degrade gracefully
+                self._client = None
+                self._client_error = str(exc)
 
     def deploy(self, plan: DeploymentPlan) -> DeployOutcome:
         if plan.segmented_networks:
@@ -1263,12 +1296,16 @@ class DockerRuntimeProvider(RuntimeProvider):
         deployment_id: UUID,
         *,
         project_id: UUID | None = None,
+        legacy_node_ids: frozenset[UUID] | None = None,
     ) -> list[ProviderEvent]:
         _ = project_id
         events: list[ProviderEvent] = []
 
         containers = list_containers_for_cns_deployment_teardown(
-            self._client, topology_id, deployment_id
+            self._client,
+            topology_id,
+            deployment_id,
+            legacy_node_ids=legacy_node_ids,
         )
         for ctr in containers:
             cname = getattr(ctr, "name", "") or ""
@@ -1325,6 +1362,8 @@ class DockerRuntimeProvider(RuntimeProvider):
         return events
 
     def inspect_topology_runtime(self, topology_id: UUID) -> ProviderRuntimeSnapshot:
+        if self._client is None:
+            return ProviderRuntimeSnapshot()
         flt = _topology_runtime_filters(topology_id)
         nets_raw: list = []
         ctrs_raw: list = []
@@ -1336,7 +1375,10 @@ class DockerRuntimeProvider(RuntimeProvider):
             ctrs_raw = list(self._client.containers.list(all=True, filters=flt))
         except APIError:
             pass
-        labeled_ids = _labeled_topology_network_ids(self._client, topology_id)
+        try:
+            labeled_ids = _labeled_topology_network_ids(self._client, topology_id)
+        except APIError:
+            labeled_ids = frozenset()
         nets = tuple(_network_record(n) for n in nets_raw)
         ctrs = tuple(
             _container_record(c, topology_id, labeled_ids) for c in ctrs_raw
@@ -1622,15 +1664,28 @@ def _docker_network_export_name(net_obj) -> str:
 
 
 def list_containers_for_cns_deployment_teardown(
-    client: docker.DockerClient, topology_id: UUID, deployment_id: UUID
+    client: docker.DockerClient,
+    topology_id: UUID,
+    deployment_id: UUID,
+    *,
+    legacy_node_ids: frozenset[UUID] | None = None,
 ) -> list:
-    """Union of containers labeled for this deployment and topology-managed CNS containers."""
+    """Union of containers labeled for this deployment and legacy node attachments."""
     by_id: dict[str, object] = {}
     dep_s, tid_s = str(deployment_id), str(topology_id)
-    for flt in (
+    filters: list[dict[str, list[str]]] = [
         {"label": [f"cns.deployment_id={dep_s}"]},
-        {"label": [f"cns.topology_id={tid_s}", "cns.managed=true"]},
-    ):
+    ]
+    for nid in sorted(legacy_node_ids or (), key=lambda u: str(u)):
+        filters.append(
+            {
+                "label": [
+                    f"cns.topology_id={tid_s}",
+                    f"cns.node_id={nid}",
+                ]
+            }
+        )
+    for flt in filters:
         try:
             for ctr in client.containers.list(all=True, filters=flt):
                 cid = getattr(ctr, "id", None)
@@ -1658,6 +1713,43 @@ def remove_cns_networks_for_deployment_teardown(
         if nm:
             _remove_network_if_exists(client, nm)
     _remove_all_topology_networks(client, topology_id)
+
+
+def remaining_labeled_runtime_resources(
+    client: docker.DockerClient,
+    topology_id: UUID,
+    deployment_id: UUID,
+    *,
+    legacy_node_ids: frozenset[UUID] | None = None,
+) -> dict[str, list[str]]:
+    """Best-effort inventory of engine resources still labeled for a deployment."""
+    containers = list_containers_for_cns_deployment_teardown(
+        client,
+        topology_id,
+        deployment_id,
+        legacy_node_ids=legacy_node_ids,
+    )
+    names: list[str] = []
+    for ctr in containers:
+        cname = getattr(ctr, "name", "") or ""
+        if not cname:
+            attrs = getattr(ctr, "attrs", None) or {}
+            cname = str(attrs.get("Name") or "")
+        if cname.startswith("/"):
+            cname = cname[1:]
+        if cname:
+            names.append(cname)
+    dep_s = str(deployment_id)
+    net_names: list[str] = []
+    try:
+        dep_nets = client.networks.list(filters={"label": [f"cns.deployment_id={dep_s}"]})
+    except APIError:
+        dep_nets = []
+    for n in dep_nets:
+        nm = _docker_network_export_name(n)
+        if nm:
+            net_names.append(nm)
+    return {"containers": names, "networks": net_names}
 
 
 def _topology_runtime_filters(topology_id: UUID) -> dict[str, list[str]]:

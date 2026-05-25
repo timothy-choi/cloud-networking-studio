@@ -17,7 +17,14 @@ from app.models.deployment import DeploymentEvent, DeploymentEventLevel
 from app.models.user import User
 from app.runtime.go_runner_client import effective_runtime_executor
 from app.runtime.runner_operation_history import list_recent_runner_operations
+from app.runtime.runner_runtime_error import (
+    clear_runtime_error_after_probe_success,
+    clear_runtime_error_if_operation_succeeded,
+    get_runtime_error,
+    set_runtime_error,
+)
 from app.schemas.runner_status import (
+    LastRuntimeErrorDetail,
     RecentRunnerOperationsResponse,
     RunnerOperationRecordResponse,
     RunnerStatusDetailResponse,
@@ -38,7 +45,26 @@ from app.schemas.runtime import (
 
 router = APIRouter(tags=["runtime"])
 
-_last_runtime_status_error: str | None = None
+
+def _active_runtime_error() -> LastRuntimeErrorDetail | None:
+    payload = get_runtime_error(include_historical=False)
+    if payload is None:
+        return None
+    return LastRuntimeErrorDetail.model_validate(payload)
+
+
+def _normalize_runner_unreachable_message(exc: Exception | str) -> str:
+    raw = str(exc).strip()
+    lower = raw.lower()
+    if not raw:
+        return "Go runner unavailable"
+    if "unavailable" in lower:
+        return raw[:500]
+    if isinstance(exc, httpx.ConnectError) or any(
+        token in lower for token in ("name resolution", "connection refused", "connect error", "errno")
+    ):
+        return f"Go runner unavailable: {raw}"[:500]
+    return raw[:500]
 
 
 def _runner_detail_from_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -53,22 +79,26 @@ def _runner_detail_from_payload(data: dict[str, Any]) -> dict[str, Any]:
         "git_sha": data.get("git_sha"),
         "build_time": data.get("build_time"),
         "supported_operations": data.get("supported_operations") or [],
-        "last_runtime_error": data.get("last_runtime_error"),
         "message": data.get("message"),
     }
 
 
-def _fetch_runner_status_detail() -> tuple[dict[str, Any] | None, str | None]:
-    """Returns (runner_payload, error_message)."""
+def _fetch_runner_status_detail() -> tuple[dict[str, Any] | None, str | None, int | None]:
+    """Returns (runner_payload, error_message, status_code)."""
     from app.runtime.go_runner_client import GoRunnerClient
 
     try:
         data = GoRunnerClient.from_settings().get_runner_status()
+    except httpx.HTTPStatusError as exc:
+        msg = _normalize_runner_unreachable_message(
+            str(exc.response.text or exc.response.reason_phrase or exc)
+        )
+        return None, msg, exc.response.status_code
     except (httpx.HTTPError, ValueError) as exc:
-        return None, str(exc)[:500]
+        return None, _normalize_runner_unreachable_message(exc), None
     if not isinstance(data, dict):
-        return None, "Go runner returned invalid JSON for /status"
-    return data, None
+        return None, "Go runner returned invalid JSON for /status", None
+    return data, None, None
 
 
 def _runner_status_response(*, checked_at: datetime | None = None) -> RunnerStatusDetailResponse:
@@ -86,31 +116,38 @@ def _runner_status_response(*, checked_at: datetime | None = None) -> RunnerStat
             checked_at=checked,
         )
 
-    data, err = _fetch_runner_status_detail()
+    data, err, status_code = _fetch_runner_status_detail()
     if data is None:
         msg = err or "Go runner unavailable"
+        set_runtime_error(
+            operation="runner_status",
+            message=msg,
+            status_code=status_code,
+        )
+        active_err = _active_runtime_error()
         return RunnerStatusDetailResponse(
             runner_reachable=False,
             runtime_executor=executor,
             runner_status="unreachable",
             status="degraded",
             message=msg,
-            last_runtime_error=msg,
+            last_runtime_error=active_err,
             checked_at=checked,
         )
 
     detail = _runner_detail_from_payload(data)
+    clear_runtime_error_after_probe_success("runner_status")
     return RunnerStatusDetailResponse(
         runner_reachable=True,
         runtime_executor=executor,
         checked_at=checked,
+        last_runtime_error=_active_runtime_error(),
         **detail,
     )
 
 
 def _python_executor_runtime_status() -> dict[str, Any]:
     """Control-plane view when Docker work runs in-process (docker-py)."""
-    global _last_runtime_status_error
     out: dict[str, Any] = {
         "status": "ok",
         "runtime_provider": "python",
@@ -119,8 +156,11 @@ def _python_executor_runtime_status() -> dict[str, Any]:
         "kubernetes_reachable": False,
         "current_context": "",
         "message": "",
-        "last_runtime_error": _last_runtime_status_error,
+        "last_runtime_error": None,
     }
+    active_err = _active_runtime_error()
+    if active_err is not None:
+        out["last_runtime_error"] = active_err.model_dump(mode="json")
     fake = os.environ.get("CNS_USE_FAKE_DOCKER", "").lower() in ("1", "true", "yes")
     if fake:
         out["message"] = "CNS_USE_FAKE_DOCKER: Docker engine not probed"
@@ -130,13 +170,16 @@ def _python_executor_runtime_status() -> dict[str, Any]:
 
         docker_mod.from_env().ping()
         out["docker_reachable"] = True
+        clear_runtime_error_if_operation_succeeded("docker_probe")
     except Exception as exc:  # noqa: BLE001 — best-effort probe
         out["status"] = "degraded"
         out["docker_reachable"] = False
         err = str(exc)
         out["message"] = err
-        _last_runtime_status_error = err
-        out["last_runtime_error"] = err
+        set_runtime_error(operation="docker_probe", message=err)
+        active_err = _active_runtime_error()
+        if active_err is not None:
+            out["last_runtime_error"] = active_err.model_dump(mode="json")
     return out
 
 
@@ -153,7 +196,6 @@ def get_runtime_executor_status() -> dict[str, Any]:
     * ``RUNTIME_EXECUTOR=go`` — merges JSON from ``GO_RUNNER_URL/runtime/status``; if the runner is
       unreachable, returns HTTP 200 with ``status: degraded`` and ``runner_reachable: false``.
     """
-    global _last_runtime_status_error
     from app.core.config import settings
 
     executor = effective_runtime_executor()
@@ -169,8 +211,8 @@ def get_runtime_executor_status() -> dict[str, Any]:
         try:
             data = GoRunnerClient.from_settings().get_runtime_status()
         except (httpx.HTTPError, ValueError):
-            _last_runtime_status_error = "Go runner unavailable"
             runner_block = _runner_status_response(checked_at=checked_at)
+            active_err = _active_runtime_error()
             return {
                 **base,
                 "status": "degraded",
@@ -180,7 +222,7 @@ def get_runtime_executor_status() -> dict[str, Any]:
                 "kubernetes_reachable": False,
                 "current_context": "",
                 "message": "Go runner unavailable",
-                "last_runtime_error": _last_runtime_status_error,
+                "last_runtime_error": active_err.model_dump(mode="json") if active_err else None,
                 "runner": runner_block.model_dump(mode="json"),
                 "checked_at": checked_at.isoformat(),
             }
@@ -192,16 +234,38 @@ def get_runtime_executor_status() -> dict[str, Any]:
         merged: dict[str, Any] = {**base, **data, "runner_reachable": True}
         merged["runtime_executor"] = executor
         if str(merged.get("status", "")).lower() != "ok":
-            _last_runtime_status_error = str(merged.get("message") or merged.get("status"))
+            set_runtime_error(
+                operation="runtime_status",
+                message=str(merged.get("message") or merged.get("status") or "degraded"),
+            )
         else:
-            _last_runtime_status_error = None
-        merged["last_runtime_error"] = _last_runtime_status_error
-        merged["runner"] = _runner_detail_from_payload(data)
+            clear_runtime_error_after_probe_success("runtime_status")
+        active_err = _active_runtime_error()
+        merged["last_runtime_error"] = active_err.model_dump(mode="json") if active_err else None
+        runner_detail = _runner_detail_from_payload(data)
+        runner_detail["last_runtime_error"] = active_err.model_dump(mode="json") if active_err else None
+        merged["runner"] = runner_detail
         merged["checked_at"] = checked_at.isoformat()
         return merged
 
     body = {**base, **_python_executor_runtime_status()}
     body["checked_at"] = datetime.now(UTC).isoformat()
+    return body
+
+
+@router.post(
+    "/runtime/runner-recheck",
+    summary="Re-probe Go runner and refresh runtime error state",
+)
+def recheck_runner_status() -> dict[str, Any]:
+    """Force a fresh runner/runtime status probe (clears stale probe errors on success)."""
+    body = get_runtime_executor_status()
+    if effective_runtime_executor() == "go":
+        _runner_status_response()
+        active_err = _active_runtime_error()
+        body["last_runtime_error"] = active_err.model_dump(mode="json") if active_err else None
+        if isinstance(body.get("runner"), dict):
+            body["runner"]["last_runtime_error"] = body["last_runtime_error"]
     return body
 
 

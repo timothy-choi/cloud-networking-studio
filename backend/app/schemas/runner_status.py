@@ -7,6 +7,15 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+class LastRuntimeErrorDetail(BaseModel):
+    operation: str
+    message: str
+    request_id: str | None = None
+    status_code: int | None = None
+    timestamp: datetime | str
+    historical: bool = False
+
+
 class RunnerOperationRecordResponse(BaseModel):
     operation: str
     provider: str
@@ -16,6 +25,7 @@ class RunnerOperationRecordResponse(BaseModel):
     deployment_id: str | None = None
     topology_id: str | None = None
     error_message: str | None = None
+    status_code: int | None = None
     created_at: datetime | str
 
 
@@ -37,6 +47,6 @@ class RunnerStatusDetailResponse(BaseModel):
     git_sha: str | None = None
     build_time: str | None = None
     supported_operations: list[str] = Field(default_factory=list)
-    last_runtime_error: str | None = None
+    last_runtime_error: LastRuntimeErrorDetail | None = None
     message: str | None = None
     checked_at: datetime | str

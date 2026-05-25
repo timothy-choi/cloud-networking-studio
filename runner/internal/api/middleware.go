@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -49,10 +50,7 @@ func withOperationTracing(provider string, inner http.Handler) http.Handler {
 		errMsg := ""
 		if rec.status >= 400 {
 			statusLabel = "error"
-			errMsg = http.StatusText(rec.status)
-			if errMsg == "" {
-				errMsg = "request failed"
-			}
+			errMsg = fmt.Sprintf("%s returned %d", op, rec.status)
 		}
 
 		observability.RecordOperation(observability.OperationRecord{
@@ -64,6 +62,7 @@ func withOperationTracing(provider string, inner http.Handler) http.Handler {
 			DeploymentID: deploymentID,
 			TopologyID:   topologyID,
 			ErrorMessage: errMsg,
+			StatusCode:   rec.status,
 			CreatedAt:    time.Now().UTC(),
 		})
 

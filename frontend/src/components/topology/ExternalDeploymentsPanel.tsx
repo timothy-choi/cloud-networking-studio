@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   createDeploymentTarget,
   listDeploymentTargets,
+  updateDeploymentTarget,
   type DeploymentTarget,
   type DeploymentTargetType,
 } from '../../api/deploymentTargets';
@@ -16,6 +17,14 @@ import {
 } from '../../api/externalDeploymentJobs';
 import { ApiErrorDisplay } from '../errors/ApiErrorDisplay';
 import { Spinner } from '../Spinner';
+import {
+  applyRemoteDockerTemplate,
+  createBlankTargetFormState,
+  parseTargetConfigJson,
+  targetToFormState,
+  type TargetFormMode,
+  type TargetFormState,
+} from './externalDeploymentTargetForm';
 
 const TARGET_TYPES: DeploymentTargetType[] = [
   'remote_docker',
@@ -23,18 +32,6 @@ const TARGET_TYPES: DeploymentTargetType[] = [
   'terraform',
   'ansible',
 ];
-
-const REMOTE_DOCKER_CONFIG_TEMPLATE = JSON.stringify(
-  {
-    host: '203.0.113.10',
-    ssh_user: 'ubuntu',
-    ssh_port: 22,
-    remote_workdir: '/opt/cns-external-deployments',
-    supports_compose: true,
-  },
-  null,
-  2,
-);
 
 function statusTone(status: string): string {
   if (status === 'succeeded' || status === 'active') return 'text-emerald-700 dark:text-emerald-400';
@@ -49,6 +46,106 @@ function modesForTargetType(targetType: string): ExternalJobMode[] {
     return ['validate', 'plan', 'apply', 'destroy'];
   }
   return ['validate', 'plan'];
+}
+
+function TargetFormFields({
+  form,
+  setForm,
+  mode,
+  busy,
+  onSubmit,
+  onCancel,
+}: {
+  form: TargetFormState;
+  setForm: React.Dispatch<React.SetStateAction<TargetFormState>>;
+  mode: 'create' | 'edit';
+  busy: boolean;
+  onSubmit: (e: React.FormEvent) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <form onSubmit={onSubmit} className="space-y-3 rounded-lg border p-3 dark:border-zinc-700">
+      <div className="text-sm font-medium">{mode === 'create' ? 'New target' : 'Edit target'}</div>
+      <input
+        required
+        value={form.name}
+        onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))}
+        placeholder="Target name"
+        className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+      />
+      {mode === 'create' ? (
+        <select
+          value={form.targetType}
+          onChange={(e) =>
+            setForm((current) => ({ ...current, targetType: e.target.value as DeploymentTargetType }))
+          }
+          className="rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+        >
+          {TARGET_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <p className="text-xs text-cns-muted">
+          Target type: <code className="font-mono">{form.targetType}</code> (immutable)
+        </p>
+      )}
+      <select
+        value={form.status}
+        onChange={(e) => setForm((current) => ({ ...current, status: e.target.value }))}
+        className="rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+      >
+        <option value="active">active</option>
+        <option value="disabled">disabled</option>
+      </select>
+      <input
+        value={form.credentialsRef}
+        onChange={(e) => setForm((current) => ({ ...current, credentialsRef: e.target.value }))}
+        placeholder="credentials_ref (env:VAR_NAME or dev:default)"
+        className="w-full rounded border px-2 py-1 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-900"
+      />
+      <textarea
+        value={form.configJson}
+        onChange={(e) => setForm((current) => ({ ...current, configJson: e.target.value }))}
+        rows={6}
+        placeholder='{"host":"203.0.113.10"}'
+        className="w-full rounded border px-2 py-1 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-900"
+      />
+      {mode === 'create' && form.targetType === 'remote_docker' ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => setForm((current) => applyRemoteDockerTemplate(current))}
+          className="rounded border px-3 py-1 text-xs disabled:opacity-50"
+        >
+          Insert remote_docker template
+        </button>
+      ) : null}
+      <p className="text-xs text-cns-muted">
+        SSH private keys are never stored in the database. Set{' '}
+        <code className="font-mono">credentials_ref</code> to a server-side secret pointer.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="submit"
+          disabled={busy}
+          className="rounded bg-emerald-700 px-3 py-1 text-sm text-white disabled:opacity-50"
+        >
+          {mode === 'create' ? 'Create target' : 'Save changes'}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onCancel}
+          className="rounded border px-3 py-1 text-sm disabled:opacity-50"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
 }
 
 export function ExternalDeploymentsPanel({
@@ -67,11 +164,9 @@ export function ExternalDeploymentsPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const [targetFormOpen, setTargetFormOpen] = useState(false);
-  const [targetName, setTargetName] = useState('');
-  const [targetType, setTargetType] = useState<DeploymentTargetType>('remote_docker');
-  const [configJson, setConfigJson] = useState(REMOTE_DOCKER_CONFIG_TEMPLATE);
-  const [credentialsRef, setCredentialsRef] = useState('dev:default');
+  const [targetFormMode, setTargetFormMode] = useState<TargetFormMode>('closed');
+  const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
+  const [targetForm, setTargetForm] = useState<TargetFormState>(createBlankTargetFormState);
   const [selectedTargetId, setSelectedTargetId] = useState('');
   const [selectedJob, setSelectedJob] = useState<ExternalDeploymentJob | null>(null);
   const [applyConfirmOpen, setApplyConfirmOpen] = useState(false);
@@ -110,25 +205,74 @@ export function ExternalDeploymentsPanel({
     void reload();
   }, [reload]);
 
+  function closeTargetForm() {
+    setTargetFormMode('closed');
+    setEditingTargetId(null);
+    setTargetForm(createBlankTargetFormState());
+  }
+
+  function openCreateTargetForm() {
+    if (targetFormMode === 'create') {
+      closeTargetForm();
+      return;
+    }
+    setTargetFormMode('create');
+    setEditingTargetId(null);
+    setTargetForm(createBlankTargetFormState());
+  }
+
+  function openEditTargetForm(target: DeploymentTarget) {
+    setTargetFormMode('edit');
+    setEditingTargetId(target.id);
+    setTargetForm(targetToFormState(target));
+  }
+
   async function onCreateTarget(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
-      let parsed: Record<string, unknown> = {};
+      let parsed: Record<string, unknown>;
       try {
-        parsed = JSON.parse(configJson || '{}') as Record<string, unknown>;
+        parsed = parseTargetConfigJson(targetForm.configJson);
       } catch {
         setError(new Error('Config JSON must be valid JSON'));
         return;
       }
       await createDeploymentTarget(projectId, {
-        name: targetName.trim(),
-        target_type: targetType,
+        name: targetForm.name.trim(),
+        target_type: targetForm.targetType,
         config_json: parsed,
-        credentials_ref: credentialsRef.trim() || null,
+        credentials_ref: targetForm.credentialsRef.trim() || null,
+        status: targetForm.status,
       });
-      setTargetFormOpen(false);
-      setTargetName('');
+      closeTargetForm();
+      await reload();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onUpdateTarget(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingTargetId) return;
+    setBusy(true);
+    try {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = parseTargetConfigJson(targetForm.configJson);
+      } catch {
+        setError(new Error('Config JSON must be valid JSON'));
+        return;
+      }
+      await updateDeploymentTarget(editingTargetId, {
+        name: targetForm.name.trim(),
+        config_json: parsed,
+        credentials_ref: targetForm.credentialsRef.trim() || null,
+        status: targetForm.status,
+      });
+      closeTargetForm();
       await reload();
     } catch (err) {
       setError(err);
@@ -203,61 +347,33 @@ export function ExternalDeploymentsPanel({
           {!readOnly ? (
             <button
               type="button"
-              onClick={() => setTargetFormOpen((v) => !v)}
+              onClick={openCreateTargetForm}
               className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
             >
-              {targetFormOpen ? 'Cancel' : 'New target'}
+              {targetFormMode === 'create' ? 'Cancel' : 'New target'}
             </button>
           ) : null}
 
-          {targetFormOpen ? (
-            <form
+          {targetFormMode === 'create' ? (
+            <TargetFormFields
+              form={targetForm}
+              setForm={setTargetForm}
+              mode="create"
+              busy={busy}
               onSubmit={(e) => void onCreateTarget(e)}
-              className="space-y-3 rounded-lg border p-3 dark:border-zinc-700"
-            >
-              <input
-                required
-                value={targetName}
-                onChange={(e) => setTargetName(e.target.value)}
-                placeholder="Target name"
-                className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-              />
-              <select
-                value={targetType}
-                onChange={(e) => setTargetType(e.target.value as DeploymentTargetType)}
-                className="rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-              >
-                {TARGET_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={credentialsRef}
-                onChange={(e) => setCredentialsRef(e.target.value)}
-                placeholder="credentials_ref (env:VAR_NAME or dev:default)"
-                className="w-full rounded border px-2 py-1 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-900"
-              />
-              <textarea
-                value={configJson}
-                onChange={(e) => setConfigJson(e.target.value)}
-                rows={6}
-                className="w-full rounded border px-2 py-1 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-900"
-              />
-              <p className="text-xs text-cns-muted">
-                SSH private keys are never stored in the database. Set{' '}
-                <code className="font-mono">credentials_ref</code> to a server-side secret pointer
-                (for example <code className="font-mono">env:CNS_EXTERNAL_DEPLOY_SSH_KEY_PATH</code>).
-              </p>
-              <button
-                type="submit"
-                disabled={busy}
-                className="rounded bg-emerald-700 px-3 py-1 text-sm text-white disabled:opacity-50"
-              >
-                Create target
-              </button>
-            </form>
+              onCancel={closeTargetForm}
+            />
+          ) : null}
+
+          {targetFormMode === 'edit' ? (
+            <TargetFormFields
+              form={targetForm}
+              setForm={setTargetForm}
+              mode="edit"
+              busy={busy}
+              onSubmit={(e) => void onUpdateTarget(e)}
+              onCancel={closeTargetForm}
+            />
           ) : null}
 
           {targets.length === 0 ? (
@@ -265,12 +381,24 @@ export function ExternalDeploymentsPanel({
           ) : (
             <ul className="divide-y divide-zinc-200 rounded-lg border dark:divide-zinc-700 dark:border-zinc-700">
               {targets.map((t) => (
-                <li key={t.id} className="px-3 py-2 text-sm">
-                  <div className="font-medium">{t.name}</div>
-                  <div className="text-xs text-cns-muted">
-                    {t.target_type} · {t.status}
-                    {t.credentials_ref ? ` · ref ${t.credentials_ref}` : ''}
+                <li key={t.id} className="flex items-start justify-between gap-2 px-3 py-2 text-sm">
+                  <div>
+                    <div className="font-medium">{t.name}</div>
+                    <div className="text-xs text-cns-muted">
+                      {t.target_type} · {t.status}
+                      {t.credentials_ref ? ` · ref ${t.credentials_ref}` : ''}
+                    </div>
                   </div>
+                  {!readOnly ? (
+                    <button
+                      type="button"
+                      disabled={busy || targetFormMode === 'edit'}
+                      onClick={() => openEditTargetForm(t)}
+                      className="shrink-0 rounded border px-2 py-0.5 text-xs disabled:opacity-50"
+                    >
+                      Edit
+                    </button>
+                  ) : null}
                 </li>
               ))}
             </ul>

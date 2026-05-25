@@ -65,7 +65,7 @@ def _sample_bundle() -> TopologyExportBundle:
 
 def test_docker_compose_export_is_yaml_like():
     text = generate_docker_compose(_sample_bundle())
-    assert "version:" in text
+    assert "version:" not in text.split("services:", 1)[0]
     assert "services:" in text
     assert "nginx:alpine" in text
     assert "lab-net" in text

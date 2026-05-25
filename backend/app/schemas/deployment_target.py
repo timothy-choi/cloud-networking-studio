@@ -21,6 +21,13 @@ class DeploymentTargetCreate(BaseModel):
     status: str = Field(default="active", pattern="^(active|disabled)$")
 
 
+class DeploymentTargetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    config_json: dict | None = None
+    credentials_ref: str | None = Field(default=None, max_length=255)
+    status: str | None = Field(default=None, pattern="^(active|disabled)$")
+
+
 class DeploymentTargetResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

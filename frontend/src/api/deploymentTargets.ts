@@ -40,3 +40,18 @@ export async function createDeploymentTarget(
 export async function getDeploymentTarget(targetId: string): Promise<DeploymentTarget> {
   return apiFetch<DeploymentTarget>(`/deployment-targets/${targetId}`);
 }
+
+export async function updateDeploymentTarget(
+  targetId: string,
+  body: {
+    name?: string;
+    config_json?: Record<string, unknown>;
+    credentials_ref?: string | null;
+    status?: string;
+  },
+): Promise<DeploymentTarget> {
+  return apiFetch<DeploymentTarget>(`/deployment-targets/${targetId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}

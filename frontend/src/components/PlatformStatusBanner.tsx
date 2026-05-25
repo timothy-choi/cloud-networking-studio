@@ -1,22 +1,8 @@
 import { useEffect, useState } from 'react';
 
 import { apiFetch, formatApiError } from '../api/client';
-
-type RuntimeStatusPayload = {
-  backend_status?: string;
-  status?: string;
-  runtime_executor?: string;
-  runtime_provider?: string;
-  runner_reachable?: boolean;
-  docker_reachable?: boolean;
-  kubernetes_reachable?: boolean;
-  current_context?: string;
-  kubeconfig_source?: string;
-  kubernetes_init_error?: string;
-  message?: string;
-  last_runtime_error?: string | null;
-  environment?: string;
-};
+import { formatLastRuntimeError, pickActiveRuntimeError } from '../types/runnerStatus';
+import type { RuntimeStatusResponse } from '../types/runnerStatus';
 
 function fmtBool(v: boolean | undefined): string {
   if (v === true) return 'yes';
@@ -25,14 +11,14 @@ function fmtBool(v: boolean | undefined): string {
 }
 
 export function PlatformStatusBanner() {
-  const [data, setData] = useState<RuntimeStatusPayload | null>(null);
+  const [data, setData] = useState<RuntimeStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        const json = await apiFetch<RuntimeStatusPayload>('/runtime/status');
+        const json = await apiFetch<RuntimeStatusResponse>('/runtime/status');
         if (!cancelled) {
           setData(json);
           setError(null);
@@ -86,7 +72,8 @@ export function PlatformStatusBanner() {
     .filter(Boolean)
     .join(' · ');
 
-  const err = (data.last_runtime_error || data.message || '').trim();
+  const activeError = pickActiveRuntimeError(data.runner, data);
+  const err = formatLastRuntimeError(activeError) || (data.message || '').trim();
 
   return (
     <div className="max-w-2xl rounded-md border border-zinc-200 bg-white/90 px-2 py-1 text-[11px] text-zinc-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100">

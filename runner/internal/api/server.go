@@ -179,6 +179,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	observability.ClearLastRuntimeErrorIfProbe("health")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":        "ok",
@@ -195,6 +196,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.ctx(r)
 	defer cancel()
 	st := s.buildRuntimeStatus(ctx)
+	if st.Status == "ok" {
+		observability.ClearLastRuntimeErrorIfProbe("runner_status")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(st)
 }
@@ -249,6 +253,9 @@ func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.ctx(r)
 	defer cancel()
 	st := s.buildRuntimeStatus(ctx)
+	if st.Status == "ok" {
+		observability.ClearLastRuntimeErrorIfProbe("runtime_status")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(st)
 }

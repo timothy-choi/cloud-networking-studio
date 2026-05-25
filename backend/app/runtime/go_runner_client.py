@@ -14,6 +14,11 @@ import httpx
 from app.core.config import settings
 from app.core.request_context import get_request_id
 from app.runtime.runner_operation_history import record_runner_operation
+from app.runtime.runner_runtime_error import (
+    clear_runtime_error_after_probe_success,
+    clear_runtime_error_if_operation_succeeded,
+    set_runtime_error,
+)
 
 _log = logging.getLogger(__name__)
 from app.models.deployment import DeploymentEventLevel
@@ -61,11 +66,44 @@ class GoRunnerClient:
 
     def get_runner_status(self) -> dict[str, Any]:
         """GET ``/status`` on the runner (rich observability payload)."""
-        return self._probe_get("/status", operation="status")
+        return self._probe_get("/status", operation="runner_status")
 
     def get_runtime_status(self) -> dict[str, Any]:
         """GET ``/runtime/status`` on the runner (short timeout)."""
         return self._probe_get("/runtime/status", operation="runtime_status")
+
+    def _format_runner_error(
+        self,
+        operation: str,
+        exc: Exception,
+        *,
+        response: httpx.Response | None = None,
+    ) -> tuple[str, int | None]:
+        status_code: int | None = None
+        if isinstance(exc, GoRunnerDeployError):
+            return exc.message[:500], 400
+        if isinstance(exc, httpx.HTTPStatusError):
+            response = exc.response
+        if response is not None:
+            status_code = response.status_code
+            data = _safe_json(response)
+            err = data.get("error") or data.get("message") or data.get("detail")
+            if err is not None:
+                if isinstance(err, dict):
+                    message = str(err.get("message") or err)[:500]
+                else:
+                    message = str(err).strip()[:500]
+                if message:
+                    return message, status_code
+            text = (response.text or "").strip()
+            if text and len(text) <= 500 and not text.startswith("<"):
+                return text, status_code
+            phrase = (response.reason_phrase or "").strip()
+            if phrase and phrase.lower() != "bad request":
+                return phrase[:500], status_code
+            return f"HTTP {status_code}", status_code
+        message = str(exc).strip()[:500] or "unknown error"
+        return message, status_code
 
     def get_recent_operations(self, *, limit: int = 20) -> dict[str, Any]:
         timeout = min(10.0, self._timeout)
@@ -104,18 +142,27 @@ class GoRunnerClient:
                 status="ok",
                 duration_ms=duration_ms,
                 request_id=rid,
+                status_code=r.status_code,
             )
+            clear_runtime_error_after_probe_success(operation)
             return data
         except Exception as exc:
             duration_ms = int((time.perf_counter() - start) * 1000)
-            err = str(exc)[:500]
+            response = exc.response if isinstance(exc, httpx.HTTPStatusError) else None
+            message, status_code = self._format_runner_error(operation, exc, response=response)
             _log.warning(
                 "go_runner operation=%s request_id=%s provider=%s duration_ms=%d status=error error=%s",
                 operation,
                 rid or "",
                 provider,
                 duration_ms,
-                err,
+                message,
+            )
+            set_runtime_error(
+                operation=operation,
+                message=message,
+                request_id=rid,
+                status_code=status_code,
             )
             record_runner_operation(
                 operation=operation,
@@ -123,7 +170,8 @@ class GoRunnerClient:
                 status="error",
                 duration_ms=duration_ms,
                 request_id=rid,
-                error_message=err,
+                error_message=message,
+                status_code=status_code,
             )
             raise
 
@@ -184,10 +232,12 @@ class GoRunnerClient:
                 deployment_id=deployment_id,
                 topology_id=topology_id,
             )
+            clear_runtime_error_if_operation_succeeded(operation)
             return out
         except Exception as exc:
             duration_ms = int((time.perf_counter() - start) * 1000)
-            err = str(exc)[:500]
+            response = exc.response if isinstance(exc, httpx.HTTPStatusError) else None
+            message, status_code = self._format_runner_error(operation, exc, response=response)
             _log.warning(
                 "go_runner operation=%s request_id=%s deployment_id=%s topology_id=%s provider=%s duration_ms=%d status=error error=%s",
                 operation,
@@ -196,7 +246,13 @@ class GoRunnerClient:
                 str(topology_id) if topology_id else "",
                 prov,
                 duration_ms,
-                err,
+                message,
+            )
+            set_runtime_error(
+                operation=operation,
+                message=message,
+                request_id=rid,
+                status_code=status_code,
             )
             record_runner_operation(
                 operation=operation,
@@ -206,7 +262,8 @@ class GoRunnerClient:
                 request_id=rid,
                 deployment_id=deployment_id,
                 topology_id=topology_id,
-                error_message=err,
+                error_message=message,
+                status_code=status_code,
             )
             raise
 

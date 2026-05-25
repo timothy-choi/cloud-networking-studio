@@ -6,6 +6,7 @@ import (
 )
 
 const maxHistory = 100
+const staleAfter = 5 * time.Minute
 
 // OperationRecord is one traced runner HTTP operation.
 type OperationRecord struct {
@@ -17,27 +18,54 @@ type OperationRecord struct {
 	DeploymentID string    `json:"deployment_id,omitempty"`
 	TopologyID   string    `json:"topology_id,omitempty"`
 	ErrorMessage string    `json:"error_message,omitempty"`
+	StatusCode   int       `json:"status_code,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
 var (
-	mu              sync.Mutex
-	lastRuntimeErr  string
-	records         []OperationRecord
+	mu             sync.Mutex
+	lastRuntimeErr string
+	lastRuntimeAt  time.Time
+	records        []OperationRecord
 )
+
+var probeOperations = map[string]struct{}{
+	"status":         {},
+	"runtime_status": {},
+	"runner_status":  {},
+	"health":         {},
+	"version":        {},
+}
 
 // SetLastRuntimeError stores the most recent runtime failure (non-secret).
 func SetLastRuntimeError(msg string) {
 	mu.Lock()
 	defer mu.Unlock()
 	lastRuntimeErr = msg
+	lastRuntimeAt = time.Now().UTC()
 }
 
-// LastRuntimeError returns the stored error message.
+// LastRuntimeError returns the stored error message when still active.
 func LastRuntimeError() string {
 	mu.Lock()
 	defer mu.Unlock()
+	if lastRuntimeErr == "" {
+		return ""
+	}
+	if time.Since(lastRuntimeAt) > staleAfter {
+		return ""
+	}
 	return lastRuntimeErr
+}
+
+// ClearLastRuntimeErrorIfProbe clears probe-related errors after a successful status check.
+func ClearLastRuntimeErrorIfProbe(operation string) {
+	mu.Lock()
+	defer mu.Unlock()
+	if _, ok := probeOperations[operation]; !ok {
+		return
+	}
+	lastRuntimeErr = ""
 }
 
 // RecordOperation appends a history row (ring buffer).
@@ -53,6 +81,7 @@ func RecordOperation(rec OperationRecord) {
 	}
 	if rec.Status != "ok" && rec.ErrorMessage != "" {
 		lastRuntimeErr = rec.ErrorMessage
+		lastRuntimeAt = rec.CreatedAt
 	}
 }
 

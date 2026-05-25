@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { formatApiError } from '../../api/client';
-import { getRecentRunnerOperations, getRunnerStatus, getRuntimeStatus } from '../../api/runnerStatus';
+import {
+  getRecentRunnerOperations,
+  getRunnerStatus,
+  getRuntimeStatus,
+  recheckRunnerStatus,
+} from '../../api/runnerStatus';
 import type { RunnerOperationRecord, RunnerStatusDetail, RuntimeStatusResponse } from '../../types/runnerStatus';
+import { formatLastRuntimeError, pickActiveRuntimeError } from '../../types/runnerStatus';
 
 function fmtBool(v: boolean | null | undefined): string {
   if (v === true) return 'Yes';
@@ -40,6 +46,8 @@ export function RunnerStatusContent({
   const ops = rs?.supported_operations?.length
     ? rs.supported_operations
     : runtimeStatus?.supported_operations ?? [];
+  const activeError = pickActiveRuntimeError(runnerStatus, runtimeStatus);
+  const activeErrorText = formatLastRuntimeError(activeError);
 
   return (
     <div className="space-y-4">
@@ -128,10 +136,9 @@ export function RunnerStatusContent({
         </div>
       ) : null}
 
-      {(rs?.last_runtime_error || runtimeStatus?.last_runtime_error) ? (
+      {activeErrorText ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-100">
-          <span className="font-semibold">Last runtime error:</span>{' '}
-          {rs?.last_runtime_error ?? runtimeStatus?.last_runtime_error}
+          {activeErrorText}
         </div>
       ) : null}
 
@@ -147,21 +154,25 @@ export function RunnerStatusContent({
                   <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium">Duration</th>
                   <th className="px-3 py-2 font-medium">Request ID</th>
+                  <th className="px-3 py-2 font-medium">Error</th>
                 </tr>
               </thead>
               <tbody>
                 {operations.map((op, i) => (
                   <tr key={`${op.created_at}-${op.operation}-${i}`} className="border-t border-zinc-100 dark:border-zinc-800">
                     <td className="whitespace-nowrap px-3 py-2 text-cns-muted">
-                      {new Date(op.created_at).toLocaleTimeString()}
+                      {new Date(op.created_at).toLocaleString()}
                     </td>
                     <td className="px-3 py-2 font-mono">{op.operation}</td>
                     <td className={`px-3 py-2 ${op.status === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-800 dark:text-amber-300'}`}>
-                      {op.status}
+                      {op.status_code != null && op.status !== 'ok' ? `${op.status} (${op.status_code})` : op.status}
                     </td>
                     <td className="px-3 py-2 tabular-nums">{op.duration_ms} ms</td>
                     <td className="max-w-[8rem] truncate px-3 py-2 font-mono text-[10px] text-cns-muted" title={op.request_id ?? ''}>
                       {op.request_id ?? '—'}
+                    </td>
+                    <td className="max-w-[14rem] truncate px-3 py-2 text-cns-muted" title={op.error_message ?? ''}>
+                      {op.error_message ?? '—'}
                     </td>
                   </tr>
                 ))}
@@ -180,6 +191,7 @@ export function RunnerStatusPanel() {
   const [operations, setOperations] = useState<RunnerOperationRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [rechecking, setRechecking] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -195,6 +207,23 @@ export function RunnerStatusPanel() {
     } catch (e) {
       setError(formatApiError(e));
     } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const recheck = useCallback(async () => {
+    setRechecking(true);
+    try {
+      const rt = await recheckRunnerStatus();
+      const [rs, ops] = await Promise.all([getRunnerStatus(), getRecentRunnerOperations(15)]);
+      setRuntimeStatus(rt);
+      setRunnerStatus(rs);
+      setOperations(ops.operations);
+      setError(null);
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setRechecking(false);
       setLoading(false);
     }
   }, []);
@@ -226,10 +255,11 @@ export function RunnerStatusPanel() {
       />
       <button
         type="button"
-        onClick={() => void refresh()}
-        className="mt-4 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        onClick={() => void recheck()}
+        disabled={rechecking}
+        className="mt-4 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
       >
-        Refresh status
+        {rechecking ? 'Rechecking runner…' : 'Recheck runner'}
       </button>
     </div>
   );

@@ -7,6 +7,8 @@ import {
   canShowApplyAction,
   canShowPlanAction,
   canShowValidateAction,
+  deriveConfigurationStatus,
+  deriveTerraformStatus,
   validateInfrastructureCreateForm,
 } from './infrastructureDeploymentForm';
 import { InfrastructureDeploymentsPanel, submitInfrastructureCreate } from './InfrastructureDeploymentsPanel';
@@ -93,6 +95,17 @@ describe('infrastructureDeploymentForm', () => {
     expect(canShowPlanAction('pending')).toBe(true);
     expect(canShowPlanAction('awaiting_confirmation')).toBe(false);
   });
+
+  it('derives terraform and ansible status from events', () => {
+    expect(deriveTerraformStatus('awaiting_confirmation', ['validate_completed', 'plan_completed'])).toBe(
+      'planned (awaiting confirmation)',
+    );
+    expect(deriveTerraformStatus('succeeded', ['apply_started', 'apply_completed'])).toBe('applied');
+    expect(deriveConfigurationStatus('succeeded', ['configure_started', 'configure_completed', 'runtime_ready'])).toBe(
+      'completed',
+    );
+    expect(deriveConfigurationStatus('awaiting_confirmation', [])).toBe('not started');
+  });
 });
 
 describe('InfrastructureDeploymentsPanel', () => {
@@ -106,6 +119,7 @@ describe('InfrastructureDeploymentsPanel', () => {
     expect(html).toContain('Create Infrastructure Deployment');
     expect(html).toContain('Deployment name');
     expect(html).toContain('New infrastructure deployment');
+    expect(html).toContain('Terraform to provision');
   });
 });
 

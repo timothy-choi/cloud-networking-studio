@@ -2,6 +2,14 @@ import { apiFetch } from './client';
 
 export type DeploymentTargetType = 'remote_docker' | 'kubernetes' | 'terraform' | 'ansible';
 
+/** Runtime targets where topology workloads are deployed. */
+export type RuntimeDeploymentTargetType = 'remote_docker' | 'kubernetes';
+
+export const RUNTIME_DEPLOYMENT_TARGET_TYPES: RuntimeDeploymentTargetType[] = [
+  'remote_docker',
+  'kubernetes',
+];
+
 export interface DeploymentTarget {
   id: string;
   project_id: string;

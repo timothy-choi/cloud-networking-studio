@@ -247,6 +247,112 @@ def run_validate_and_plan(db: Session, *, deployment: InfrastructureDeployment, 
     return run_plan(db, deployment=deployment, actor=actor)
 
 
+MOCK_INFRA_PROVIDERS = frozenset({"local", "mock"})
+
+
+def is_mock_infrastructure_deployment(deployment: InfrastructureDeployment) -> bool:
+    return deployment.provider in MOCK_INFRA_PROVIDERS or deployment.template_id == "local-mock"
+
+
+def _complete_mock_execution(
+    execution: InfrastructureExecution,
+    *,
+    logs: str,
+    artifacts: list[dict] | None = None,
+    duration_ms: int = 5,
+) -> None:
+    execution.status = "succeeded"
+    execution.logs = logs
+    execution.artifact_refs = artifacts or []
+    execution.duration_ms = duration_ms
+    execution.started_at = datetime.now(UTC)
+    execution.finished_at = datetime.now(UTC)
+
+
+def _confirm_and_apply_mock(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+    actor: User,
+    started: float,
+) -> None:
+    """Simulate apply/configure for local/mock without runner SSH/Ansible."""
+    tf_apply = _new_execution(db, deployment=deployment, execution_type="terraform", mode="apply")
+    _complete_mock_execution(
+        tf_apply,
+        logs="[mock] terraform apply completed\n",
+        artifacts=[{"type": "apply_summary", "uri": f"mock://infra/{deployment.id}/apply"}],
+    )
+    deployment.outputs_json = {
+        **(deployment.outputs_json or {}),
+        "vm_count": deployment.outputs_json.get("vm_count") or deployment.variables_json.get("vm_count") or 1,
+        "region": deployment.outputs_json.get("region") or deployment.variables_json.get("region") or "local",
+        "hosts": deployment.outputs_json.get("hosts")
+        or [
+            {
+                "name": f"{deployment.name}-vm-1",
+                "public_ip": "203.0.113.10",
+                "private_ip": "10.0.0.10",
+                "ssh_user": "ubuntu",
+                "ssh_port": 22,
+            }
+        ],
+    }
+    deployment.events_json = append_event(deployment.events_json, "apply_completed")
+    deployment.metrics_json = record_metric(
+        deployment.metrics_json,
+        "terraform_apply_duration_ms",
+        int((time.monotonic() - started) * 1000),
+    )
+
+    inv_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="inventory")
+    inventory = ansible_svc.generate_inventory(deployment)
+    inv_logs = ansible_svc.inventory_ini_preview(inventory)
+    _complete_mock_execution(
+        inv_exec,
+        logs=inv_logs,
+        artifacts=[{"type": "inventory", "format": "ini", "preview": inv_logs[:4000]}],
+    )
+    deployment.inventory_json = inventory
+
+    deployment.status = "configuring"
+    deployment.events_json = append_event(
+        deployment.events_json,
+        "configure_started",
+        message="Mock Ansible configuration started",
+    )
+    db.flush()
+
+    ansible_started = time.monotonic()
+    ansible_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="playbook")
+    _complete_mock_execution(
+        ansible_exec,
+        logs="[mock] ansible-playbook configure completed (install-docker, install-docker-compose, cns-runtime-dirs)\n",
+        artifacts=[{"type": "configure_summary", "uri": f"mock://infra/{deployment.id}/configure"}],
+    )
+    deployment.events_json = append_event(
+        deployment.events_json,
+        "configure_completed",
+        message="Mock host configuration completed",
+    )
+
+    targets = _register_runtime_targets(db, deployment=deployment, actor=actor)
+    deployment.status = "succeeded"
+    deployment.events_json = append_event(
+        deployment.events_json,
+        "runtime_ready",
+        message=f"Registered {len(targets)} remote_docker target(s)",
+        metadata={"targets": targets, "mock": True},
+    )
+    deployment.metrics_json = record_metric(
+        deployment.metrics_json,
+        "ansible_duration_ms",
+        int((time.monotonic() - ansible_started) * 1000),
+    )
+    deployment.metrics_json = increment_counter(deployment.metrics_json, "success_count")
+    deployment.error_message = None
+
+
 def confirm_and_apply(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
     if deployment.status != "awaiting_confirmation":
         raise ValueError(f"Deployment must be awaiting_confirmation (current: {deployment.status})")
@@ -259,43 +365,55 @@ def confirm_and_apply(db: Session, *, deployment: InfrastructureDeployment, acto
     db.flush()
 
     try:
-        tf_apply = _new_execution(db, deployment=deployment, execution_type="terraform", mode="apply")
-        _, _, outputs = tf_svc.execute_apply(db, execution=tf_apply, deployment=deployment)
-        deployment.outputs_json = {**(deployment.outputs_json or {}), **outputs}
-        deployment.events_json = append_event(deployment.events_json, "apply_completed")
-        deployment.metrics_json = record_metric(
-            deployment.metrics_json,
-            "terraform_apply_duration_ms",
-            int((time.monotonic() - started) * 1000),
-        )
+        if is_mock_infrastructure_deployment(deployment):
+            _confirm_and_apply_mock(db, deployment=deployment, actor=actor, started=started)
+        else:
+            tf_apply = _new_execution(db, deployment=deployment, execution_type="terraform", mode="apply")
+            _, _, outputs = tf_svc.execute_apply(db, execution=tf_apply, deployment=deployment)
+            deployment.outputs_json = {**(deployment.outputs_json or {}), **outputs}
+            deployment.events_json = append_event(deployment.events_json, "apply_completed")
+            deployment.metrics_json = record_metric(
+                deployment.metrics_json,
+                "terraform_apply_duration_ms",
+                int((time.monotonic() - started) * 1000),
+            )
 
-        inv_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="inventory")
-        _, _, inv_outputs = ansible_svc.execute_inventory(db, execution=inv_exec, deployment=deployment)
-        deployment.inventory_json = inv_outputs.get("inventory") or ansible_svc.generate_inventory(deployment)
+            inv_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="inventory")
+            _, _, inv_outputs = ansible_svc.execute_inventory(db, execution=inv_exec, deployment=deployment)
+            deployment.inventory_json = inv_outputs.get("inventory") or ansible_svc.generate_inventory(deployment)
 
-        deployment.status = "configuring"
-        deployment.events_json = append_event(deployment.events_json, "ansible_started")
-        db.flush()
+            deployment.status = "configuring"
+            deployment.events_json = append_event(
+                deployment.events_json,
+                "configure_started",
+                message="Ansible configuration started",
+            )
+            db.flush()
 
-        ansible_started = time.monotonic()
-        ansible_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="playbook")
-        ansible_svc.execute_configure(db, execution=ansible_exec, deployment=deployment)
+            ansible_started = time.monotonic()
+            ansible_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="playbook")
+            ansible_svc.execute_configure(db, execution=ansible_exec, deployment=deployment)
+            deployment.events_json = append_event(
+                deployment.events_json,
+                "configure_completed",
+                message="Host configuration completed",
+            )
 
-        targets = _register_runtime_targets(db, deployment=deployment, actor=actor)
-        deployment.status = "succeeded"
-        deployment.events_json = append_event(
-            deployment.events_json,
-            "runtime_ready",
-            message=f"Registered {len(targets)} remote_docker target(s)",
-            metadata={"targets": targets},
-        )
-        deployment.metrics_json = record_metric(
-            deployment.metrics_json,
-            "ansible_duration_ms",
-            int((time.monotonic() - ansible_started) * 1000),
-        )
-        deployment.metrics_json = increment_counter(deployment.metrics_json, "success_count")
-        deployment.error_message = None
+            targets = _register_runtime_targets(db, deployment=deployment, actor=actor)
+            deployment.status = "succeeded"
+            deployment.events_json = append_event(
+                deployment.events_json,
+                "runtime_ready",
+                message=f"Registered {len(targets)} remote_docker target(s)",
+                metadata={"targets": targets},
+            )
+            deployment.metrics_json = record_metric(
+                deployment.metrics_json,
+                "ansible_duration_ms",
+                int((time.monotonic() - ansible_started) * 1000),
+            )
+            deployment.metrics_json = increment_counter(deployment.metrics_json, "success_count")
+            deployment.error_message = None
     except ValueError as exc:
         deployment.status = "failed"
         deployment.error_message = str(exc)

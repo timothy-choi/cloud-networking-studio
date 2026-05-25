@@ -134,7 +134,66 @@ def test_create_infra_deployment_plan_and_confirm(client_strict, monkeypatch):
     assert applied["status"] == "succeeded"
     assert len(applied["runtime_targets_json"]) == 1
     assert applied["runtime_targets_json"][0]["target_type"] == "remote_docker"
-    assert any(call["mode"] == "apply" for call in mock.calls if call.get("execution_type") == "terraform")
+    event_types = [event["type"] for event in applied["events_json"]]
+    assert "apply_started" in event_types
+    assert "apply_completed" in event_types
+    assert "configure_started" in event_types
+    assert "configure_completed" in event_types
+    assert "runtime_ready" in event_types
+    # Mock confirm apply runs in-process; runner is only used for validate/plan.
+    assert not any(
+        call.get("mode") == "apply" and call.get("execution_type") == "terraform" for call in mock.calls
+    )
+    execs_after = client_strict.get(f"/infrastructure-deployments/{deployment_id}/executions", headers=h)
+    assert execs_after.status_code == 200
+    items = execs_after.json()["items"]
+    assert any(item["execution_type"] == "terraform" and item["mode"] == "apply" for item in items)
+    assert any(item["execution_type"] == "ansible" and item["mode"] == "playbook" for item in items)
+    assert any("[mock]" in (item.get("logs") or "") for item in items)
+
+
+def test_confirm_invalid_status_returns_409(client_strict, monkeypatch):
+    _install_mock_runner(monkeypatch)
+    h = _register(client_strict)
+    _, topo_id = _project_and_topology(client_strict, h)
+    create = client_strict.post(
+        f"/topologies/{topo_id}/infrastructure-deployments",
+        headers=h,
+        json={"name": "no-plan", "template_id": "local-mock", "provider": "local"},
+    )
+    deployment_id = create.json()["id"]
+    confirm = client_strict.post(
+        f"/infrastructure-deployments/{deployment_id}/confirm",
+        headers=h,
+        json={"confirm": True},
+    )
+    assert confirm.status_code == 409, confirm.text
+    detail = confirm.json()["detail"]
+    assert "awaiting_confirmation" in str(detail)
+
+
+def test_reject_terraform_runtime_target(client_strict):
+    h = _register(client_strict)
+    pid = client_strict.get("/projects", headers=h).json()[0]["id"]
+    r = client_strict.post(
+        f"/projects/{pid}/deployment-targets",
+        headers=h,
+        json={"name": "bad-infra-target", "target_type": "terraform", "config_json": {}},
+    )
+    assert r.status_code == 400, r.text
+    assert "Infrastructure Deployments" in r.json()["detail"]
+
+
+def test_reject_ansible_runtime_target(client_strict):
+    h = _register(client_strict)
+    pid = client_strict.get("/projects", headers=h).json()[0]["id"]
+    r = client_strict.post(
+        f"/projects/{pid}/deployment-targets",
+        headers=h,
+        json={"name": "bad-infra-target", "target_type": "ansible", "config_json": {}},
+    )
+    assert r.status_code == 400, r.text
+    assert "runtime target" in r.json()["detail"].lower()
 
 
 def test_reject_unsupported_template(client_strict, monkeypatch):

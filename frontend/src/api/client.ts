@@ -10,14 +10,22 @@ export class ApiError extends Error {
   readonly statusText: string;
   readonly detail: unknown;
   readonly requestId: string | null;
+  readonly url: string;
 
-  constructor(status: number, statusText: string, detail: unknown, requestId: string | null = null) {
+  constructor(
+    status: number,
+    statusText: string,
+    detail: unknown,
+    requestId: string | null = null,
+    url: string = '',
+  ) {
     super(`${status} ${statusText}`);
     this.name = 'ApiError';
     this.status = status;
     this.statusText = statusText;
     this.detail = detail;
     this.requestId = requestId;
+    this.url = url;
   }
 }
 
@@ -141,7 +149,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     } catch {
       detail = text;
     }
-    throw new ApiError(res.status, res.statusText, detail, extractRequestId(detail));
+    throw new ApiError(res.status, res.statusText, detail, extractRequestId(detail), url);
   }
 
   if (res.status === 204) {
@@ -173,7 +181,7 @@ export async function apiFetchBlob(path: string, init?: RequestInit): Promise<Bl
     } catch {
       /* plain text error */
     }
-    throw new ApiError(res.status, res.statusText, detail);
+    throw new ApiError(res.status, res.statusText, detail, extractRequestId(detail), url);
   }
   return res.blob();
 }
@@ -208,14 +216,34 @@ export function formatApiError(err: unknown): string {
     if (structured?.code === 'QUOTA_EXCEEDED') {
       return structured.message || 'Quota limit reached for this project or account.';
     }
-    if (structured?.message) return structured.message;
-    const d = err.detail as { detail?: unknown };
-    if (typeof d?.detail === 'string') return d.detail;
-    if (Array.isArray(d?.detail)) {
-      return d.detail.map((x: unknown) => JSON.stringify(x)).join('; ');
+
+    const lines: string[] = [];
+    if (structured?.message) {
+      lines.push(structured.message);
+    } else {
+      const d = err.detail as { detail?: unknown; message?: unknown };
+      if (typeof d?.message === 'string') {
+        lines.push(d.message);
+      } else if (typeof d?.detail === 'string') {
+        lines.push(d.detail);
+      } else if (Array.isArray(d?.detail)) {
+        lines.push(d.detail.map((x: unknown) => JSON.stringify(x)).join('; '));
+      } else if (d?.detail != null) {
+        lines.push(JSON.stringify(d.detail));
+      } else {
+        lines.push(err.message);
+      }
     }
-    if (d?.detail != null) return JSON.stringify(d.detail);
-    return err.message;
+
+    lines.push(`HTTP ${err.status} ${err.statusText}`);
+    if (err.url) {
+      lines.push(`Endpoint: ${err.url}`);
+    }
+    const requestId = structured?.request_id ?? err.requestId;
+    if (requestId) {
+      lines.push(`Request ID: ${requestId}`);
+    }
+    return lines.join('\n');
   }
   if (err instanceof Error) {
     if (_isLikelyNetworkError(err)) {

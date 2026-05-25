@@ -247,9 +247,9 @@ def test_apply_mode_enabled_for_remote_docker(client_strict, ssh_key_env, mock_r
     assert jr.json()["status"] == "succeeded"
 
 
-def test_terraform_apply_still_rejected(client_strict):
+def test_legacy_infra_target_types_rejected_at_create(client_strict):
     h = _register(client_strict)
-    pid, tid = _project_and_topology(client_strict, h)
+    pid, _ = _project_and_topology(client_strict, h)
     tr = client_strict.post(
         f"/projects/{pid}/deployment-targets",
         headers=h,
@@ -259,13 +259,7 @@ def test_terraform_apply_still_rejected(client_strict):
             "config_json": {"backend": "local"},
         },
     )
-    assert tr.status_code == 201
-    target_id = tr.json()["id"]
-
-    jr = client_strict.post(
-        f"/topologies/{tid}/external-deployment-jobs",
-        headers=h,
-        json={"target_id": target_id, "mode": "apply"},
-    )
-    assert jr.status_code == 400
-    assert "not enabled" in jr.json()["detail"].lower()
+    assert tr.status_code == 400, tr.text
+    detail = tr.json()["detail"]
+    assert "runtime target" in detail.lower()
+    assert "Infrastructure Deployments" in detail

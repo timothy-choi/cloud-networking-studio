@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DeploymentTarget } from '../../api/deploymentTargets';
+import { RUNTIME_DEPLOYMENT_TARGET_TYPES } from '../../api/deploymentTargets';
 import {
   applyRemoteDockerTemplate,
   createBlankTargetFormState,
@@ -43,6 +44,27 @@ describe('externalDeploymentTargetForm', () => {
     expect(templated.credentialsRef).toBe('');
     expect(templated.configJson).toContain('remote_workdir');
     expect(templated.configJson).not.toBe('{}');
+  });
+
+  it('runtime target types exclude terraform and ansible', () => {
+    expect(RUNTIME_DEPLOYMENT_TARGET_TYPES).toEqual(['remote_docker', 'kubernetes']);
+    expect(RUNTIME_DEPLOYMENT_TARGET_TYPES).not.toContain('terraform');
+    expect(RUNTIME_DEPLOYMENT_TARGET_TYPES).not.toContain('ansible');
+  });
+
+  it('targetToFormState normalizes legacy infra target types to runtime types', () => {
+    const legacyTarget: DeploymentTarget = {
+      id: 't-legacy',
+      project_id: 'p1',
+      name: 'Legacy TF',
+      target_type: 'terraform',
+      config_json: {},
+      credentials_ref: null,
+      status: 'active',
+      created_by_user_id: null,
+      created_at: '2026-01-01T00:00:00Z',
+    };
+    expect(targetToFormState(legacyTarget).targetType).toBe('remote_docker');
   });
 
   it('cancel flow can restore blank form without mutating prior edit state', () => {

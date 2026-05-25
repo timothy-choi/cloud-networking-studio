@@ -1,10 +1,10 @@
-import type { DeploymentTarget, DeploymentTargetType } from '../../api/deploymentTargets';
+import type { DeploymentTarget, RuntimeDeploymentTargetType } from '../../api/deploymentTargets';
 
 export type TargetFormMode = 'closed' | 'create' | 'edit';
 
 export type TargetFormState = {
   name: string;
-  targetType: DeploymentTargetType;
+  targetType: RuntimeDeploymentTargetType;
   credentialsRef: string;
   status: string;
   configJson: string;
@@ -33,9 +33,11 @@ export function createBlankTargetFormState(): TargetFormState {
 }
 
 export function targetToFormState(target: DeploymentTarget): TargetFormState {
+  const targetType: RuntimeDeploymentTargetType =
+    target.target_type === 'kubernetes' ? 'kubernetes' : 'remote_docker';
   return {
     name: target.name,
-    targetType: target.target_type,
+    targetType,
     credentialsRef: target.credentials_ref ?? '',
     status: target.status,
     configJson: JSON.stringify(target.config_json ?? {}, null, 2),

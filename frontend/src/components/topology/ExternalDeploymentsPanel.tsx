@@ -3,9 +3,9 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   createDeploymentTarget,
   listDeploymentTargets,
+  RUNTIME_DEPLOYMENT_TARGET_TYPES,
   updateDeploymentTarget,
   type DeploymentTarget,
-  type DeploymentTargetType,
 } from '../../api/deploymentTargets';
 import {
   createExternalDeploymentJob,
@@ -26,12 +26,7 @@ import {
   type TargetFormState,
 } from './externalDeploymentTargetForm';
 
-const TARGET_TYPES: DeploymentTargetType[] = [
-  'remote_docker',
-  'kubernetes',
-  'terraform',
-  'ansible',
-];
+const TARGET_TYPES = RUNTIME_DEPLOYMENT_TARGET_TYPES;
 
 function statusTone(status: string): string {
   if (status === 'succeeded' || status === 'active') return 'text-emerald-700 dark:text-emerald-400';
@@ -65,7 +60,7 @@ function TargetFormFields({
 }) {
   return (
     <form onSubmit={onSubmit} className="space-y-3 rounded-lg border p-3 dark:border-zinc-700">
-      <div className="text-sm font-medium">{mode === 'create' ? 'New target' : 'Edit target'}</div>
+      <div className="text-sm font-medium">{mode === 'create' ? 'New runtime target' : 'Edit runtime target'}</div>
       <input
         required
         value={form.name}
@@ -77,7 +72,7 @@ function TargetFormFields({
         <select
           value={form.targetType}
           onChange={(e) =>
-            setForm((current) => ({ ...current, targetType: e.target.value as DeploymentTargetType }))
+            setForm((current) => ({ ...current, targetType: e.target.value as typeof current.targetType }))
           }
           className="rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
         >
@@ -133,7 +128,7 @@ function TargetFormFields({
           disabled={busy}
           className="rounded bg-emerald-700 px-3 py-1 text-sm text-white disabled:opacity-50"
         >
-          {mode === 'create' ? 'Create target' : 'Save changes'}
+          {mode === 'create' ? 'Create runtime target' : 'Save changes'}
         </button>
         <button
           type="button"
@@ -317,10 +312,11 @@ export function ExternalDeploymentsPanel({
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-100">
-        <strong>External deployment</strong> deploys this topology to a user-controlled Docker host
-        outside the CNS runtime. For <code className="rounded bg-amber-100/80 px-1 dark:bg-amber-900/40">remote_docker</code>{' '}
-        targets, use validate → plan → apply → destroy. Terraform and Ansible targets still support
-        validate/plan only.
+        <strong>Workload deployments</strong> push this topology to a <strong>runtime target</strong>{' '}
+        (where containers run). Use <strong>validate → plan → apply → destroy</strong> against a{' '}
+        <code className="rounded bg-amber-100/80 px-1 dark:bg-amber-900/40">remote_docker</code>{' '}
+        host. Terraform and Ansible provision/configure infrastructure in{' '}
+        <strong>Infrastructure Deployments</strong>, not here.
       </div>
 
       {error ? <ApiErrorDisplay error={error} /> : null}
@@ -337,7 +333,7 @@ export function ExternalDeploymentsPanel({
                 : 'border border-zinc-300 bg-white text-zinc-700 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200'
             }`}
           >
-            {id === 'targets' ? 'Targets' : id === 'jobs' ? 'Jobs' : 'Deployments'}
+            {id === 'targets' ? 'Runtime Targets' : id === 'jobs' ? 'Workload Jobs' : 'Workload Deployments'}
           </button>
         ))}
       </div>
@@ -350,7 +346,7 @@ export function ExternalDeploymentsPanel({
               onClick={openCreateTargetForm}
               className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
             >
-              {targetFormMode === 'create' ? 'Cancel' : 'New target'}
+              {targetFormMode === 'create' ? 'Cancel' : 'New runtime target'}
             </button>
           ) : null}
 
@@ -377,7 +373,7 @@ export function ExternalDeploymentsPanel({
           ) : null}
 
           {targets.length === 0 ? (
-            <p className="text-sm text-cns-muted">No deployment targets yet.</p>
+            <p className="text-sm text-cns-muted">No runtime targets yet.</p>
           ) : (
             <ul className="divide-y divide-zinc-200 rounded-lg border dark:divide-zinc-700 dark:border-zinc-700">
               {targets.map((t) => (

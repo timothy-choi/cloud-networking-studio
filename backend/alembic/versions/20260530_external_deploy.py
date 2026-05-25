@@ -22,8 +22,17 @@ def _table_exists(name: str) -> bool:
     return name in sa.inspect(bind).get_table_names()
 
 
+def _core_tables_present() -> bool:
+    bind = op.get_bind()
+    tables = set(sa.inspect(bind).get_table_names())
+    return "users" in tables and "projects" in tables and "topologies" in tables
+
+
 def upgrade() -> None:
     if _table_exists("deployment_targets"):
+        return
+    if not _core_tables_present():
+        # Fresh install: core tables are created by create_all.
         return
 
     op.create_table(
@@ -95,7 +104,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if not _core_tables_present():
+        return
     if not _table_exists("external_deployment_jobs"):
         return
     op.drop_table("external_deployment_jobs")
-    op.drop_table("deployment_targets")
+    if _table_exists("deployment_targets"):
+        op.drop_table("deployment_targets")

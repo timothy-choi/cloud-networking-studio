@@ -9,7 +9,10 @@ import {
 import {
   createExternalDeploymentJob,
   listExternalDeploymentJobs,
+  listExternalDeployments,
+  type ExternalDeployment,
   type ExternalDeploymentJob,
+  type ExternalJobMode,
 } from '../../api/externalDeploymentJobs';
 import { ApiErrorDisplay } from '../errors/ApiErrorDisplay';
 import { Spinner } from '../Spinner';
@@ -21,11 +24,31 @@ const TARGET_TYPES: DeploymentTargetType[] = [
   'ansible',
 ];
 
+const REMOTE_DOCKER_CONFIG_TEMPLATE = JSON.stringify(
+  {
+    host: '203.0.113.10',
+    ssh_user: 'ubuntu',
+    ssh_port: 22,
+    remote_workdir: '/opt/cns-external-deployments',
+    supports_compose: true,
+  },
+  null,
+  2,
+);
+
 function statusTone(status: string): string {
-  if (status === 'succeeded') return 'text-emerald-700 dark:text-emerald-400';
+  if (status === 'succeeded' || status === 'active') return 'text-emerald-700 dark:text-emerald-400';
   if (status === 'failed') return 'text-red-700 dark:text-red-400';
   if (status === 'running') return 'text-amber-700 dark:text-amber-400';
+  if (status === 'destroyed') return 'text-cns-muted';
   return 'text-cns-muted';
+}
+
+function modesForTargetType(targetType: string): ExternalJobMode[] {
+  if (targetType === 'remote_docker') {
+    return ['validate', 'plan', 'apply', 'destroy'];
+  }
+  return ['validate', 'plan'];
 }
 
 export function ExternalDeploymentsPanel({
@@ -37,30 +60,38 @@ export function ExternalDeploymentsPanel({
   projectId: string;
   readOnly?: boolean;
 }) {
-  const [tab, setTab] = useState<'targets' | 'jobs'>('targets');
+  const [tab, setTab] = useState<'targets' | 'jobs' | 'deployments'>('targets');
   const [targets, setTargets] = useState<DeploymentTarget[]>([]);
   const [jobs, setJobs] = useState<ExternalDeploymentJob[]>([]);
+  const [deployments, setDeployments] = useState<ExternalDeployment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [targetFormOpen, setTargetFormOpen] = useState(false);
   const [targetName, setTargetName] = useState('');
   const [targetType, setTargetType] = useState<DeploymentTargetType>('remote_docker');
-  const [configJson, setConfigJson] = useState('{"host":"docker.example.com"}');
-  const [credentialsRef, setCredentialsRef] = useState('vault://cns/staging/docker');
+  const [configJson, setConfigJson] = useState(REMOTE_DOCKER_CONFIG_TEMPLATE);
+  const [credentialsRef, setCredentialsRef] = useState('dev:default');
   const [selectedTargetId, setSelectedTargetId] = useState('');
   const [selectedJob, setSelectedJob] = useState<ExternalDeploymentJob | null>(null);
+  const [applyConfirmOpen, setApplyConfirmOpen] = useState(false);
+
+  const selectedTarget = targets.find((t) => t.id === selectedTargetId);
+  const enabledModes = selectedTarget ? modesForTargetType(selectedTarget.target_type) : [];
+  const activeDeployment = deployments.find((d) => d.status === 'active');
 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [t, j] = await Promise.all([
+      const [t, j, d] = await Promise.all([
         listDeploymentTargets(projectId),
         listExternalDeploymentJobs(topologyId),
+        listExternalDeployments(topologyId),
       ]);
       setTargets(t);
       setJobs(j);
+      setDeployments(d);
       if (!selectedTargetId && t.length > 0) {
         setSelectedTargetId(t[0].id);
       }
@@ -106,7 +137,7 @@ export function ExternalDeploymentsPanel({
     }
   }
 
-  async function onCreateJob(mode: 'validate' | 'plan') {
+  async function onCreateJob(mode: ExternalJobMode) {
     if (!selectedTargetId) {
       setError(new Error('Select a deployment target first'));
       return;
@@ -120,6 +151,9 @@ export function ExternalDeploymentsPanel({
       });
       setSelectedJob(job);
       setTab('jobs');
+      if (mode === 'apply' || mode === 'destroy') {
+        setApplyConfirmOpen(false);
+      }
       await reload();
     } catch (err) {
       setError(err);
@@ -139,15 +173,16 @@ export function ExternalDeploymentsPanel({
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-100">
-        External deployment jobs prepare remote/cloud targets safely. Step 57A supports{' '}
-        <strong>validate</strong> and <strong>plan</strong> only — apply/destroy are not enabled yet
-        and do not run Terraform, Ansible, or shell commands.
+        <strong>External deployment</strong> deploys this topology to a user-controlled Docker host
+        outside the CNS runtime. For <code className="rounded bg-amber-100/80 px-1 dark:bg-amber-900/40">remote_docker</code>{' '}
+        targets, use validate → plan → apply → destroy. Terraform and Ansible targets still support
+        validate/plan only.
       </div>
 
       {error ? <ApiErrorDisplay error={error} /> : null}
 
       <div className="flex flex-wrap gap-2">
-        {(['targets', 'jobs'] as const).map((id) => (
+        {(['targets', 'jobs', 'deployments'] as const).map((id) => (
           <button
             key={id}
             type="button"
@@ -158,7 +193,7 @@ export function ExternalDeploymentsPanel({
                 : 'border border-zinc-300 bg-white text-zinc-700 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200'
             }`}
           >
-            {id === 'targets' ? 'Targets' : 'Jobs'}
+            {id === 'targets' ? 'Targets' : id === 'jobs' ? 'Jobs' : 'Deployments'}
           </button>
         ))}
       </div>
@@ -201,17 +236,19 @@ export function ExternalDeploymentsPanel({
               <input
                 value={credentialsRef}
                 onChange={(e) => setCredentialsRef(e.target.value)}
-                placeholder="credentials_ref (placeholder only, e.g. vault://...)"
+                placeholder="credentials_ref (env:VAR_NAME or dev:default)"
                 className="w-full rounded border px-2 py-1 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-900"
               />
               <textarea
                 value={configJson}
                 onChange={(e) => setConfigJson(e.target.value)}
-                rows={4}
+                rows={6}
                 className="w-full rounded border px-2 py-1 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-900"
               />
               <p className="text-xs text-cns-muted">
-                Secrets are not stored in the database. Use credentials_ref as an external secret pointer.
+                SSH private keys are never stored in the database. Set{' '}
+                <code className="font-mono">credentials_ref</code> to a server-side secret pointer
+                (for example <code className="font-mono">env:CNS_EXTERNAL_DEPLOY_SSH_KEY_PATH</code>).
               </p>
               <button
                 type="submit"
@@ -239,49 +276,90 @@ export function ExternalDeploymentsPanel({
             </ul>
           )}
         </div>
-      ) : (
+      ) : tab === 'jobs' ? (
         <div className="space-y-3">
           {!readOnly ? (
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="text-xs text-cns-muted">
-                Target
-                <select
-                  value={selectedTargetId}
-                  onChange={(e) => setSelectedTargetId(e.target.value)}
-                  className="ml-2 rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="text-xs text-cns-muted">
+                  Target
+                  <select
+                    value={selectedTargetId}
+                    onChange={(e) => setSelectedTargetId(e.target.value)}
+                    className="ml-2 rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                  >
+                    <option value="">Select target</option>
+                    {targets.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.target_type})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  disabled={busy || !selectedTargetId || !enabledModes.includes('validate')}
+                  onClick={() => void onCreateJob('validate')}
+                  className="rounded bg-zinc-800 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-zinc-200 dark:text-zinc-900"
                 >
-                  <option value="">Select target</option>
-                  {targets.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} ({t.target_type})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                disabled={busy || !selectedTargetId}
-                onClick={() => void onCreateJob('validate')}
-                className="rounded bg-zinc-800 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-zinc-200 dark:text-zinc-900"
-              >
-                Run validate
-              </button>
-              <button
-                type="button"
-                disabled={busy || !selectedTargetId}
-                onClick={() => void onCreateJob('plan')}
-                className="rounded bg-emerald-700 px-3 py-1 text-xs text-white disabled:opacity-50"
-              >
-                Run plan
-              </button>
-              <button
-                type="button"
-                disabled
-                title="Apply is not enabled in Step 57A"
-                className="cursor-not-allowed rounded border px-3 py-1 text-xs text-cns-muted opacity-60"
-              >
-                Apply (disabled)
-              </button>
+                  Run validate
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || !selectedTargetId || !enabledModes.includes('plan')}
+                  onClick={() => void onCreateJob('plan')}
+                  className="rounded bg-emerald-700 px-3 py-1 text-xs text-white disabled:opacity-50"
+                >
+                  Run plan
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || !selectedTargetId || !enabledModes.includes('apply')}
+                  onClick={() => setApplyConfirmOpen(true)}
+                  className="rounded bg-blue-700 px-3 py-1 text-xs text-white disabled:opacity-50"
+                >
+                  Apply
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    busy ||
+                    !selectedTargetId ||
+                    !enabledModes.includes('destroy') ||
+                    !activeDeployment ||
+                    activeDeployment.target_id !== selectedTargetId
+                  }
+                  onClick={() => void onCreateJob('destroy')}
+                  className="rounded bg-red-700 px-3 py-1 text-xs text-white disabled:opacity-50"
+                >
+                  Destroy
+                </button>
+              </div>
+              {applyConfirmOpen ? (
+                <div className="rounded-lg border border-red-200 bg-red-50/60 p-3 text-xs dark:border-red-900/50 dark:bg-red-950/20">
+                  <p className="font-medium text-red-900 dark:text-red-100">
+                    Apply will SSH to the remote Docker host and run{' '}
+                    <code className="font-mono">docker compose up -d</code> outside CNS runtime.
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void onCreateJob('apply')}
+                      className="rounded bg-red-700 px-3 py-1 text-white disabled:opacity-50"
+                    >
+                      Confirm apply
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setApplyConfirmOpen(false)}
+                      className="rounded border px-3 py-1"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -322,6 +400,33 @@ export function ExternalDeploymentsPanel({
                 </div>
               ) : null}
             </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {deployments.length === 0 ? (
+            <p className="text-sm text-cns-muted">No external deployments recorded yet.</p>
+          ) : (
+            <ul className="divide-y divide-zinc-200 rounded-lg border dark:divide-zinc-700 dark:border-zinc-700">
+              {deployments.map((d) => (
+                <li key={d.id} className="space-y-1 px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">{d.compose_project_name}</span>
+                    <span className={statusTone(d.status)}>{d.status}</span>
+                  </div>
+                  <div className="text-xs text-cns-muted">
+                    Remote workdir: <code className="font-mono">{d.remote_workdir}</code>
+                  </div>
+                  <div className="text-xs text-cns-muted">
+                    Services: {(d.services_json ?? []).map((s) => String(s.name ?? '')).join(', ') || '—'}
+                  </div>
+                  <div className="text-xs text-cns-muted">
+                    Created {new Date(d.created_at).toLocaleString()}
+                    {d.destroyed_at ? ` · destroyed ${new Date(d.destroyed_at).toLocaleString()}` : ''}
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}

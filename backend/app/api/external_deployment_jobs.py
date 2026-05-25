@@ -11,15 +11,17 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.external_deployment_job import (
-    ENABLED_JOB_MODES,
     ExternalDeploymentJobCreate,
     ExternalDeploymentJobListResponse,
     ExternalDeploymentJobLogsResponse,
     ExternalDeploymentJobResponse,
+    enabled_job_modes_for_target_type,
 )
 from app.services.access_control import get_topology_for_user, require_topology_editor
 from app.services import deployment_target_service as target_svc
 from app.services import external_deployment_job_service as job_svc
+from app.services import external_deployment_service as ext_dep_svc
+from app.schemas.external_deployment import ExternalDeploymentListResponse, ExternalDeploymentResponse
 
 router = APIRouter(tags=["external-deployment-jobs"])
 
@@ -49,6 +51,41 @@ def _get_job_for_user(db: Session, user: User, job_id: UUID):
     return job
 
 
+def _to_external_deployment(row) -> ExternalDeploymentResponse:
+    return ExternalDeploymentResponse(
+        id=str(row.id),
+        project_id=str(row.project_id),
+        topology_id=str(row.topology_id),
+        target_id=str(row.target_id),
+        job_id=str(row.job_id) if row.job_id else None,
+        compose_project_name=row.compose_project_name,
+        remote_workdir=row.remote_workdir,
+        status=row.status,
+        services_json=row.services_json or [],
+        metadata_json=row.metadata_json or {},
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        destroyed_at=row.destroyed_at,
+    )
+
+
+@router.get(
+    "/topologies/{topology_id}/external-deployments",
+    response_model=ExternalDeploymentListResponse,
+)
+def list_external_deployments(
+    topology_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ExternalDeploymentListResponse:
+    get_topology_for_user(db, user, topology_id)
+    items = [
+        _to_external_deployment(row)
+        for row in ext_dep_svc.list_external_deployments_for_topology(db, topology_id)
+    ]
+    return ExternalDeploymentListResponse(items=items)
+
+
 @router.get(
     "/topologies/{topology_id}/external-deployment-jobs",
     response_model=ExternalDeploymentJobListResponse,
@@ -76,14 +113,6 @@ def create_external_deployment_job(
 ) -> ExternalDeploymentJobResponse:
     require_topology_editor(db, user, topology_id)
     topo = get_topology_for_user(db, user, topology_id)
-    if body.mode not in ENABLED_JOB_MODES:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Mode '{body.mode}' is not enabled yet. "
-                "Step 57A supports validate and plan only; apply/destroy coming later."
-            ),
-        )
     try:
         target_id = UUID(body.target_id)
     except ValueError as exc:
@@ -91,6 +120,15 @@ def create_external_deployment_job(
     target = target_svc.get_target(db, target_id)
     if target is None or target.project_id != topo.project_id:
         raise HTTPException(status_code=404, detail="Deployment target not found")
+    allowed = enabled_job_modes_for_target_type(target.target_type)
+    if body.mode not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Mode '{body.mode}' is not enabled for target_type '{target.target_type}'. "
+                f"Allowed modes: {', '.join(sorted(allowed))}"
+            ),
+        )
     try:
         job = job_svc.create_and_run_job(
             db,

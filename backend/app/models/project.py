@@ -13,6 +13,7 @@ from app.db.session import Base
 
 if TYPE_CHECKING:
     from app.models.deployment_target import DeploymentTarget
+    from app.models.external_deployment import ExternalDeployment
     from app.models.external_deployment_job import ExternalDeploymentJob
     from app.models.project_invitation import ProjectInvitation
     from app.models.project_membership import ProjectMembership
@@ -71,6 +72,11 @@ class Project(Base):
         passive_deletes=True,
     )
     external_deployment_jobs: Mapped[list["ExternalDeploymentJob"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    external_deployments: Mapped[list["ExternalDeployment"]] = relationship(
         back_populates="project",
         cascade="all, delete-orphan",
         passive_deletes=True,

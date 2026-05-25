@@ -38,26 +38,85 @@ _cns_retry() {
   done
 }
 
-_cns_cloud_init_report() {
-  local status=""
-  status="$(sudo cloud-init status 2>/dev/null || true)"
-  echo "=== cloud-init status ==="
-  echo "${status}"
-  if [[ "${status}" == *"error"* ]]; then
-    echo "=== cloud-init status --long ==="
-    sudo cloud-init status --long || true
-    echo "=== tail /var/log/cloud-init-output.log ==="
-    sudo tail -n 200 /var/log/cloud-init-output.log || true
-  fi
+_cns_cloud_init_status_field() {
+  sudo cloud-init status 2>/dev/null | awk -F': ' '/status:/ {print $2; exit}'
+}
+
+_cns_trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "${value}"
+}
+
+_cns_cloud_init_diagnostics() {
+  sudo cloud-init status --long || true
+  sudo tail -n 160 /var/log/cloud-init-output.log || true
 }
 
 _cns_wait_for_cloud_init() {
+  local wait_rc=0
+  local status=""
+
   _cns_log "Waiting for cloud-init..."
-  if ! sudo cloud-init status --wait; then
-    _cns_cloud_init_report
-    _cns_die "cloud-init did not complete successfully"
+  sudo cloud-init status --wait || wait_rc=$?
+
+  status="$(_cns_trim "$(_cns_cloud_init_status_field)")"
+  echo "=== cloud-init status ==="
+  sudo cloud-init status 2>/dev/null || true
+
+  if [[ "${status}" == "done" ]]; then
+    if (( wait_rc != 0 )); then
+      _cns_log "cloud-init status is done (--wait exited ${wait_rc}; treating as success)"
+    else
+      _cns_log "cloud-init completed successfully"
+    fi
+    return 0
   fi
-  _cns_cloud_init_report
+
+  if [[ "${status}" == "error" ]]; then
+    _cns_log "FATAL: cloud-init status is error"
+    _cns_cloud_init_diagnostics
+    exit 1
+  fi
+
+  if (( wait_rc != 0 )); then
+    _cns_log "FATAL: cloud-init status --wait failed"
+    _cns_cloud_init_diagnostics
+    exit 1
+  fi
+
+  _cns_log "FATAL: cloud-init status is ${status:-unknown}"
+  _cns_cloud_init_diagnostics
+  exit 1
+}
+
+_cns_verify_docker_dependencies() {
+  local docker_bin=""
+
+  if ! docker_bin="$(_cns_docker_bin)"; then
+    _cns_log "Docker missing after cloud-init (will attempt install)"
+    return 1
+  fi
+
+  # shellcheck disable=SC2086
+  if ! ${docker_bin} --version; then
+    _cns_log "Docker missing: docker --version failed after cloud-init"
+    return 1
+  fi
+  # shellcheck disable=SC2086
+  if ! ${docker_bin} compose version; then
+    _cns_log "Docker missing: docker compose version failed after cloud-init"
+    return 1
+  fi
+  if [[ "$(systemctl is-active docker 2>/dev/null || echo inactive)" != "active" ]]; then
+    _cns_log "Docker missing: systemctl is-active docker is not active after cloud-init"
+    return 1
+  fi
+
+  _cns_log "Docker dependencies verified after cloud-init"
+  systemctl is-active docker
+  return 0
 }
 
 _cns_apt_get_update() {
@@ -196,14 +255,15 @@ _cns_wait_for_docker() {
     sleep 5
     n=$((n + 1))
   done
-  _cns_cloud_init_report
   _cns_docker_apt_diagnostics
-  _cns_die "Docker not available after ${CNS_DOCKER_WAIT_SECONDS}s"
+  _cns_die "Docker not available after ${CNS_DOCKER_WAIT_SECONDS}s (cloud-init completed successfully)"
 }
 
 ec2_bootstrap_host() {
   _cns_wait_for_cloud_init
-  _cns_install_docker_if_needed
+  if ! _cns_verify_docker_dependencies; then
+    _cns_install_docker_if_needed
+  fi
   _cns_wait_for_docker
 }
 

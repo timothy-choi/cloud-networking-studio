@@ -57,9 +57,11 @@ export async function submitInfrastructureCreate(
 export function InfrastructureDeploymentsPanel({
   topologyId,
   onUseRuntimeTarget,
+  onRuntimeTargetsChanged,
 }: {
   topologyId: string;
   onUseRuntimeTarget?: (targetId: string) => void;
+  onRuntimeTargetsChanged?: () => void;
 }) {
   const [templates, setTemplates] = useState<InfrastructureTemplate[]>([]);
   const [deployments, setDeployments] = useState<InfrastructureDeployment[]>([]);
@@ -179,6 +181,7 @@ export function InfrastructureDeploymentsPanel({
     if (!selected) return;
     await runAction(() => confirmInfrastructureDeployment(selected.id));
     await refreshDeployments(selected.id);
+    onRuntimeTargetsChanged?.();
   }
 
   async function handleDestroy() {
@@ -203,6 +206,12 @@ export function InfrastructureDeploymentsPanel({
   const isMockDeployment = selected
     ? isMockInfrastructureDeployment(selected.template_id, selected.provider)
     : false;
+  const targetSkipEvent = [...(selected?.events_json ?? [])]
+    .reverse()
+    .find(
+      (ev) =>
+        ev.type === 'runtime_target_creation_skipped' || ev.type === 'runtime_target_creation_failed',
+    );
   const combinedLogs = executions
     .map((ex) => `[${ex.execution_type}/${ex.mode}] ${ex.logs ?? ''}`.trim())
     .filter(Boolean)
@@ -451,9 +460,11 @@ export function InfrastructureDeploymentsPanel({
                 </p>
                 {runtimeTargets.length === 0 ? (
                   <p className="mt-2 text-xs text-cns-muted">
-                    {isMockDeployment
-                      ? 'No runtime targets created for mock deployment.'
-                      : 'No runtime targets registered yet.'}
+                    {targetSkipEvent?.message
+                      ? `No runtime target created: ${targetSkipEvent.message}`
+                      : isMockDeployment
+                        ? 'No runtime target created for mock deployment.'
+                        : 'No runtime targets registered yet.'}
                   </p>
                 ) : (
                   <ul className="mt-2 space-y-2 text-xs">
@@ -463,6 +474,7 @@ export function InfrastructureDeploymentsPanel({
                         name?: string;
                         host?: string;
                         target_type?: string;
+                        is_mock?: boolean;
                       };
                       return (
                         <li
@@ -474,6 +486,11 @@ export function InfrastructureDeploymentsPanel({
                             {row.target_type ?? 'remote_docker'}
                             {row.host ? ` · ${row.host}` : ''}
                           </div>
+                          {row.is_mock || isMockDeployment ? (
+                            <div className="mt-1 text-amber-700 dark:text-amber-300">
+                              Mock target — for workflow testing only
+                            </div>
+                          ) : null}
                           {row.target_id && onUseRuntimeTarget ? (
                             <button
                               type="button"

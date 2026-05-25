@@ -39,6 +39,7 @@ class DeploymentTargetResponse(BaseModel):
     credentials_ref: str | None
     status: str
     created_by_user_id: str | None
+    infrastructure_deployment_id: str | None = None
     created_at: datetime | str
 
 

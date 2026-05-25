@@ -3,15 +3,24 @@ import { useState, type ReactNode } from 'react';
 export function CollapsibleSection({
   title,
   defaultOpen = false,
+  open: controlledOpen,
+  onOpenChange,
   id,
   children,
 }: {
   title: string;
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   id?: string;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (next: boolean) => {
+    if (onOpenChange) onOpenChange(next);
+    else setInternalOpen(next);
+  };
   return (
     <div
       id={id}
@@ -19,7 +28,7 @@ export function CollapsibleSection({
     >
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen(!open)}
         className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-semibold text-zinc-900 hover:bg-zinc-50 dark:text-zinc-100 dark:hover:bg-zinc-800/80"
       >
         <span>{title}</span>

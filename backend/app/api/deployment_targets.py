@@ -32,6 +32,9 @@ def _to_response(target) -> DeploymentTargetResponse:
         credentials_ref=target.credentials_ref,
         status=target.status,
         created_by_user_id=str(target.created_by_user_id) if target.created_by_user_id else None,
+        infrastructure_deployment_id=(
+            str(target.infrastructure_deployment_id) if target.infrastructure_deployment_id else None
+        ),
         created_at=target.created_at,
     )
 
@@ -130,3 +133,24 @@ def get_deployment_target(
         raise HTTPException(status_code=404, detail="Not found")
     get_project_for_member(db, user, target.project_id)
     return _to_response(target)
+
+
+@router.delete(
+    "/deployment-targets/{target_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_deployment_target(
+    target_id: UUID,
+    force: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    target = target_svc.get_target(db, target_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    require_project_editor(db, user, target.project_id)
+    try:
+        target_svc.delete_target(db, target=target, actor=user, force=force)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.commit()

@@ -116,40 +116,103 @@ def _register_runtime_targets(
     deployment: InfrastructureDeployment,
     actor: User,
 ) -> list[dict]:
-    hosts = deployment.outputs_json.get("hosts") or []
+    """Register runtime targets after infra apply/configure. Idempotent per infra deployment."""
+    existing = target_svc.list_targets_for_infrastructure_deployment(db, deployment.id)
+    if existing:
+        snapshots = [target_svc.runtime_target_snapshot(t) for t in existing]
+        deployment.runtime_targets_json = snapshots
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "runtime_target_creation_skipped",
+            message="Runtime target already registered for this infrastructure deployment",
+            metadata={"targets": snapshots, "reused": True},
+        )
+        db.flush()
+        return snapshots
+
+    is_mock = is_mock_infrastructure_deployment(deployment)
+    hosts = deployment.outputs_json.get("hosts") if deployment.outputs_json else None
+    if not hosts and is_mock:
+        hosts = [
+            {
+                "name": f"{deployment.name}-vm-1",
+                "public_ip": "203.0.113.10",
+                "private_ip": "10.0.0.10",
+                "ssh_user": "ubuntu",
+                "ssh_port": 22,
+            }
+        ]
+    if not isinstance(hosts, list) or not hosts:
+        reason = "No host outputs available to register a runtime target"
+        deployment.runtime_targets_json = []
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "runtime_target_creation_skipped",
+            message=reason,
+            metadata={"template_id": deployment.template_id, "provider": deployment.provider},
+        )
+        db.flush()
+        return []
+
+    if is_mock:
+        hosts = hosts[:1]
+
     created: list[dict] = []
+    errors: list[str] = []
     for host in hosts:
         if not isinstance(host, dict):
             continue
         host_name = str(host.get("name") or "runtime-host")
         public_ip = host.get("public_ip") or host.get("private_ip")
         if not public_ip:
+            errors.append(f"Host '{host_name}' missing public/private IP")
             continue
-        target = target_svc.create_target(
-            db,
-            project_id=deployment.project_id,
-            actor=actor,
-            name=f"{deployment.name}-{host_name}"[:128],
-            target_type="remote_docker",
-            config_json={
-                "host": public_ip,
-                "ssh_user": host.get("ssh_user") or "ubuntu",
-                "ssh_port": host.get("ssh_port") or 22,
-                "remote_workdir": "/opt/cns-external-deployments",
-                "supports_compose": True,
-            },
-            credentials_ref="env:CNS_REMOTE_DOCKER_SSH_KEY_PATH",
-            status="active",
-        )
-        created.append(
-            {
-                "target_id": str(target.id),
-                "name": target.name,
-                "host": public_ip,
-                "target_type": "remote_docker",
-            }
-        )
+        public_ip = str(public_ip)
+        mock_overrides = target_svc.mock_target_config_overrides(is_mock=is_mock, host=public_ip)
+        try:
+            target = target_svc.create_target(
+                db,
+                project_id=deployment.project_id,
+                actor=actor,
+                name=f"{deployment.name}-{host_name}"[:128],
+                target_type="remote_docker",
+                config_json={
+                    "host": public_ip,
+                    "ssh_user": host.get("ssh_user") or "ubuntu",
+                    "ssh_port": host.get("ssh_port") or 22,
+                    "remote_workdir": "/opt/cns-external-deployments",
+                    "supports_compose": True,
+                    **mock_overrides,
+                },
+                credentials_ref="env:CNS_REMOTE_DOCKER_SSH_KEY_PATH",
+                status="active",
+                infrastructure_deployment_id=deployment.id,
+            )
+            snapshot = target_svc.runtime_target_snapshot(target)
+            created.append(snapshot)
+            deployment.events_json = append_event(
+                deployment.events_json,
+                "runtime_target_created",
+                message=f"Registered runtime target {target.name}",
+                metadata={"target": snapshot},
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+            deployment.events_json = append_event(
+                deployment.events_json,
+                "runtime_target_creation_failed",
+                message=str(exc),
+                metadata={"host": public_ip, "host_name": host_name},
+            )
+
     deployment.runtime_targets_json = created
+    if not created and errors:
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "runtime_target_creation_skipped",
+            message=f"No runtime target created: {'; '.join(errors)}",
+            metadata={"errors": errors},
+        )
     db.flush()
     return created
 
@@ -338,12 +401,24 @@ def _confirm_and_apply_mock(
 
     targets = _register_runtime_targets(db, deployment=deployment, actor=actor)
     deployment.status = "succeeded"
-    deployment.events_json = append_event(
-        deployment.events_json,
-        "runtime_ready",
-        message=f"Registered {len(targets)} remote_docker target(s)",
-        metadata={"targets": targets, "mock": True},
-    )
+    if targets:
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "runtime_ready",
+            message=f"Registered {len(targets)} remote_docker target(s)",
+            metadata={"targets": targets, "mock": True},
+        )
+    else:
+        skip = next(
+            (ev for ev in reversed(deployment.events_json or []) if ev.get("type") == "runtime_target_creation_skipped"),
+            None,
+        )
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "runtime_ready",
+            message=skip.get("message") if skip else "Infrastructure succeeded without runtime targets",
+            metadata={"targets": [], "mock": True},
+        )
     deployment.metrics_json = record_metric(
         deployment.metrics_json,
         "ansible_duration_ms",

@@ -151,6 +151,94 @@ def test_create_infra_deployment_plan_and_confirm(client_strict, monkeypatch):
     assert any(item["execution_type"] == "ansible" and item["mode"] == "playbook" for item in items)
     assert any("[mock]" in (item.get("logs") or "") for item in items)
 
+    target_id = applied["runtime_targets_json"][0]["target_id"]
+    target = client_strict.get(f"/deployment-targets/{target_id}", headers=h)
+    assert target.status_code == 200, target.text
+    body = target.json()
+    assert body["infrastructure_deployment_id"] == deployment_id
+    assert body["config_json"].get("is_mock") is True
+    assert body["config_json"].get("workload_apply_disabled") is True
+    assert "runtime_target_created" in event_types
+
+    apply_job = client_strict.post(
+        f"/topologies/{topo_id}/external-deployment-jobs",
+        headers=h,
+        json={"target_id": target_id, "mode": "apply"},
+    )
+    assert apply_job.status_code == 400, apply_job.text
+    assert "disabled" in apply_job.json()["detail"].lower()
+
+
+def test_infra_target_registration_is_idempotent(client_strict, monkeypatch):
+    _install_mock_runner(monkeypatch)
+    h = _register(client_strict)
+    pid, topo_id = _project_and_topology(client_strict, h)
+    create = client_strict.post(
+        f"/topologies/{topo_id}/infrastructure-deployments",
+        headers=h,
+        json={"name": "lab-infra-2", "template_id": "local-mock", "provider": "local"},
+    )
+    deployment_id = create.json()["id"]
+    client_strict.post(f"/infrastructure-deployments/{deployment_id}/validate", headers=h)
+    client_strict.post(f"/infrastructure-deployments/{deployment_id}/plan", headers=h)
+    confirm = client_strict.post(
+        f"/infrastructure-deployments/{deployment_id}/confirm",
+        headers=h,
+        json={"confirm": True},
+    )
+    assert confirm.status_code == 200, confirm.text
+    target_id = confirm.json()["runtime_targets_json"][0]["target_id"]
+
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.db.session import SessionLocal
+    from app.models.infrastructure_deployment import InfrastructureDeployment
+    from app.models.user import User
+    from app.services import infrastructure_deployment_service as infra_svc
+
+    with SessionLocal() as db:
+        deployment = db.get(InfrastructureDeployment, UUID(deployment_id))
+        user = db.scalars(select(User).limit(1)).first()
+        assert deployment is not None
+        assert user is not None
+        infra_svc._register_runtime_targets(db, deployment=deployment, actor=user)
+        db.commit()
+
+    targets = client_strict.get(f"/projects/{pid}/deployment-targets", headers=h)
+    linked = [t for t in targets.json()["items"] if t.get("infrastructure_deployment_id") == deployment_id]
+    assert len(linked) == 1
+    assert linked[0]["id"] == target_id
+
+    refreshed = client_strict.get(f"/infrastructure-deployments/{deployment_id}", headers=h).json()
+    assert any(ev.get("type") == "runtime_target_creation_skipped" for ev in refreshed["events_json"])
+
+
+def test_delete_infra_created_target_does_not_destroy_infra(client_strict, monkeypatch):
+    _install_mock_runner(monkeypatch)
+    h = _register(client_strict)
+    _, topo_id = _project_and_topology(client_strict, h)
+    create = client_strict.post(
+        f"/topologies/{topo_id}/infrastructure-deployments",
+        headers=h,
+        json={"name": "keep-infra", "template_id": "local-mock", "provider": "local"},
+    )
+    deployment_id = create.json()["id"]
+    client_strict.post(f"/infrastructure-deployments/{deployment_id}/validate", headers=h)
+    client_strict.post(f"/infrastructure-deployments/{deployment_id}/plan", headers=h)
+    confirm = client_strict.post(
+        f"/infrastructure-deployments/{deployment_id}/confirm",
+        headers=h,
+        json={"confirm": True},
+    ).json()
+    target_id = confirm["runtime_targets_json"][0]["target_id"]
+    dr = client_strict.delete(f"/deployment-targets/{target_id}", headers=h)
+    assert dr.status_code == 204, dr.text
+    infra = client_strict.get(f"/infrastructure-deployments/{deployment_id}", headers=h)
+    assert infra.status_code == 200
+    assert infra.json()["status"] == "succeeded"
+
 
 def test_confirm_invalid_status_returns_409(client_strict, monkeypatch):
     _install_mock_runner(monkeypatch)

@@ -14,6 +14,8 @@ from app.models.user import User
 from app.services.audit_service import record_audit
 
 TARGET_TYPES = frozenset({"remote_docker", "kubernetes", "terraform", "ansible"})
+RUNTIME_TARGET_TYPES = frozenset({"remote_docker", "kubernetes"})
+LEGACY_INFRA_TARGET_TYPES = frozenset({"terraform", "ansible"})
 TARGET_STATUSES = frozenset({"active", "disabled"})
 
 
@@ -44,6 +46,11 @@ def create_target(
 ) -> DeploymentTarget:
     if target_type not in TARGET_TYPES:
         raise ValueError(f"Invalid target_type: {target_type}")
+    if target_type in LEGACY_INFRA_TARGET_TYPES:
+        raise ValueError(
+            f"target_type '{target_type}' is not a runtime target. "
+            "Use Infrastructure Deployments for Terraform/Ansible provisioning."
+        )
     if status not in TARGET_STATUSES:
         status = "active"
     target = DeploymentTarget(

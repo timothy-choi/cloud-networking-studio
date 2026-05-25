@@ -222,6 +222,18 @@ def confirm_infrastructure_deployment(
     require_topology_editor(db, user, deployment.topology_id)
     if not body.confirm:
         raise HTTPException(status_code=400, detail="Confirmation required")
+    if deployment.status != "awaiting_confirmation":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    f"Cannot confirm apply while status is '{deployment.status}'. "
+                    "Run Plan first and wait for awaiting_confirmation."
+                ),
+                "status": deployment.status,
+                "expected_status": "awaiting_confirmation",
+            },
+        )
     try:
         deployment = infra_svc.confirm_and_apply(db, deployment=deployment, actor=user)
     except ValueError as exc:

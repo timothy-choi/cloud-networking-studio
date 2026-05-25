@@ -518,12 +518,17 @@ export function TopologyDetailPage() {
 
       {topology?.project_id ? (
         <CollapsibleSection title="Infrastructure Deployments" defaultOpen={false}>
-          <InfrastructureDeploymentsPanel topologyId={id} />
+          <InfrastructureDeploymentsPanel
+            topologyId={id}
+            onUseRuntimeTarget={() => {
+              document.getElementById('external-deployments')?.scrollIntoView({ behavior: 'smooth' });
+            }}
+          />
         </CollapsibleSection>
       ) : null}
 
       {topology?.project_id ? (
-        <CollapsibleSection title="External Deployments" defaultOpen={false}>
+        <CollapsibleSection title="External Deployments" defaultOpen={false} id="external-deployments">
           <ExternalDeploymentsPanel
             topologyId={id}
             projectId={topology.project_id}

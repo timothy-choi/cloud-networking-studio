@@ -1,5 +1,3 @@
-import { useState } from 'react';
-
 import { ApiError, formatApiError, parseStructuredError } from '../../api/client';
 
 function redactSecrets(value: unknown): unknown {
@@ -26,15 +24,18 @@ export function ApiErrorDisplay({
   error: unknown;
   className?: string;
 }) {
-  const [open, setOpen] = useState(false);
   const friendly = formatApiError(error);
-  const structured =
-    error instanceof ApiError ? parseStructuredError(error.detail) : null;
-  const requestId = structured?.request_id ?? null;
+  const structured = error instanceof ApiError ? parseStructuredError(error.detail) : null;
+  const requestId = structured?.request_id ?? (error instanceof ApiError ? error.requestId : null);
   const code = structured?.code ?? null;
   const technical =
     error instanceof ApiError
-      ? redactSecrets(error.detail)
+      ? {
+          endpoint: error.url,
+          status: error.status,
+          statusText: error.statusText,
+          body: redactSecrets(error.detail),
+        }
       : error instanceof Error
         ? { message: error.message }
         : error;
@@ -44,10 +45,16 @@ export function ApiErrorDisplay({
       className={`rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100 ${className}`}
       role="alert"
     >
-      <div>{friendly}</div>
-      {code ? (
-        <div className="mt-1 font-mono text-[11px] opacity-80">Code: {code}</div>
+      <div className="whitespace-pre-wrap">{friendly}</div>
+      {error instanceof ApiError ? (
+        <div className="mt-2 space-y-0.5 font-mono text-[11px] opacity-90">
+          {error.url ? <div>endpoint: {error.url}</div> : null}
+          <div>
+            http: {error.status} {error.statusText}
+          </div>
+        </div>
       ) : null}
+      {code ? <div className="mt-1 font-mono text-[11px] opacity-80">Code: {code}</div> : null}
       {requestId ? (
         <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[11px]">
           <span>request_id: {requestId}</span>
@@ -60,17 +67,13 @@ export function ApiErrorDisplay({
           </button>
         </div>
       ) : null}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="mt-2 text-[11px] font-medium underline"
-      >
-        {open ? 'Hide technical details' : 'Show technical details'}
-      </button>
-      {open ? (
-        <pre className="mt-2 max-h-40 overflow-auto rounded bg-white/60 p-2 font-mono text-[10px] dark:bg-black/30">
-          {JSON.stringify(technical, null, 2)}
-        </pre>
+      {error instanceof ApiError ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[11px] font-medium">Response body</summary>
+          <pre className="mt-2 max-h-40 overflow-auto rounded bg-white/60 p-2 font-mono text-[10px] dark:bg-black/30">
+            {JSON.stringify(technical, null, 2)}
+          </pre>
+        </details>
       ) : null}
     </div>
   );

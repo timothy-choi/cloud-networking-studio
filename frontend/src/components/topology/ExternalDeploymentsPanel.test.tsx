@@ -20,6 +20,7 @@ vi.mock('../../api/deploymentTargets', () => ({
   createDeploymentTarget: vi.fn(),
   updateDeploymentTarget: vi.fn(),
   getDeploymentTarget: vi.fn(),
+  RUNTIME_DEPLOYMENT_TARGET_TYPES: ['remote_docker', 'kubernetes'],
 }));
 
 vi.mock('../../api/externalDeploymentJobs', () => ({

@@ -20,6 +20,9 @@ import {
   canShowApplyAction,
   canShowPlanAction,
   canShowValidateAction,
+  deriveConfigurationStatus,
+  deriveTerraformStatus,
+  isMockInfrastructureDeployment,
   validateInfrastructureCreateForm,
   type InfrastructureCreateFormErrors,
 } from './infrastructureDeploymentForm';
@@ -53,8 +56,10 @@ export async function submitInfrastructureCreate(
 
 export function InfrastructureDeploymentsPanel({
   topologyId,
+  onUseRuntimeTarget,
 }: {
   topologyId: string;
+  onUseRuntimeTarget?: (targetId: string) => void;
 }) {
   const [templates, setTemplates] = useState<InfrastructureTemplate[]>([]);
   const [deployments, setDeployments] = useState<InfrastructureDeployment[]>([]);
@@ -191,6 +196,13 @@ export function InfrastructureDeploymentsPanel({
   }
 
   const plan = selected?.plan_summary_json as Record<string, unknown> | null | undefined;
+  const eventTypes = (selected?.events_json ?? []).map((ev) => ev.type);
+  const terraformStatus = selected ? deriveTerraformStatus(selected.status, eventTypes) : null;
+  const configurationStatus = selected ? deriveConfigurationStatus(selected.status, eventTypes) : null;
+  const runtimeTargets = selected?.runtime_targets_json ?? [];
+  const isMockDeployment = selected
+    ? isMockInfrastructureDeployment(selected.template_id, selected.provider)
+    : false;
   const combinedLogs = executions
     .map((ex) => `[${ex.execution_type}/${ex.mode}] ${ex.logs ?? ''}`.trim())
     .filter(Boolean)
@@ -199,6 +211,13 @@ export function InfrastructureDeploymentsPanel({
   return (
     <div className="space-y-4">
       {error ? <ApiErrorDisplay error={error} /> : null}
+
+      <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-3 py-2 text-xs text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-100">
+        <strong>Infrastructure deployments</strong> use Terraform to provision cloud/VM/network resources,
+        then Ansible to configure hosts. After apply completes, CNS can register{' '}
+        <strong>runtime targets</strong> (<code className="font-mono">remote_docker</code>) for workload
+        deployments in the External Deployments section.
+      </div>
 
       <form onSubmit={handleCreate} className="space-y-3 rounded-lg border p-3 dark:border-zinc-700">
         <div className="text-sm font-medium">New infrastructure deployment</div>
@@ -326,6 +345,31 @@ export function InfrastructureDeploymentsPanel({
                   </div>
                 ) : null}
 
+                <div className="mt-3 grid gap-2 rounded border border-zinc-200 p-2 text-xs dark:border-zinc-700">
+                  <div>
+                    <span className="font-medium">Terraform:</span>{' '}
+                    <span className={statusTone(terraformStatus === 'failed' ? 'failed' : 'succeeded')}>
+                      {terraformStatus}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="font-medium">Ansible / configuration:</span>{' '}
+                    <span
+                      className={statusTone(
+                        configurationStatus === 'failed'
+                          ? 'failed'
+                          : configurationStatus === 'completed'
+                            ? 'succeeded'
+                            : configurationStatus === 'running'
+                              ? 'awaiting_confirmation'
+                              : 'pending',
+                      )}
+                    >
+                      {configurationStatus}
+                    </span>
+                  </div>
+                </div>
+
                 <div className="mt-3 flex flex-wrap gap-2">
                   {canShowValidateAction(selected.status) ? (
                     <button
@@ -401,9 +445,49 @@ export function InfrastructureDeploymentsPanel({
 
               <div className="rounded-lg border p-3 dark:border-zinc-700">
                 <div className="text-sm font-medium">Runtime targets created</div>
-                <pre className="mt-2 max-h-32 overflow-auto rounded bg-zinc-950 p-2 text-xs text-zinc-100">
-                  {JSON.stringify(selected.runtime_targets_json ?? [], null, 2)}
-                </pre>
+                <p className="mt-1 text-xs text-cns-muted">
+                  After Terraform apply and Ansible configuration, registered targets can be used for
+                  topology workload deployments.
+                </p>
+                {runtimeTargets.length === 0 ? (
+                  <p className="mt-2 text-xs text-cns-muted">
+                    {isMockDeployment
+                      ? 'No runtime targets created for mock deployment.'
+                      : 'No runtime targets registered yet.'}
+                  </p>
+                ) : (
+                  <ul className="mt-2 space-y-2 text-xs">
+                    {runtimeTargets.map((target) => {
+                      const row = target as {
+                        target_id?: string;
+                        name?: string;
+                        host?: string;
+                        target_type?: string;
+                      };
+                      return (
+                        <li
+                          key={row.target_id ?? row.name}
+                          className="rounded border px-2 py-1 dark:border-zinc-700"
+                        >
+                          <div className="font-medium">{row.name ?? 'runtime target'}</div>
+                          <div className="text-cns-muted">
+                            {row.target_type ?? 'remote_docker'}
+                            {row.host ? ` · ${row.host}` : ''}
+                          </div>
+                          {row.target_id && onUseRuntimeTarget ? (
+                            <button
+                              type="button"
+                              className="mt-1 rounded bg-emerald-700 px-2 py-0.5 text-[11px] text-white"
+                              onClick={() => onUseRuntimeTarget(row.target_id!)}
+                            >
+                              Use created target for topology deploy
+                            </button>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             </>
           ) : (

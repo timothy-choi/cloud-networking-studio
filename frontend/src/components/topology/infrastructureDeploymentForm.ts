@@ -52,3 +52,48 @@ export function canShowPlanAction(status: string): boolean {
 export function canShowValidateAction(status: string): boolean {
   return status === 'pending' || status === 'failed';
 }
+
+export function deriveTerraformStatus(
+  status: string,
+  eventTypes: string[],
+): string {
+  if (eventTypes.includes('apply_completed') || status === 'configuring' || status === 'succeeded') {
+    return 'applied';
+  }
+  if (status === 'applying' || eventTypes.includes('apply_started')) {
+    return 'applying';
+  }
+  if (status === 'awaiting_confirmation' || eventTypes.includes('plan_completed')) {
+    return 'planned (awaiting confirmation)';
+  }
+  if (eventTypes.includes('validate_completed')) {
+    return 'validated';
+  }
+  if (status === 'failed') {
+    return 'failed';
+  }
+  return 'pending';
+}
+
+export function deriveConfigurationStatus(
+  status: string,
+  eventTypes: string[],
+): string {
+  if (eventTypes.includes('runtime_ready') || status === 'succeeded') {
+    return 'completed';
+  }
+  if (status === 'configuring' || eventTypes.includes('configure_started')) {
+    return eventTypes.includes('configure_completed') ? 'completed' : 'running';
+  }
+  if (status === 'awaiting_confirmation' || status === 'pending' || status === 'applying') {
+    return 'not started';
+  }
+  if (status === 'failed') {
+    return 'failed';
+  }
+  return 'pending';
+}
+
+export function isMockInfrastructureDeployment(templateId: string, provider: string): boolean {
+  return templateId === 'local-mock' || provider === 'local' || provider === 'mock';
+}

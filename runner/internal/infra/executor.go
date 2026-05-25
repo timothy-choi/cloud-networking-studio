@@ -231,11 +231,19 @@ func executeAnsible(ctx context.Context, req model.InfraExecutionRequest, start 
 		return resp
 	}
 
-	ansiblePath, _ := exec.LookPath("ansible-playbook")
-	if ansiblePath == "" || req.Mode == "inventory" {
-		log.WriteString("[infra] ansible-playbook unavailable or inventory mode — mock configure\n")
+    ansiblePath, _ := exec.LookPath("ansible-playbook")
+	useMockAnsible := req.Provider == "local" || req.Provider == "mock" || req.Mode == "inventory" || req.Mode == "validate" || ansiblePath == ""
+	if useMockAnsible {
+		log.WriteString("[infra] mock ansible configure (provider=" + req.Provider + ", mode=" + req.Mode + ")\n")
 		resp.Logs = log.String() + fmt.Sprintf("[infra] inventory written to %s\n", inventoryPath)
+		if req.Mode == "playbook" {
+			log.WriteString("[infra] mock playbooks: install-docker, install-docker-compose, cns-runtime-dirs\n")
+			resp.Logs = log.String()
+		}
 		resp.Outputs["inventory"] = req.Inventory
+		resp.Artifacts = []model.InfraArtifact{
+			{Type: "configure_summary", URI: "mock://ansible/configure"},
+		}
 		resp.Status = "succeeded"
 		return finish(resp, start, req, "succeeded", "")
 	}

@@ -16,6 +16,7 @@
 #   CNS_STAGING_CORS_ORIGINS  extra browser origins (merged with required staging defaults)
 #   CNS_STAGING_CADDY_HTTP_PORT / CNS_STAGING_CADDY_HTTPS_PORT (co-located hosts)
 #   CNS_STAGING_POSTGRES_HOST_PORT
+#   STAGING_REMOTE_DOCKER_SSH_KEY_PATH  override host path (default /opt/cns/secrets/remote_docker_ssh.pem)
 
 set -euo pipefail
 
@@ -23,6 +24,8 @@ REPO_DIR="${HOME}/cloud-networking-studio-staging"
 PROD_DIR="${HOME}/cloud-networking-studio"
 ENV_FILE=".env.staging"
 LEGACY_ENV_FILE=".env"
+DEFAULT_REMOTE_DOCKER_SSH_KEY_PATH="/opt/cns/secrets/remote_docker_ssh.pem"
+SECRETS_DIR="/opt/cns/secrets"
 COMPOSE=(sudo docker compose)
 C_ARGS=(-f docker-compose.prod.yml -f docker-compose.caddy-https.yml -f docker-compose.staging.yml --env-file "${ENV_FILE}")
 
@@ -280,6 +283,16 @@ APP_HOST="${APP_HOST%%/*}"
 BASE_CORS="https://${APP_HOST},http://${STAGING_API_HOST},https://${STAGING_API_HOST},http://127.0.0.1,http://localhost"
 CNS_CORS_ORIGINS="$(merge_cors_origins "${DEFAULT_STAGING_CORS_ORIGINS}" "${EXTRA_CORS}" "${EXISTING_CORS}" "${BASE_CORS}")"
 
+REMOTE_DOCKER_SSH_KEY_PATH="$(printf '%s' "${STAGING_REMOTE_DOCKER_SSH_KEY_PATH:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+if [[ -z "${REMOTE_DOCKER_SSH_KEY_PATH}" ]] && [[ -n "${EXISTING_ENV}" ]]; then
+  REMOTE_DOCKER_SSH_KEY_PATH="$(read_env_value CNS_REMOTE_DOCKER_SSH_KEY_PATH "${EXISTING_ENV}" || true)"
+fi
+if [[ -z "${REMOTE_DOCKER_SSH_KEY_PATH}" ]]; then
+  REMOTE_DOCKER_SSH_KEY_PATH="${DEFAULT_REMOTE_DOCKER_SSH_KEY_PATH}"
+fi
+
+sudo install -d -m 0750 -o "${USER}" -g "${USER}" "${SECRETS_DIR}" 2>/dev/null || sudo install -d -m 0750 "${SECRETS_DIR}"
+
 CNS_CADDY_SITE_ADDRESS="${STAGING_API_HOST}"
 CNS_CADDY_AUTO_HTTPS="${CNS_CADDY_AUTO_HTTPS:-on}"
 CADDYFILE_CADDY="${CADDYFILE_CADDY:-./deploy/Caddyfile.staging-https}"
@@ -302,7 +315,8 @@ umask 077
     "AUTH_SECRET_KEY=${AUTH_SECRET_KEY}" \
     "RUNTIME_EXECUTOR=go" \
     "RUNTIME_PROVIDER=docker" \
-    "GO_RUNNER_URL=http://runner:8090"
+    "GO_RUNNER_URL=http://runner:8090" \
+    "CNS_REMOTE_DOCKER_SSH_KEY_PATH=${REMOTE_DOCKER_SSH_KEY_PATH}"
   if [[ -n "${CNS_STAGING_POSTGRES_HOST_PORT:-}" ]]; then
     printf '%s\n' "CNS_STAGING_POSTGRES_HOST_PORT=${CNS_STAGING_POSTGRES_HOST_PORT}"
   fi
@@ -318,8 +332,10 @@ echo "=== staging ${ENV_FILE} written (keys only) ==="
 cut -d= -f1 "${ENV_FILE}"
 echo "=== staging CNS_CORS_ORIGINS (safe debug) ==="
 grep -E '^CNS_CORS_ORIGINS=' "${ENV_FILE}" || true
+echo "=== staging CNS_REMOTE_DOCKER_SSH_KEY_PATH (safe debug) ==="
+grep -E '^CNS_REMOTE_DOCKER_SSH_KEY_PATH=' "${ENV_FILE}" || true
 
-unset TOKEN CLONE_URL POSTGRES_PASSWORD AUTH_SECRET_KEY DATABASE_URL STAGING_AUTH_SECRET_KEY STAGING_POSTGRES_PASSWORD STAGING_DATABASE_URL || true
+unset TOKEN CLONE_URL POSTGRES_PASSWORD AUTH_SECRET_KEY DATABASE_URL STAGING_AUTH_SECRET_KEY STAGING_POSTGRES_PASSWORD STAGING_DATABASE_URL REMOTE_DOCKER_SSH_KEY_PATH STAGING_REMOTE_DOCKER_SSH_KEY_PATH || true
 set -x
 
 echo "=== docker compose config (project cns-staging) ==="
@@ -344,6 +360,12 @@ if ! run_compose "${C_ARGS[@]}" up -d --force-recreate --no-deps backend; then
   run_compose "${C_ARGS[@]}" logs backend --tail=120 || true
   exit 1
 fi
+
+echo "=== staging remote_docker SSH credential debug (no secret contents) ==="
+grep -E '^CNS_REMOTE_DOCKER_SSH_KEY_PATH=' "${ENV_FILE}" || true
+run_compose "${C_ARGS[@]}" exec -T backend printenv | grep CNS_REMOTE_DOCKER || true
+run_compose "${C_ARGS[@]}" exec -T backend sh -c \
+  'if [ -n "${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-}" ] && [ -r "${CNS_REMOTE_DOCKER_SSH_KEY_PATH}" ]; then echo "CNS_REMOTE_DOCKER_SSH_KEY_PATH is set and readable"; else echo "CNS_REMOTE_DOCKER_SSH_KEY_PATH missing or not readable inside backend"; fi'
 
 echo "=== docker compose ps (staging) ==="
 run_compose "${C_ARGS[@]}" ps

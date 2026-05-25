@@ -221,7 +221,7 @@ jobs:
           CNS_STAGING_CADDY_HTTP_PORT: ${{ vars.CNS_STAGING_CADDY_HTTP_PORT }}
           CNS_STAGING_CADDY_HTTPS_PORT: ${{ vars.CNS_STAGING_CADDY_HTTPS_PORT }}
           CNS_STAGING_POSTGRES_HOST_PORT: ${{ vars.CNS_STAGING_POSTGRES_HOST_PORT }}
-          CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${{ vars.CNS_REMOTE_DOCKER_SSH_KEY_PATH || secrets.CNS_REMOTE_DOCKER_SSH_KEY_PATH }}
+          CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${{ vars.CNS_REMOTE_DOCKER_SSH_KEY_PATH || secrets.CNS_REMOTE_DOCKER_SSH_KEY_PATH || '/opt/cns/secrets/gcp-remote-docker-key' }}
           STAGING_REMOTE_DOCKER_SSH_KEY_PATH: ${{ vars.CNS_STAGING_REMOTE_DOCKER_SSH_KEY_PATH }}
         with:
           host: ${{ steps.host.outputs.ip }}
@@ -232,11 +232,15 @@ jobs:
           script: |
             set -euo pipefail
             APP_DIR="${HOME}/cloud-networking-studio-staging"
-            if [[ ! -f "${APP_DIR}/scripts/staging_deploy_remote.sh" ]]; then
-              CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            if [[ ! -d "${APP_DIR}/.git" ]]; then
               git clone "${CLONE_URL}" "${APP_DIR}"
             fi
-            bash "${APP_DIR}/scripts/staging_deploy_remote.sh"
+            # Run the deploy script from CHECKOUT_REF so redeploys pick up script fixes immediately.
+            curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${CHECKOUT_REF}/scripts/staging_deploy_remote.sh" \
+              -o /tmp/staging_deploy_remote.sh
+            bash /tmp/staging_deploy_remote.sh
 
       - name: Staging smoke (HTTPS API, environment=staging)
         env:

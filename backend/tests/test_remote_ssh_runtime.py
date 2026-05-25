@@ -99,6 +99,16 @@ def test_compose_backend_contains_env_and_secrets_mount():
     assert "/opt/cns/secrets:/opt/cns/secrets:ro" in compose_text
 
 
+def test_staging_compose_backend_remote_docker_ssh_key_default():
+    compose_text = Path(__file__).resolve().parents[2].joinpath("docker-compose.staging.yml").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key}"
+        in compose_text
+    )
+
+
 def test_remote_docker_executor_uses_runner_for_validate(client_strict, monkeypatch, tmp_path):
     key_file = tmp_path / "test.pem"
     key_file.write_text("fake-key\n", encoding="utf-8")

@@ -179,6 +179,35 @@ merge_cors_origins() {
   printf '%s' "${merged}"
 }
 
+resolve_cns_remote_docker_ssh_key_path() {
+  local existing_file="${1:-}"
+  local value
+  value="$(printf '%s' "${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  if [[ -z "${value}" ]]; then
+    value="$(printf '%s' "${STAGING_REMOTE_DOCKER_SSH_KEY_PATH:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  fi
+  if [[ -z "${value}" ]] && [[ -n "${existing_file}" ]] && [[ -f "${existing_file}" ]]; then
+    value="$(read_env_value CNS_REMOTE_DOCKER_SSH_KEY_PATH "${existing_file}" || true)"
+  fi
+  if [[ -z "${value}" ]]; then
+    value="${DEFAULT_REMOTE_DOCKER_SSH_KEY_PATH}"
+  fi
+  printf '%s' "${value}"
+}
+
+# Always write exactly one non-empty CNS_REMOTE_DOCKER_SSH_KEY_PATH line and export it for
+# docker compose (empty shell env from CI must not override --env-file during interpolation).
+ensure_remote_docker_ssh_key_path_env_line() {
+  if [[ -z "${CNS_REMOTE_DOCKER_SSH_KEY_PATH}" ]]; then
+    echo "::error::CNS_REMOTE_DOCKER_SSH_KEY_PATH resolved empty."
+    exit 1
+  fi
+  grep -v '^CNS_REMOTE_DOCKER_SSH_KEY_PATH=' "${ENV_FILE}" > "${ENV_FILE}.tmp" || true
+  mv "${ENV_FILE}.tmp" "${ENV_FILE}"
+  echo "CNS_REMOTE_DOCKER_SSH_KEY_PATH=${CNS_REMOTE_DOCKER_SSH_KEY_PATH}" >> "${ENV_FILE}"
+  export CNS_REMOTE_DOCKER_SSH_KEY_PATH
+}
+
 run_compose() {
   if [[ "${CNS_CADDY_AUTO_HTTPS:-}" == "on" ]]; then
     local saw_down=0 arg
@@ -284,16 +313,7 @@ APP_HOST="${APP_HOST%%/*}"
 BASE_CORS="https://${APP_HOST},http://${STAGING_API_HOST},https://${STAGING_API_HOST},http://127.0.0.1,http://localhost"
 CNS_CORS_ORIGINS="$(merge_cors_origins "${DEFAULT_STAGING_CORS_ORIGINS}" "${EXTRA_CORS}" "${EXISTING_CORS}" "${BASE_CORS}")"
 
-REMOTE_DOCKER_SSH_KEY_PATH="$(printf '%s' "${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-if [[ -z "${REMOTE_DOCKER_SSH_KEY_PATH}" ]]; then
-  REMOTE_DOCKER_SSH_KEY_PATH="$(printf '%s' "${STAGING_REMOTE_DOCKER_SSH_KEY_PATH:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-fi
-if [[ -z "${REMOTE_DOCKER_SSH_KEY_PATH}" ]] && [[ -n "${EXISTING_ENV}" ]]; then
-  REMOTE_DOCKER_SSH_KEY_PATH="$(read_env_value CNS_REMOTE_DOCKER_SSH_KEY_PATH "${EXISTING_ENV}" || true)"
-fi
-if [[ -z "${REMOTE_DOCKER_SSH_KEY_PATH}" ]]; then
-  REMOTE_DOCKER_SSH_KEY_PATH="${DEFAULT_REMOTE_DOCKER_SSH_KEY_PATH}"
-fi
+CNS_REMOTE_DOCKER_SSH_KEY_PATH="$(resolve_cns_remote_docker_ssh_key_path "${EXISTING_ENV}")"
 
 sudo install -d -m 0750 -o "${USER}" -g "${USER}" "${SECRETS_DIR}" 2>/dev/null || sudo install -d -m 0750 "${SECRETS_DIR}"
 
@@ -319,8 +339,7 @@ umask 077
     "AUTH_SECRET_KEY=${AUTH_SECRET_KEY}" \
     "RUNTIME_EXECUTOR=go" \
     "RUNTIME_PROVIDER=docker" \
-    "GO_RUNNER_URL=http://runner:8090" \
-    "CNS_REMOTE_DOCKER_SSH_KEY_PATH=${REMOTE_DOCKER_SSH_KEY_PATH}"
+    "GO_RUNNER_URL=http://runner:8090"
   if [[ -n "${CNS_STAGING_POSTGRES_HOST_PORT:-}" ]]; then
     printf '%s\n' "CNS_STAGING_POSTGRES_HOST_PORT=${CNS_STAGING_POSTGRES_HOST_PORT}"
   fi
@@ -332,6 +351,8 @@ umask 077
   fi
 } > "${ENV_FILE}"
 
+ensure_remote_docker_ssh_key_path_env_line
+
 echo "=== staging ${ENV_FILE} written (keys only) ==="
 cut -d= -f1 "${ENV_FILE}"
 echo "=== staging CNS_CORS_ORIGINS (safe debug) ==="
@@ -339,7 +360,7 @@ grep -E '^CNS_CORS_ORIGINS=' "${ENV_FILE}" || true
 echo "=== staging CNS_REMOTE_DOCKER_SSH_KEY_PATH (safe debug) ==="
 grep -E '^CNS_REMOTE_DOCKER_SSH_KEY_PATH=' "${ENV_FILE}" || true
 
-unset TOKEN CLONE_URL POSTGRES_PASSWORD AUTH_SECRET_KEY DATABASE_URL STAGING_AUTH_SECRET_KEY STAGING_POSTGRES_PASSWORD STAGING_DATABASE_URL REMOTE_DOCKER_SSH_KEY_PATH STAGING_REMOTE_DOCKER_SSH_KEY_PATH || true
+unset TOKEN CLONE_URL POSTGRES_PASSWORD AUTH_SECRET_KEY DATABASE_URL STAGING_AUTH_SECRET_KEY STAGING_POSTGRES_PASSWORD STAGING_DATABASE_URL STAGING_REMOTE_DOCKER_SSH_KEY_PATH || true
 set -x
 
 echo "=== docker compose config (project cns-staging) ==="
@@ -367,11 +388,12 @@ fi
 
 echo "=== staging remote_docker SSH credential debug (no secret contents) ==="
 grep -E '^CNS_REMOTE_DOCKER_SSH_KEY_PATH=' "${ENV_FILE}" || true
-run_compose "${C_ARGS[@]}" exec -T backend printenv CNS_REMOTE_DOCKER_SSH_KEY_PATH || true
-run_compose "${C_ARGS[@]}" exec -T backend sh -c \
-  'if [ -n "${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-}" ] && [ -r "${CNS_REMOTE_DOCKER_SSH_KEY_PATH}" ]; then echo "CNS_REMOTE_DOCKER_SSH_KEY_PATH is readable"; else echo "CNS_REMOTE_DOCKER_SSH_KEY_PATH missing or not readable inside backend"; fi'
-run_compose "${C_ARGS[@]}" exec -T backend command -v ssh || true
-run_compose "${C_ARGS[@]}" exec -T backend command -v scp || true
+run_compose "${C_ARGS[@]}" exec -T backend sh -lc '
+  echo "CNS_REMOTE_DOCKER_SSH_KEY_PATH=$CNS_REMOTE_DOCKER_SSH_KEY_PATH"
+  test -r "$CNS_REMOTE_DOCKER_SSH_KEY_PATH" && echo KEY_READABLE || echo KEY_NOT_READABLE
+  command -v ssh
+  command -v scp
+'
 
 echo "=== docker compose ps (staging) ==="
 run_compose "${C_ARGS[@]}" ps

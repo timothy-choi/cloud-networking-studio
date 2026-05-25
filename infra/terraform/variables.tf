@@ -143,5 +143,5 @@ variable "staging_app_url" {
 variable "staging_remote_docker_ssh_key_path" {
   type        = string
   description = "Host path to the remote_docker SSH private key; written to .env.staging as CNS_REMOTE_DOCKER_SSH_KEY_PATH on first boot."
-  default     = "/opt/cns/secrets/remote_docker_ssh.pem"
+  default     = "/opt/cns/secrets/gcp-remote-docker-key"
 }

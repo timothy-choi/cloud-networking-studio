@@ -99,6 +99,15 @@ def test_compose_backend_contains_env_and_secrets_mount():
     assert "/opt/cns/secrets:/opt/cns/secrets:ro" in compose_text
 
 
+def test_backend_dockerfile_installs_openssh_client():
+    dockerfile = Path(__file__).resolve().parents[1].joinpath("Dockerfile").read_text(encoding="utf-8")
+    openssh_idx = dockerfile.index("openssh-client")
+    pip_idx = dockerfile.index("pip install")
+    assert openssh_idx < pip_idx
+    assert "command -v ssh" in dockerfile
+    assert "command -v scp" in dockerfile
+
+
 def test_staging_compose_backend_remote_docker_ssh_key_default():
     compose_text = Path(__file__).resolve().parents[2].joinpath("docker-compose.staging.yml").read_text(
         encoding="utf-8"

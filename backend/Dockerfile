@@ -8,11 +8,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-client \
     && rm -rf /var/lib/apt/lists/* \
-    && python -m pip install --upgrade pip \
+    && command -v ssh \
+    && command -v scp
+
+COPY requirements.txt .
+RUN python -m pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app

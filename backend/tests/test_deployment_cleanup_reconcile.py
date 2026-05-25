@@ -12,9 +12,9 @@ TOPO_BODY = {
 }
 
 
-def _topology_two_nodes(client):
+def _topology_two_nodes_linked(client):
     tid = client.post("/topologies", json=TOPO_BODY).json()["id"]
-    client.post(
+    na = client.post(
         f"/topologies/{tid}/nodes",
         json={
             "name": "client",
@@ -23,8 +23,8 @@ def _topology_two_nodes(client):
             "ip_address": None,
             "config": None,
         },
-    )
-    client.post(
+    ).json()
+    nb = client.post(
         f"/topologies/{tid}/nodes",
         json={
             "name": "server",
@@ -33,15 +33,29 @@ def _topology_two_nodes(client):
             "ip_address": None,
             "config": None,
         },
+    ).json()
+    client.post(
+        f"/topologies/{tid}/links",
+        json={
+            "source_node_id": na["id"],
+            "target_node_id": nb["id"],
+            "network_name": "lab-net",
+            "cidr": "10.5.0.0/24",
+            "config": None,
+        },
     )
-    return tid
+    return tid, na["id"], nb["id"]
+
+
+def _deploy_topology(client, tid: str) -> str:
+    dep = client.post(f"/topologies/{tid}/deploy")
+    assert dep.status_code == 201, dep.text
+    return dep.json()["id"]
 
 
 def test_cleanup_active_deployment_marks_stopped_and_clean(client):
-    tid = _topology_two_nodes(client)
-    dep = client.post(f"/topologies/{tid}/deploy")
-    assert dep.status_code == 201, dep.text
-    did = dep.json()["id"]
+    tid, _, _ = _topology_two_nodes_linked(client)
+    did = _deploy_topology(client, tid)
 
     cleanup = client.post(f"/deployments/{did}/cleanup")
     assert cleanup.status_code == 200, cleanup.text
@@ -64,8 +78,8 @@ def test_cleanup_active_deployment_marks_stopped_and_clean(client):
 
 
 def test_topology_runtime_allows_redeploy_after_cleanup(client):
-    tid = _topology_two_nodes(client)
-    did = client.post(f"/topologies/{tid}/deploy").json()["id"]
+    tid, _, _ = _topology_two_nodes_linked(client)
+    did = _deploy_topology(client, tid)
     assert client.post(f"/deployments/{did}/cleanup").status_code == 200
 
     dup = client.post(f"/topologies/{tid}/deploy")
@@ -73,8 +87,8 @@ def test_topology_runtime_allows_redeploy_after_cleanup(client):
 
 
 def test_cleanup_idempotent_when_already_clean(client):
-    tid = _topology_two_nodes(client)
-    did = client.post(f"/topologies/{tid}/deploy").json()["id"]
+    tid, _, _ = _topology_two_nodes_linked(client)
+    did = _deploy_topology(client, tid)
     assert client.post(f"/deployments/{did}/cleanup").status_code == 200
     again = client.post(f"/deployments/{did}/cleanup")
     assert again.status_code == 200
@@ -83,11 +97,8 @@ def test_cleanup_idempotent_when_already_clean(client):
 
 
 def test_traffic_test_fails_gracefully_after_cleanup(client):
-    tid = _topology_two_nodes(client)
-    nodes = client.get(f"/topologies/{tid}/nodes").json()
-    assert len(nodes) >= 2
-    src, tgt = nodes[0]["id"], nodes[1]["id"]
-    did = client.post(f"/topologies/{tid}/deploy").json()["id"]
+    tid, src, tgt = _topology_two_nodes_linked(client)
+    did = _deploy_topology(client, tid)
     assert client.post(f"/deployments/{did}/cleanup").status_code == 200
 
     ping = client.post(
@@ -102,8 +113,8 @@ def test_traffic_test_fails_gracefully_after_cleanup(client):
 
 
 def test_cleanup_partial_failed_keeps_deployment_active(client, monkeypatch):
-    tid = _topology_two_nodes(client)
-    did = client.post(f"/topologies/{tid}/deploy").json()["id"]
+    tid, _, _ = _topology_two_nodes_linked(client)
+    did = _deploy_topology(client, tid)
 
     monkeypatch.setattr(
         "app.services.cleanup_service._has_remaining_resources",
@@ -129,12 +140,13 @@ def test_cleanup_partial_failed_keeps_deployment_active(client, monkeypatch):
 def test_cleanup_records_timeline_events(client):
     from app.models.deployment_timeline import TimelineEventType
 
-    tid = _topology_two_nodes(client)
-    did = client.post(f"/topologies/{tid}/deploy").json()["id"]
+    tid, _, _ = _topology_two_nodes_linked(client)
+    did = _deploy_topology(client, tid)
     assert client.post(f"/deployments/{did}/cleanup").status_code == 200
 
     timeline = client.get(f"/deployments/{did}/timeline").json()
-    types = {e["event_type"] for e in timeline}
+    events = timeline["events"]
+    types = {e["event_type"] for e in events}
     assert TimelineEventType.CLEANUP_REQUESTED.value in types
     assert TimelineEventType.CLEANUP_SUCCEEDED.value in types
     assert TimelineEventType.DEPLOYMENT_MARKED_DESTROYED_AFTER_CLEANUP.value in types

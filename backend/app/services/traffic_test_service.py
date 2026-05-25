@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLevel
+from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLevel, DeploymentStatus
 from app.models.topology import Topology, TopologyNode
 from app.models.traffic_test import TrafficTest, TrafficTestResult, TrafficTestStatus, TrafficTestType
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
@@ -22,15 +22,66 @@ _CLAMP_PORT = (1, 65535)
 _SAFE_HTTP_PATH = re.compile(r"^/[A-Za-z0-9._/\-]*$")
 
 
-def _latest_deployment_id(session: Session, topology_id: UUID) -> UUID | None:
+def _latest_deployment(session: Session, topology_id: UUID) -> Deployment | None:
     stmt = (
-        select(Deployment.id)
+        select(Deployment)
         .where(Deployment.topology_id == topology_id)
         .order_by(Deployment.created_at.desc())
         .limit(1)
     )
-    row = session.execute(stmt).scalar_one_or_none()
-    return row
+    return session.execute(stmt).scalar_one_or_none()
+
+
+def _latest_deployment_id(session: Session, topology_id: UUID) -> UUID | None:
+    dep = _latest_deployment(session, topology_id)
+    return dep.id if dep else None
+
+
+def _deployment_supports_traffic(dep: Deployment | None) -> bool:
+    if dep is None:
+        return False
+    return dep.status == DeploymentStatus.SUCCEEDED
+
+
+def _fail_traffic_no_active_deployment(
+    session: Session,
+    *,
+    topology_id: UUID,
+    source_node_id: UUID,
+    target_node_id: UUID,
+    test_type: TrafficTestType,
+    command: str,
+) -> TrafficTest:
+    tt = TrafficTest(
+        topology_id=topology_id,
+        deployment_id=None,
+        source_node_id=source_node_id,
+        target_node_id=target_node_id,
+        test_type=test_type,
+        status=TrafficTestStatus.FAILED,
+        command=command,
+        finished_at=datetime.now(UTC),
+    )
+    session.add(tt)
+    session.flush()
+    session.add(
+        TrafficTestResult(
+            traffic_test_id=tt.id,
+            exit_code=1,
+            stdout="",
+            stderr="no active deployment",
+            latency_ms=None,
+            success=False,
+        )
+    )
+    _emit_deployment_event(
+        session,
+        None,
+        DeploymentEventLevel.WARNING,
+        "Traffic test skipped: no active deployment",
+    )
+    session.flush()
+    return tt
 
 
 def _emit_deployment_event(
@@ -96,7 +147,18 @@ def run_ping_test(
     src = _validate_topology_node(session, topology_id, source_node_id)
     tgt = _validate_topology_node(session, topology_id, target_node_id)
 
-    deployment_id = _latest_deployment_id(session, topology_id)
+    latest_dep = _latest_deployment(session, topology_id)
+    if not _deployment_supports_traffic(latest_dep):
+        return _fail_traffic_no_active_deployment(
+            session,
+            topology_id=topology_id,
+            source_node_id=source_node_id,
+            target_node_id=target_node_id,
+            test_type=TrafficTestType.PING,
+            command="(skipped: no active deployment)",
+        )
+
+    deployment_id = latest_dep.id if latest_dep else None
     provider = runtime_provider_for_topology(topo.runtime_target)
     count_clamped = max(_CLAMP_COUNT[0], min(int(count), _CLAMP_COUNT[1]))
 
@@ -293,7 +355,18 @@ def run_http_test(
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
 
-    deployment_id = _latest_deployment_id(session, topology_id)
+    latest_dep = _latest_deployment(session, topology_id)
+    if not _deployment_supports_traffic(latest_dep):
+        return _fail_traffic_no_active_deployment(
+            session,
+            topology_id=topology_id,
+            source_node_id=source_node_id,
+            target_node_id=target_node_id,
+            test_type=TrafficTestType.HTTP,
+            command="(skipped: no active deployment)",
+        )
+
+    deployment_id = latest_dep.id if latest_dep else None
     provider = runtime_provider_for_topology(topo.runtime_target)
 
     tt = TrafficTest(

@@ -7,7 +7,14 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.deployment import Deployment, DeploymentEvent, DeploymentEventLevel, DeploymentStatus, TopologySyncStatus
+from app.models.deployment import (
+    Deployment,
+    DeploymentCleanupStatus,
+    DeploymentEvent,
+    DeploymentEventLevel,
+    DeploymentStatus,
+    TopologySyncStatus,
+)
 from app.models.topology import Topology, TopologyNode
 from app.providers.docker_runtime_provider import runtime_provider_for_topology
 from app.services.deployment_queries import latest_deployment_for_topology
@@ -201,12 +208,14 @@ def _empty_topology_runtime_response(
     latest: Deployment | None = None,
     resources: list[dict] | None = None,
     warning: str | None = None,
+    message: str | None = None,
 ) -> RuntimeTopologyResponse:
     return RuntimeTopologyResponse(
         topology_id=topology_id,
         status=status,
         resources=list(resources or []),
         warning=warning,
+        message=message,
         deployment_status=latest.status if latest else None,
         latest_deployment_id=latest.id if latest else None,
         topology_sync_status=_enum_str(latest.topology_sync_status) if latest else None,
@@ -229,6 +238,17 @@ def _resolve_topology_runtime_status(
     warning = provider_warning
 
     if latest.status == DeploymentStatus.STOPPED:
+        return "destroyed", warning
+
+    if (
+        latest.status == DeploymentStatus.SUCCEEDED
+        and latest.cleanup_status == DeploymentCleanupStatus.CLEAN
+        and not snap.containers
+        and not snap.networks
+        and not resources
+    ):
+        cleaned = "Deployment resources have been cleaned up."
+        warning = f"{warning} {cleaned}".strip() if warning else cleaned
         return "destroyed", warning
 
     if latest.status == DeploymentStatus.FAILED:
@@ -301,11 +321,21 @@ def build_topology_runtime(
         )
 
     if latest.status == DeploymentStatus.STOPPED:
+        msg = "Deployment resources have been cleaned up."
+        if latest.cleanup_status == DeploymentCleanupStatus.CLEAN:
+            return _empty_topology_runtime_response(
+                topology_id=topology_id,
+                runtime_provider=runtime_provider,
+                status="destroyed",
+                latest=latest,
+                message=msg,
+            )
         return _empty_topology_runtime_response(
             topology_id=topology_id,
             runtime_provider=runtime_provider,
             status="destroyed",
             latest=latest,
+            message="Deployment has been destroyed.",
         )
 
     resources = [
@@ -325,6 +355,9 @@ def build_topology_runtime(
         resources,
         provider_warning=provider_warning,
     )
+    message: str | None = None
+    if coarse_status == "destroyed":
+        message = "Deployment resources have been cleaned up."
     if emit_inspection_event:
         record_runtime_inspection_event(
             session, topology_id, snap, "GET /topologies/{id}/runtime"
@@ -332,19 +365,22 @@ def build_topology_runtime(
     return RuntimeTopologyResponse(
         topology_id=topology_id,
         status=coarse_status,
-        resources=resources,
+        resources=resources if coarse_status != "destroyed" else [],
         warning=warning,
+        message=message,
         deployment_status=latest.status,
         latest_deployment_id=latest.id,
         topology_sync_status=_enum_str(latest.topology_sync_status),
         runtime_provider=runtime_provider,
-        networks=_snapshot_to_networks(snap),
+        networks=_snapshot_to_networks(snap) if coarse_status != "destroyed" else [],
         containers=_snapshot_to_containers(
             snap,
             {n.id: (n.ip_address or None) for n in nodes},
-        ),
-        node_runtime_mapping=mapping,
-        container_states=states,
+        )
+        if coarse_status != "destroyed"
+        else [],
+        node_runtime_mapping=mapping if coarse_status != "destroyed" else {},
+        container_states=states if coarse_status != "destroyed" else {},
     )
 
 

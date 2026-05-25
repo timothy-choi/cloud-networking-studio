@@ -1,6 +1,7 @@
 export interface DeploymentCleanupStatusResponse {
   deployment_id: string;
   status: string;
+  cleanup_status?: string | null;
   eligible_for_cleanup: boolean;
   reasons: string[];
   runtime_resources_count: number;
@@ -17,4 +18,9 @@ export interface DeploymentCleanupResponse {
   ok: boolean;
   deployment_id: string;
   events: Array<{ message: string }>;
+  cleanup_status?: string | null;
+  deployment_status?: string | null;
+  partial?: boolean;
+  message?: string | null;
+  marked_destroyed?: boolean;
 }

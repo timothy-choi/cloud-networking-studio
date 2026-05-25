@@ -14,6 +14,7 @@ from app.db.session import Base
 if TYPE_CHECKING:
     from app.models.external_deployment import ExternalDeployment
     from app.models.external_deployment_job import ExternalDeploymentJob
+    from app.models.infrastructure_deployment import InfrastructureDeployment
     from app.models.project import Project
     from app.models.user import User
 
@@ -46,12 +47,21 @@ class DeploymentTarget(Base):
         nullable=True,
         index=True,
     )
+    infrastructure_deployment_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("infrastructure_deployments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now
     )
 
     project: Mapped["Project"] = relationship(back_populates="deployment_targets")
     created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_user_id])
+    infrastructure_deployment: Mapped["InfrastructureDeployment | None"] = relationship(
+        foreign_keys=[infrastructure_deployment_id],
+    )
     external_jobs: Mapped[list["ExternalDeploymentJob"]] = relationship(
         back_populates="target",
         passive_deletes=True,

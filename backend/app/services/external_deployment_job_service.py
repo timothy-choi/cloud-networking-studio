@@ -56,6 +56,11 @@ def create_and_run_job(
             f"Mode '{mode}' is not enabled for target_type '{target.target_type}'. "
             f"Allowed: {', '.join(sorted(allowed))}"
         )
+    if mode in {"apply", "destroy"} and (target.config_json or {}).get("workload_apply_disabled"):
+        reason = (target.config_json or {}).get("workload_apply_disabled_reason") or (
+            "Workload apply is disabled for this target."
+        )
+        raise ValueError(reason)
     if target.project_id != topology.project_id:
         raise ValueError("Target does not belong to topology project")
     if target.status != "active":

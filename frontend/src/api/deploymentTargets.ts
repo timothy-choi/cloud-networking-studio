@@ -19,6 +19,7 @@ export interface DeploymentTarget {
   credentials_ref: string | null;
   status: string;
   created_by_user_id: string | null;
+  infrastructure_deployment_id?: string | null;
   created_at: string;
 }
 
@@ -61,5 +62,15 @@ export async function updateDeploymentTarget(
   return apiFetch<DeploymentTarget>(`/deployment-targets/${targetId}`, {
     method: 'PATCH',
     body: JSON.stringify(body),
+  });
+}
+
+export async function deleteDeploymentTarget(
+  targetId: string,
+  options?: { force?: boolean },
+): Promise<void> {
+  const query = options?.force ? '?force=true' : '';
+  return apiFetch<void>(`/deployment-targets/${targetId}${query}`, {
+    method: 'DELETE',
   });
 }

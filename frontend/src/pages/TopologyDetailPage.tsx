@@ -134,6 +134,13 @@ export function TopologyDetailPage() {
   const [networkAllocationMode, setNetworkAllocationMode] =
     useState<NetworkAllocationMode>('managed');
   const [allocationModeSaving, setAllocationModeSaving] = useState(false);
+  const [externalDeploymentsOpen, setExternalDeploymentsOpen] = useState(false);
+  const [externalTargetSelection, setExternalTargetSelection] = useState<{
+    targetId: string;
+    highlight: boolean;
+    fromInfra: boolean;
+  } | null>(null);
+  const [targetsRefreshToken, setTargetsRefreshToken] = useState(0);
 
   useEffect(() => {
     if (topology) {
@@ -520,19 +527,47 @@ export function TopologyDetailPage() {
         <CollapsibleSection title="Infrastructure Deployments" defaultOpen={false}>
           <InfrastructureDeploymentsPanel
             topologyId={id}
-            onUseRuntimeTarget={() => {
-              document.getElementById('external-deployments')?.scrollIntoView({ behavior: 'smooth' });
+            onUseRuntimeTarget={(targetId) => {
+              setExternalDeploymentsOpen(true);
+              setExternalTargetSelection({ targetId, highlight: true, fromInfra: true });
+              setTargetsRefreshToken((current) => current + 1);
+              window.requestAnimationFrame(() => {
+                document.getElementById('external-deployments')?.scrollIntoView({ behavior: 'smooth' });
+              });
             }}
+            onRuntimeTargetsChanged={() => setTargetsRefreshToken((current) => current + 1)}
           />
         </CollapsibleSection>
       ) : null}
 
       {topology?.project_id ? (
-        <CollapsibleSection title="External Deployments" defaultOpen={false} id="external-deployments">
+        <CollapsibleSection
+          title="External Deployments"
+          defaultOpen={false}
+          id="external-deployments"
+          open={externalDeploymentsOpen}
+          onOpenChange={setExternalDeploymentsOpen}
+        >
           <ExternalDeploymentsPanel
             topologyId={id}
             projectId={topology.project_id}
             readOnly={viewerMode}
+            preselectedTargetId={externalTargetSelection?.targetId ?? null}
+            highlightTargetId={
+              externalTargetSelection?.highlight ? externalTargetSelection.targetId : null
+            }
+            selectedFromInfra={externalTargetSelection?.fromInfra ?? false}
+            onSelectedFromInfraAck={() =>
+              setExternalTargetSelection((current) =>
+                current ? { ...current, fromInfra: false } : null,
+              )
+            }
+            onHighlightDone={() =>
+              setExternalTargetSelection((current) =>
+                current ? { ...current, highlight: false } : null,
+              )
+            }
+            refreshToken={targetsRefreshToken}
           />
         </CollapsibleSection>
       ) : null}

@@ -155,11 +155,18 @@ export function InfrastructureDeploymentsPanel({
             ))}
           </select>
           <input
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
+            placeholder="Region"
+            className="rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+          />
+          <input
             type="number"
             min={1}
             max={10}
             value={vmCount}
             onChange={(e) => setVmCount(Number(e.target.value))}
+            placeholder="VM count"
             className="rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
           />
         </div>
@@ -282,7 +289,11 @@ export function InfrastructureDeploymentsPanel({
         </div>
       </div>
 
-      {busy ? <Spinner label="Running infrastructure workflow…" /> : null}
+      {busy ? (
+        <p className="flex items-center gap-2 text-sm text-cns-muted">
+          <Spinner className="h-4 w-4" /> Running infrastructure workflow…
+        </p>
+      ) : null}
     </div>
   );
 }

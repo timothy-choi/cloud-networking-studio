@@ -74,6 +74,7 @@ func TestStatusSupportedOperations(t *testing.T) {
 	want := map[string]bool{
 		"deploy": true, "destroy": true, "logs": true, "exec": true,
 		"health_check": true, "traffic_test": true, "terminal": true,
+		"infra_terraform": true, "infra_ansible": true,
 	}
 	for _, op := range st.SupportedOperations {
 		if !want[op] {

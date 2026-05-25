@@ -373,6 +373,13 @@ fi
 echo "=== docker compose down (staging only; no -v) ==="
 run_compose "${C_ARGS[@]}" down || true
 
+echo "=== docker compose build --no-cache backend (cns-staging; openssh-client) ==="
+if ! run_compose "${C_ARGS[@]}" build --no-cache backend; then
+  run_compose "${C_ARGS[@]}" ps -a || true
+  run_compose "${C_ARGS[@]}" logs backend --tail=120 || true
+  exit 1
+fi
+
 echo "=== docker compose up -d --build --remove-orphans (cns-staging) ==="
 if ! run_compose "${C_ARGS[@]}" up -d --build --remove-orphans; then
   run_compose "${C_ARGS[@]}" ps -a || true

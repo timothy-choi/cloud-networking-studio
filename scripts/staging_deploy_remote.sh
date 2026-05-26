@@ -18,6 +18,7 @@
 #   CNS_STAGING_POSTGRES_HOST_PORT
 #   STAGING_REMOTE_DOCKER_SSH_KEY_PATH  legacy override host path
 #   CNS_REMOTE_DOCKER_SSH_KEY_PATH      GitHub variable/secret path override
+#   GOOGLE_APPLICATION_CREDENTIALS      GCP Terraform SA JSON path (default /opt/cns/secrets/gcp-terraform-sa.json)
 
 set -euo pipefail
 
@@ -26,6 +27,7 @@ PROD_DIR="${HOME}/cloud-networking-studio"
 ENV_FILE=".env.staging"
 LEGACY_ENV_FILE=".env"
 DEFAULT_REMOTE_DOCKER_SSH_KEY_PATH="/opt/cns/secrets/gcp-remote-docker-key"
+DEFAULT_GCP_TERRAFORM_CREDS_PATH="/opt/cns/secrets/gcp-terraform-sa.json"
 SECRETS_DIR="/opt/cns/secrets"
 COMPOSE=(sudo docker compose)
 C_ARGS=(-f docker-compose.prod.yml -f docker-compose.caddy-https.yml -f docker-compose.staging.yml --env-file "${ENV_FILE}")
@@ -208,7 +210,81 @@ ensure_remote_docker_ssh_key_path_env_line() {
   export CNS_REMOTE_DOCKER_SSH_KEY_PATH
 }
 
+resolve_google_application_credentials_path() {
+  local existing_file="${1:-}"
+  local value
+  value="$(printf '%s' "${GOOGLE_APPLICATION_CREDENTIALS:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  if [[ -z "${value}" ]] && [[ -n "${existing_file}" ]] && [[ -f "${existing_file}" ]]; then
+    value="$(read_env_value GOOGLE_APPLICATION_CREDENTIALS "${existing_file}" || true)"
+  fi
+  if [[ -z "${value}" ]]; then
+    value="${DEFAULT_GCP_TERRAFORM_CREDS_PATH}"
+  fi
+  printf '%s' "${value}"
+}
+
+ensure_google_application_credentials_env_line() {
+  if [[ -z "${GOOGLE_APPLICATION_CREDENTIALS}" ]]; then
+    echo "::error::GOOGLE_APPLICATION_CREDENTIALS resolved empty."
+    exit 1
+  fi
+  grep -v '^GOOGLE_APPLICATION_CREDENTIALS=' "${ENV_FILE}" > "${ENV_FILE}.tmp" || true
+  mv "${ENV_FILE}.tmp" "${ENV_FILE}"
+  echo "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}" >> "${ENV_FILE}"
+  export GOOGLE_APPLICATION_CREDENTIALS
+}
+
+verify_gcp_terraform_credentials_in_container() {
+  local service="$1"
+  local label="${service}="
+  if ! run_compose "${C_ARGS[@]}" exec -T "${service}" sh -lc '
+    label="'"${label}"'"
+    if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
+      echo "${label}"
+      echo "GOOGLE_APPLICATION_CREDENTIALS is not configured in '"${service}"' container."
+      exit 1
+    fi
+    echo "${label}${GOOGLE_APPLICATION_CREDENTIALS}"
+    if ! test -r "${GOOGLE_APPLICATION_CREDENTIALS}"; then
+      echo "GOOGLE_APPLICATION_CREDENTIALS is not configured in '"${service}"' container."
+      exit 1
+    fi
+    if [ "'"${service}"'" = "backend" ]; then
+      echo BACKEND_CREDS_READABLE
+    else
+      echo RUNNER_CREDS_READABLE
+    fi
+  '; then
+    echo "::error::GCP Terraform credentials verification failed for ${service}."
+    exit 1
+  fi
+}
+
+prepare_compose_interpolation_env() {
+  # Docker Compose treats empty shell variables as "set", which blocks --env-file values
+  # from being used in ${VAR:-} interpolation (same issue as CNS_REMOTE_DOCKER_SSH_KEY_PATH).
+  if [[ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+    unset GOOGLE_APPLICATION_CREDENTIALS
+  fi
+  if [[ -z "${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-}" ]]; then
+    unset CNS_REMOTE_DOCKER_SSH_KEY_PATH
+  fi
+}
+
+verify_rendered_compose_gcp_credentials() {
+  local cfg count
+  cfg="$(run_compose "${C_ARGS[@]}" config 2>/dev/null || true)"
+  count="$(printf '%s\n' "${cfg}" | grep -c "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}" || true)"
+  if [[ "${count}" -lt 2 ]]; then
+    echo "::error::Rendered compose config missing GOOGLE_APPLICATION_CREDENTIALS for backend and/or runner."
+    printf '%s\n' "${cfg}" | grep GOOGLE_APPLICATION_CREDENTIALS || true
+    exit 1
+  fi
+  echo "Rendered compose config: GOOGLE_APPLICATION_CREDENTIALS present for backend and runner"
+}
+
 run_compose() {
+  prepare_compose_interpolation_env
   if [[ "${CNS_CADDY_AUTO_HTTPS:-}" == "on" ]]; then
     local saw_down=0 arg
     for arg in "$@"; do
@@ -314,6 +390,7 @@ BASE_CORS="https://${APP_HOST},http://${STAGING_API_HOST},https://${STAGING_API_
 CNS_CORS_ORIGINS="$(merge_cors_origins "${DEFAULT_STAGING_CORS_ORIGINS}" "${EXTRA_CORS}" "${EXISTING_CORS}" "${BASE_CORS}")"
 
 CNS_REMOTE_DOCKER_SSH_KEY_PATH="$(resolve_cns_remote_docker_ssh_key_path "${EXISTING_ENV}")"
+GOOGLE_APPLICATION_CREDENTIALS="$(resolve_google_application_credentials_path "${EXISTING_ENV}")"
 
 sudo install -d -m 0750 -o "${USER}" -g "${USER}" "${SECRETS_DIR}" 2>/dev/null || sudo install -d -m 0750 "${SECRETS_DIR}"
 
@@ -339,7 +416,8 @@ umask 077
     "AUTH_SECRET_KEY=${AUTH_SECRET_KEY}" \
     "RUNTIME_EXECUTOR=go" \
     "RUNTIME_PROVIDER=docker" \
-    "GO_RUNNER_URL=http://runner:8090"
+    "GO_RUNNER_URL=http://runner:8090" \
+    "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}"
   if [[ -n "${CNS_STAGING_POSTGRES_HOST_PORT:-}" ]]; then
     printf '%s\n' "CNS_STAGING_POSTGRES_HOST_PORT=${CNS_STAGING_POSTGRES_HOST_PORT}"
   fi
@@ -352,6 +430,7 @@ umask 077
 } > "${ENV_FILE}"
 
 ensure_remote_docker_ssh_key_path_env_line
+ensure_google_application_credentials_env_line
 
 echo "=== staging ${ENV_FILE} written (keys only) ==="
 cut -d= -f1 "${ENV_FILE}"
@@ -359,6 +438,8 @@ echo "=== staging CNS_CORS_ORIGINS (safe debug) ==="
 grep -E '^CNS_CORS_ORIGINS=' "${ENV_FILE}" || true
 echo "=== staging CNS_REMOTE_DOCKER_SSH_KEY_PATH (safe debug) ==="
 grep -E '^CNS_REMOTE_DOCKER_SSH_KEY_PATH=' "${ENV_FILE}" || true
+echo "=== staging GOOGLE_APPLICATION_CREDENTIALS (safe debug) ==="
+grep -E '^GOOGLE_APPLICATION_CREDENTIALS=' "${ENV_FILE}" || true
 
 unset TOKEN CLONE_URL POSTGRES_PASSWORD AUTH_SECRET_KEY DATABASE_URL STAGING_AUTH_SECRET_KEY STAGING_POSTGRES_PASSWORD STAGING_DATABASE_URL STAGING_REMOTE_DOCKER_SSH_KEY_PATH || true
 set -x
@@ -369,6 +450,7 @@ if ! run_compose "${C_ARGS[@]}" config | head -n 40; then
   run_compose "${C_ARGS[@]}" logs --tail=120 || true
   exit 1
 fi
+verify_rendered_compose_gcp_credentials
 
 echo "=== docker compose down (staging only; no -v) ==="
 run_compose "${C_ARGS[@]}" down || true
@@ -387,9 +469,10 @@ if ! run_compose "${C_ARGS[@]}" up -d --build --remove-orphans; then
   exit 1
 fi
 
-echo "=== restart staging backend (reload ${ENV_FILE}) ==="
-if ! run_compose "${C_ARGS[@]}" up -d --force-recreate --no-deps backend; then
+echo "=== restart staging backend + runner (reload ${ENV_FILE}) ==="
+if ! run_compose "${C_ARGS[@]}" up -d --force-recreate --no-deps backend runner; then
   run_compose "${C_ARGS[@]}" logs backend --tail=120 || true
+  run_compose "${C_ARGS[@]}" logs runner --tail=120 || true
   exit 1
 fi
 
@@ -401,6 +484,10 @@ run_compose "${C_ARGS[@]}" exec -T backend sh -lc '
   command -v ssh
   command -v scp
 '
+
+echo "=== staging GCP Terraform credentials debug (backend + runner; no secret contents) ==="
+verify_gcp_terraform_credentials_in_container backend
+verify_gcp_terraform_credentials_in_container runner
 
 echo "=== docker compose ps (staging) ==="
 run_compose "${C_ARGS[@]}" ps

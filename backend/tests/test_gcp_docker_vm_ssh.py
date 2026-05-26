@@ -137,8 +137,10 @@ def test_gcp_plan_fails_without_ssh_public_key(client_strict, monkeypatch, tmp_p
     ).json()["id"]
 
     validate = client_strict.post(f"/infrastructure-deployments/{dep_id}/validate", headers=h)
-    assert validate.status_code == 400
-    assert "SSH public key is not configured" in validate.json()["detail"]
+    assert validate.status_code == 200, validate.text
+    body = validate.json()
+    assert body["status"] == "failed"
+    assert "SSH public key is not configured" in (body.get("error_message") or "")
 
 
 def test_gcp_apply_blocked_without_ssh_public_key(client_strict, monkeypatch, tmp_path):
@@ -182,7 +184,9 @@ def test_gcp_apply_blocked_without_ssh_public_key(client_strict, monkeypatch, tm
         },
     ).json()["id"]
 
-    # Plan also requires public key now; confirm path should fail safety if plan somehow existed.
+    client_strict.post(f"/infrastructure-deployments/{dep_id}/validate", headers=h)
     plan = client_strict.post(f"/infrastructure-deployments/{dep_id}/plan", headers=h)
-    assert plan.status_code == 400
-    assert "SSH public key is not configured" in plan.json()["detail"]
+    assert plan.status_code == 200, plan.text
+    body = plan.json()
+    assert body["status"] == "failed"
+    assert "SSH public key is not configured" in (body.get("error_message") or "")

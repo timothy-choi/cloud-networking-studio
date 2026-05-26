@@ -17,20 +17,24 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-def _column_exists(table: str, column: str) -> bool:
-    bind = op.get_bind()
-    cols = {c["name"] for c in sa.inspect(bind).get_columns(table)}
-    return column in cols
-
-
 def upgrade() -> None:
-    if not _column_exists("infrastructure_deployments", "credentials_ref"):
-        op.add_column(
-            "infrastructure_deployments",
-            sa.Column("credentials_ref", sa.String(length=255), nullable=True),
-        )
+    bind = op.get_bind()
+    if "infrastructure_deployments" not in sa.inspect(bind).get_table_names():
+        return
+    cols = {c["name"] for c in sa.inspect(bind).get_columns("infrastructure_deployments")}
+    if "credentials_ref" in cols:
+        return
+    op.add_column(
+        "infrastructure_deployments",
+        sa.Column("credentials_ref", sa.String(length=255), nullable=True),
+    )
 
 
 def downgrade() -> None:
-    if _column_exists("infrastructure_deployments", "credentials_ref"):
-        op.drop_column("infrastructure_deployments", "credentials_ref")
+    bind = op.get_bind()
+    if "infrastructure_deployments" not in sa.inspect(bind).get_table_names():
+        return
+    cols = {c["name"] for c in sa.inspect(bind).get_columns("infrastructure_deployments")}
+    if "credentials_ref" not in cols:
+        return
+    op.drop_column("infrastructure_deployments", "credentials_ref")

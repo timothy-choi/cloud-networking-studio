@@ -27,13 +27,23 @@ from app.services.infra_security import (
     validate_template_variables,
 )
 from app.services.infra_template_registry import validate_template_provider
+from app.services.infra_apply_safety import (
+    InfraApplySafetyError,
+    InfraInvalidStateError,
+    build_apply_safety_checklist,
+    is_gcp_docker_vm_apply_eligible,
+    validate_gcp_apply_safety,
+    variables_hash,
+)
+
+
 from app.services.terraform_credentials_service import resolve_terraform_credentials_env
 
 
 class RealCloudApplyDisabledError(Exception):
-    """Raised when confirm/apply is attempted for a real cloud provider (Step 57D)."""
+    """Raised when confirm/apply is attempted for unsupported real cloud providers."""
 
-    def __init__(self, message: str = "Real cloud apply is disabled in this version.") -> None:
+    def __init__(self, message: str = "Real cloud apply is disabled for this provider.") -> None:
         super().__init__(message)
         self.message = message
 
@@ -216,6 +226,12 @@ def _register_runtime_targets(
             continue
         public_ip = str(public_ip)
         mock_overrides = target_svc.mock_target_config_overrides(is_mock=is_mock, host=public_ip)
+        real_overrides: dict = {}
+        if is_gcp_docker_vm_apply_eligible(deployment) and not is_mock:
+            real_overrides = {
+                "target_source": "terraform_gcp_docker_vm",
+                "infrastructure_source": "terraform_gcp_docker_vm",
+            }
         try:
             target = target_svc.create_target(
                 db,
@@ -230,6 +246,7 @@ def _register_runtime_targets(
                     "remote_workdir": "/opt/cns-external-deployments",
                     "supports_compose": True,
                     **mock_overrides,
+                    **real_overrides,
                 },
                 credentials_ref="env:CNS_REMOTE_DOCKER_SSH_KEY_PATH",
                 status="active",
@@ -316,14 +333,23 @@ def run_plan(db: Session, *, deployment: InfrastructureDeployment, actor: User) 
         _, artifacts, outputs = tf_svc.execute_plan(db, execution=tf_plan, deployment=deployment)
         deployment.outputs_json = {**(deployment.outputs_json or {}), **outputs}
         plan_summary = next((a for a in artifacts if a.get("type") == "plan_summary"), None)
-        deployment.plan_summary_json = plan_summary
+        var_hash = variables_hash(deployment.variables_json)
         deployment.state_metadata_json = {
             **(deployment.state_metadata_json or {}),
             "backend": "local",
+            "workspace_id": str(deployment.id),
             "workspace": f"cns-infra-{str(deployment.id)[:8]}",
+            "plan_execution_id": str(tf_plan.id),
+            "plan_file": "tfplan",
+            "variables_hash": var_hash,
         }
-
         deployment.status = "awaiting_confirmation"
+        if plan_summary and is_gcp_docker_vm_apply_eligible(deployment):
+            plan_summary = {
+                **plan_summary,
+                "safety_checklist": build_apply_safety_checklist(deployment),
+            }
+        deployment.plan_summary_json = plan_summary
         deployment.events_json = append_event(
             deployment.events_json,
             "plan_completed",
@@ -479,12 +505,26 @@ def _confirm_and_apply_mock(
     deployment.error_message = None
 
 
-def confirm_and_apply(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
+def confirm_and_apply(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+    actor: User,
+    confirmation_text: str | None = None,
+    unsafe_testing_override: bool = False,
+) -> InfrastructureDeployment:
     if deployment.status != "awaiting_confirmation":
-        raise ValueError(f"Deployment must be awaiting_confirmation (current: {deployment.status})")
+        raise InfraInvalidStateError(
+            f"Deployment must be awaiting_confirmation (current: {deployment.status})"
+        )
 
     if is_real_cloud_provider(deployment.provider) and not is_mock_infrastructure_deployment(deployment):
-        raise RealCloudApplyDisabledError()
+        if not is_gcp_docker_vm_apply_eligible(deployment):
+            raise RealCloudApplyDisabledError()
+        if (confirmation_text or "").strip() != "APPLY":
+            raise ValueError("Typed confirmation required: enter APPLY to confirm.")
+        validate_gcp_apply_safety(deployment, unsafe_testing_override=unsafe_testing_override)
+        _require_real_cloud_ready(deployment)
 
     started = time.monotonic()
     deployment.confirmed_at = datetime.now(UTC)
@@ -497,52 +537,11 @@ def confirm_and_apply(db: Session, *, deployment: InfrastructureDeployment, acto
         if is_mock_infrastructure_deployment(deployment):
             _confirm_and_apply_mock(db, deployment=deployment, actor=actor, started=started)
         else:
-            tf_apply = _new_execution(db, deployment=deployment, execution_type="terraform", mode="apply")
-            _, _, outputs = tf_svc.execute_apply(db, execution=tf_apply, deployment=deployment)
-            deployment.outputs_json = {**(deployment.outputs_json or {}), **outputs}
-            deployment.events_json = append_event(deployment.events_json, "apply_completed")
-            deployment.metrics_json = record_metric(
-                deployment.metrics_json,
-                "terraform_apply_duration_ms",
-                int((time.monotonic() - started) * 1000),
-            )
-
-            inv_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="inventory")
-            _, _, inv_outputs = ansible_svc.execute_inventory(db, execution=inv_exec, deployment=deployment)
-            deployment.inventory_json = inv_outputs.get("inventory") or ansible_svc.generate_inventory(deployment)
-
-            deployment.status = "configuring"
-            deployment.events_json = append_event(
-                deployment.events_json,
-                "configure_started",
-                message="Ansible configuration started",
-            )
-            db.flush()
-
-            ansible_started = time.monotonic()
-            ansible_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="playbook")
-            ansible_svc.execute_configure(db, execution=ansible_exec, deployment=deployment)
-            deployment.events_json = append_event(
-                deployment.events_json,
-                "configure_completed",
-                message="Host configuration completed",
-            )
-
-            targets = _register_runtime_targets(db, deployment=deployment, actor=actor)
-            deployment.status = "succeeded"
-            deployment.events_json = append_event(
-                deployment.events_json,
-                "runtime_ready",
-                message=f"Registered {len(targets)} remote_docker target(s)",
-                metadata={"targets": targets},
-            )
-            deployment.metrics_json = record_metric(
-                deployment.metrics_json,
-                "ansible_duration_ms",
-                int((time.monotonic() - ansible_started) * 1000),
-            )
-            deployment.metrics_json = increment_counter(deployment.metrics_json, "success_count")
-            deployment.error_message = None
+            _confirm_and_apply_real(db, deployment=deployment, actor=actor, started=started)
+    except InfraApplySafetyError:
+        raise
+    except InfraInvalidStateError:
+        raise
     except ValueError as exc:
         deployment.status = "failed"
         deployment.error_message = str(exc)
@@ -562,11 +561,94 @@ def confirm_and_apply(db: Session, *, deployment: InfrastructureDeployment, acto
     return deployment
 
 
-def destroy_deployment(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
+def _confirm_and_apply_real(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+    actor: User,
+    started: float,
+) -> None:
+    tf_apply = _new_execution(db, deployment=deployment, execution_type="terraform", mode="apply")
+    _, _, outputs = tf_svc.execute_apply(db, execution=tf_apply, deployment=deployment)
+    deployment.outputs_json = {**(deployment.outputs_json or {}), **outputs}
+    deployment.state_metadata_json = {
+        **(deployment.state_metadata_json or {}),
+        "applied_at": datetime.now(UTC).isoformat(),
+        "apply_execution_id": str(tf_apply.id),
+    }
+    deployment.events_json = append_event(deployment.events_json, "apply_completed")
+    deployment.metrics_json = record_metric(
+        deployment.metrics_json,
+        "terraform_apply_duration_ms",
+        int((time.monotonic() - started) * 1000),
+    )
+
+    configuration_status = "pending"
+    try:
+        inv_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="inventory")
+        _, _, inv_outputs = ansible_svc.execute_inventory(db, execution=inv_exec, deployment=deployment)
+        deployment.inventory_json = inv_outputs.get("inventory") or ansible_svc.generate_inventory(deployment)
+
+        deployment.status = "configuring"
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "configure_started",
+            message="Ansible configuration started",
+        )
+        db.flush()
+
+        ansible_started = time.monotonic()
+        ansible_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="playbook")
+        ansible_svc.execute_configure(db, execution=ansible_exec, deployment=deployment)
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "configure_completed",
+            message="Host configuration completed",
+        )
+        configuration_status = "completed"
+        deployment.metrics_json = record_metric(
+            deployment.metrics_json,
+            "ansible_duration_ms",
+            int((time.monotonic() - ansible_started) * 1000),
+        )
+    except ValueError as exc:
+        configuration_status = "pending"
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "configure_completed",
+            message=f"Configuration pending: {exc}",
+            metadata={"configuration_pending": True},
+        )
+
+    targets = _register_runtime_targets(db, deployment=deployment, actor=actor)
+    deployment.status = "succeeded"
+    deployment.events_json = append_event(
+        deployment.events_json,
+        "runtime_ready",
+        message=f"Registered {len(targets)} remote_docker target(s)",
+        metadata={"targets": targets, "configuration_status": configuration_status},
+    )
+    deployment.metrics_json = increment_counter(deployment.metrics_json, "success_count")
+    deployment.error_message = None
+
+
+def destroy_deployment(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+    actor: User,
+    confirmation_text: str | None = None,
+) -> InfrastructureDeployment:
     if deployment.status in {"destroyed", "destroying"}:
         return deployment
 
-    if is_real_cloud_provider(deployment.provider) and deployment.status != "succeeded":
+    if is_gcp_docker_vm_apply_eligible(deployment):
+        if deployment.status != "succeeded":
+            raise PlanOnlyDestroyDisabledError()
+        if (confirmation_text or "").strip() != "DESTROY":
+            raise ValueError("Typed confirmation required: enter DESTROY to confirm destroy.")
+        _require_real_cloud_ready(deployment)
+    elif is_real_cloud_provider(deployment.provider) and deployment.status != "succeeded":
         raise PlanOnlyDestroyDisabledError()
 
     deployment.status = "destroying"
@@ -574,8 +656,13 @@ def destroy_deployment(db: Session, *, deployment: InfrastructureDeployment, act
     db.flush()
 
     try:
-        tf_destroy = _new_execution(db, deployment=deployment, execution_type="terraform", mode="destroy")
-        tf_svc.execute_destroy(db, execution=tf_destroy, deployment=deployment)
+        _deactivate_linked_runtime_targets(db, deployment=deployment, actor=actor)
+        if is_gcp_docker_vm_apply_eligible(deployment):
+            tf_destroy = _new_execution(db, deployment=deployment, execution_type="terraform", mode="destroy")
+            tf_svc.execute_destroy(db, execution=tf_destroy, deployment=deployment)
+        elif not is_mock_infrastructure_deployment(deployment):
+            tf_destroy = _new_execution(db, deployment=deployment, execution_type="terraform", mode="destroy")
+            tf_svc.execute_destroy(db, execution=tf_destroy, deployment=deployment)
         deployment.status = "destroyed"
         deployment.destroyed_at = datetime.now(UTC)
         deployment.runtime_targets_json = []
@@ -583,10 +670,20 @@ def destroy_deployment(db: Session, *, deployment: InfrastructureDeployment, act
         deployment.metrics_json = increment_counter(deployment.metrics_json, "destroy_count")
         deployment.error_message = None
     except ValueError as exc:
-        deployment.status = "failed"
-        deployment.error_message = str(exc)
-        deployment.events_json = append_event(deployment.events_json, "failed", message=str(exc))
-        deployment.metrics_json = increment_counter(deployment.metrics_json, "failure_count")
+        if deployment.status == "destroying" and "nothing to destroy" in str(exc).lower():
+            deployment.status = "destroyed"
+            deployment.destroyed_at = datetime.now(UTC)
+            deployment.events_json = append_event(
+                deployment.events_json,
+                "destroyed",
+                message="Destroy completed (already absent)",
+            )
+            deployment.error_message = None
+        else:
+            deployment.status = "failed"
+            deployment.error_message = str(exc)
+            deployment.events_json = append_event(deployment.events_json, "failed", message=str(exc))
+            deployment.metrics_json = increment_counter(deployment.metrics_json, "failure_count")
 
     db.flush()
     record_audit(
@@ -599,3 +696,27 @@ def destroy_deployment(db: Session, *, deployment: InfrastructureDeployment, act
         status=deployment.status,
     )
     return deployment
+
+
+def _deactivate_linked_runtime_targets(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+    actor: User,
+) -> None:
+    _ = actor
+    for target in target_svc.list_targets_for_infrastructure_deployment(db, deployment.id):
+        target.status = "disabled"
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "runtime_target_deactivated",
+            message=f"Deactivated runtime target {target.name} before destroy",
+            metadata={"target_id": str(target.id)},
+        )
+    db.flush()
+
+
+def get_apply_safety_preview(deployment: InfrastructureDeployment) -> dict:
+    if not is_gcp_docker_vm_apply_eligible(deployment):
+        return {"passed": False, "items": [], "apply_eligible": False}
+    return {**build_apply_safety_checklist(deployment), "apply_eligible": True}

@@ -17,7 +17,7 @@ describe('confirmInfrastructureDeployment', () => {
     await confirmInfrastructureDeployment('dep-1');
     expect(apiFetch).toHaveBeenCalledWith('/infrastructure-deployments/dep-1/confirm', {
       method: 'POST',
-      body: JSON.stringify({ confirm: true }),
+      body: JSON.stringify({ confirm: true, unsafe_testing_override: false }),
     });
   });
 });

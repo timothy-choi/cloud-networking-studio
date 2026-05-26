@@ -1,20 +1,75 @@
-# Infrastructure Deployments (Step 57C / 57D)
+# Infrastructure Deployments (Step 57C / 57D / 57E)
 
 Cloud Networking Studio orchestrates **Terraform provisioning**, **Ansible host configuration**, and **remote_docker workload deployment** as separate, auditable platform stages.
 
 > **Not Kubernetes orchestration.** This step prepares runtime hosts. Kubernetes support comes later.
 
-## Step 57D: Real Terraform validate + plan (GCP)
+## Step 57E: Real GCP docker-vm apply/destroy
 
-57D adds **real Terraform validate and plan** for cloud providers while **apply remains disabled** for real cloud deployments. No cloud resources are created in this step.
+57E enables **real Terraform apply and destroy** for **GCP `docker-vm` only**, behind strict safety gates and typed user confirmation. AWS, custom templates, and arbitrary modules remain disabled.
 
 | Capability | local/mock | GCP `docker-vm` | AWS `docker-vm` |
 |------------|------------|-----------------|-----------------|
 | `terraform init -backend=false` | mock or real | real | coming soon |
 | `terraform validate` | yes | yes | — |
 | `terraform plan` | yes | yes | — |
-| `terraform apply` | mock in-process | **409 disabled** | — |
-| Destroy | mock after apply | plan-only → **409 disabled** | — |
+| `terraform apply` | mock in-process | **yes (gated)** | — |
+| Destroy | mock after apply | **yes (gated)** | — |
+
+### Apply flow (GCP only)
+
+1. Create infrastructure deployment
+2. Validate succeeds
+3. Plan succeeds (plan stored in persistent workspace)
+4. Safety checklist passes
+5. User types **APPLY** and confirms
+6. Terraform apply runs from stored `tfplan`
+7. Outputs captured; optional Ansible host setup
+8. `remote_docker` runtime target registered
+
+Apply is **rejected** when:
+
+- No successful plan exists
+- Plan is stale after variable changes (re-run Plan)
+- Provider/template not `gcp` + `docker-vm`
+- Safety checks fail (machine type, region, vm_count, CIDR, credentials)
+- Status is not `awaiting_confirmation`
+
+### Safety limits
+
+| Gate | Rule |
+|------|------|
+| Provider/template | `gcp` + `docker-vm` only |
+| `vm_count` | ≤ 1 |
+| Machine types | `e2-micro`, `e2-small`, `e2-medium` |
+| Regions | `us-central1`, `us-west1`, `us-east1` |
+| Zone | Must match selected region |
+| Instance name | Must start with `cns-` |
+| CIDR | `0.0.0.0/0` blocked unless `unsafe_testing_override` |
+| Cost | UI shows: *This may create billable cloud resources.* |
+
+### Destroy flow (GCP)
+
+1. Deployment must be `succeeded` (applied)
+2. User types **DESTROY**
+3. Linked runtime targets deactivated
+4. `terraform destroy -auto-approve` in stored workspace
+5. Deployment marked `destroyed` (idempotent on repeat)
+
+### Credentials
+
+| credentials_ref | Server env var | Notes |
+|-----------------|----------------|-------|
+| `env:GOOGLE_APPLICATION_CREDENTIALS` | path to service account JSON | mount read-only in backend/runner |
+| `env:GOOGLE_CREDENTIALS_JSON` | inline JSON | validated but never logged |
+
+SSH for post-apply configuration uses `env:CNS_REMOTE_DOCKER_SSH_KEY_PATH` (never logged).
+
+Persistent Terraform workspaces: `/opt/cns/infra-workspaces/{deployment_id}` on the runner (mounted in production compose).
+
+## Step 57D: Real Terraform validate + plan (GCP)
+
+57D added real Terraform validate/plan for cloud providers. 57E extends this with gated apply/destroy for GCP `docker-vm`.
 
 Templates live under:
 
@@ -46,15 +101,15 @@ Create deployment with `"credentials_ref": "env:GOOGLE_APPLICATION_CREDENTIALS"`
 
 If missing: `Terraform credentials_ref is not configured on the server.`
 
-### Plan-only safety
+### Plan-only safety (historical 57D)
 
-- Real cloud apply returns **409**: `Real cloud apply is disabled in this version.`
+- Real cloud apply for non-GCP providers returns **409**
 - Destroy without apply returns **409**: `Nothing to destroy: plan-only deployment.`
 - local-mock confirm/apply/configure flow is unchanged.
 
-### Terraform → future runtime targets
+### Terraform → runtime targets
 
-GCP template outputs (`hosts`, `exposed_ports`, `zone`) map to future `remote_docker` target registration after apply is enabled. 57D persists plan summaries and outputs metadata only.
+After GCP apply, outputs (`public_ip`, `ssh_user`, `zone`, …) register a real `remote_docker` target with `source=terraform_gcp_docker_vm`.
 
 ## Architecture
 
@@ -79,7 +134,7 @@ flowchart TD
 FastAPI backend  →  Go runner POST /infra/executions  →  terraform | ansible-playbook
 ```
 
-- Isolated temp workspaces under `/tmp/cns-infra/{execution_id}`
+- Isolated workspaces: ephemeral `/tmp/cns-infra/{execution_id}` for validate; persistent `/opt/cns/infra-workspaces/{deployment_id}` for GCP plan/apply/destroy
 - Whitelisted templates in `infra_templates/`
 - Whitelisted playbooks in `ansible_playbooks/`
 - No arbitrary module/playbook uploads
@@ -110,7 +165,7 @@ Modules under `infra_templates/modules/`:
 
 `pending` → `validating` → `validated` → `planning` → `awaiting_confirmation` → `applying` → `configuring` → `succeeded`
 
-Destroy: `destroying` → `destroyed` (real cloud: only after a successful apply in a future release)
+Destroy: `destroying` → `destroyed` (GCP: only after successful apply; typed **DESTROY** required)
 
 ## API
 
@@ -123,8 +178,8 @@ Destroy: `destroying` → `destroyed` (real cloud: only after a successful apply
 | POST | `/infrastructure-deployments/{id}/plan` | Terraform plan (requires `validated`) |
 | GET | `/infrastructure-deployments/{id}` | Deployment detail |
 | GET | `/infrastructure-deployments/{id}/executions` | Execution logs/artifacts |
-| POST | `/infrastructure-deployments/{id}/confirm` | User approval gate → apply + ansible (409 for real cloud in 57D) |
-| POST | `/infrastructure-deployments/{id}/destroy` | Terraform destroy (409 for plan-only cloud) |
+| POST | `/infrastructure-deployments/{id}/confirm` | Typed **APPLY** gate → apply + ansible (GCP docker-vm) |
+| POST | `/infrastructure-deployments/{id}/destroy` | Typed **DESTROY** gate → terraform destroy |
 
 ## Confirmation gate
 
@@ -135,7 +190,12 @@ Terraform **apply** never runs automatically after plan. The UI shows:
 - Exposed ports
 - Host preview / public IPs
 
-The user must POST `/confirm` with `{ "confirm": true }`.
+The user must POST `/confirm`:
+
+- local/mock: `{ "confirm": true }`
+- GCP docker-vm: `{ "confirm": true, "confirmation_text": "APPLY", "unsafe_testing_override": false }`
+
+Destroy (GCP): `{ "confirmation_text": "DESTROY" }`
 
 ## Security restrictions
 
@@ -148,15 +208,19 @@ The user must POST `/confirm` with `{ "confirm": true }`.
 - Terraform state contents are **not** exposed via API — only metadata (`state_metadata_json`)
 - Local backend only (`-backend=false`); remote backends planned
 
-## Troubleshooting (57D)
+## Troubleshooting (57D / 57E)
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `Terraform CLI is not installed in runner image` | runner image missing terraform | rebuild runner (`runner/Dockerfile` installs terraform) |
 | `Terraform credentials_ref is not configured on the server` | missing env var or file | set `GOOGLE_APPLICATION_CREDENTIALS` or `GOOGLE_CREDENTIALS_JSON` on backend |
-| `terraform init failed` | provider plugin download/auth | check network; verify service account has minimal read roles for plan |
+| `terraform init failed` | provider plugin download/auth | check network; verify service account has minimal roles |
 | `terraform plan failed` | invalid variables or missing VPC | review plan logs in executions; confirm `network_name` exists |
-| Apply button disabled (GCP) | intentional 57D guard | wait for apply enablement in a later step |
+| Apply rejected: plan stale | variables changed after plan | re-run Plan |
+| Apply rejected: type APPLY | missing typed confirmation | enter exactly `APPLY` in confirm request |
+| `stored terraform plan file missing` | workspace lost between plan and apply | ensure runner volume `/opt/cns/infra-workspaces` is mounted |
+| Destroy rejected | plan-only or wrong status | apply first; use typed `DESTROY` |
+| Ansible configuration pending | SSH not ready | verify VM SSH access and `CNS_REMOTE_DOCKER_SSH_KEY_PATH` |
 
 ## Observability
 
@@ -172,7 +236,7 @@ Runner records infra operations in `/runtime/operations/recent`.
 | Provider | Terraform | Ansible | Notes |
 |----------|-----------|---------|-------|
 | local/mock | mock executor | mock/local | Default for dev & CI |
-| gcp | **real validate/plan** (57D) | after future apply | `credentials_ref` env pointers |
+| gcp | **real validate/plan/apply/destroy** (57E) | after apply | `credentials_ref` env pointers |
 | aws | coming soon (docker-vm) | after future apply | stub rejected at create |
 
 ## Future: Kubernetes

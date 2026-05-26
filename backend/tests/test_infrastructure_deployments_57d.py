@@ -187,7 +187,9 @@ def test_gcp_validate_and_plan_invokes_terraform(client_strict, monkeypatch, tmp
     summary = planned["plan_summary_json"]
     assert summary["provider"] == "gcp"
     assert summary["machine_type"] == "e2-medium"
-    assert summary.get("apply_disabled") is True
+    assert summary.get("apply_eligible") is True
+    assert summary.get("apply_disabled") is False
+    assert summary.get("safety_checklist", {}).get("passed") is True
 
     tf_calls = [c for c in runner.calls if c.get("execution_type") == "terraform"]
     modes = {c["mode"] for c in tf_calls}
@@ -198,7 +200,7 @@ def test_gcp_validate_and_plan_invokes_terraform(client_strict, monkeypatch, tmp
     assert "GOOGLE_APPLICATION_CREDENTIALS" in plan_call.get("credentials_env", {})
 
 
-def test_gcp_apply_returns_409_disabled(client_strict, monkeypatch, tmp_path):
+def test_gcp_apply_requires_typed_confirmation(client_strict, monkeypatch, tmp_path):
     _gcp_credentials(monkeypatch, tmp_path)
     _install_runner(monkeypatch)
     h = _register(client_strict)
@@ -222,8 +224,8 @@ def test_gcp_apply_returns_409_disabled(client_strict, monkeypatch, tmp_path):
         headers=h,
         json={"confirm": True},
     )
-    assert confirm.status_code == 409
-    assert "disabled" in confirm.json()["detail"].lower()
+    assert confirm.status_code == 400
+    assert "APPLY" in confirm.json()["detail"]
 
 
 def test_gcp_plan_only_destroy_returns_409(client_strict, monkeypatch, tmp_path):

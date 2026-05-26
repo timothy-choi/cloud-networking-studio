@@ -13,6 +13,7 @@ from app.models.user import User
 from app.schemas.infrastructure_deployment import (
     InfrastructureDeploymentConfirmRequest,
     InfrastructureDeploymentCreate,
+    InfrastructureDeploymentDestroyRequest,
     InfrastructureDeploymentListResponse,
     InfrastructureDeploymentResponse,
     InfrastructureExecutionListResponse,
@@ -22,6 +23,7 @@ from app.schemas.infrastructure_deployment import (
 )
 from app.services.access_control import get_topology_for_user, require_topology_editor
 from app.services import infrastructure_deployment_service as infra_svc
+from app.services.infra_apply_safety import InfraApplySafetyError, InfraInvalidStateError
 from app.services.infra_template_registry import list_templates
 
 router = APIRouter(tags=["infrastructure-deployments"])
@@ -237,7 +239,20 @@ def confirm_infrastructure_deployment(
             },
         )
     try:
-        deployment = infra_svc.confirm_and_apply(db, deployment=deployment, actor=user)
+        deployment = infra_svc.confirm_and_apply(
+            db,
+            deployment=deployment,
+            actor=user,
+            confirmation_text=body.confirmation_text,
+            unsafe_testing_override=body.unsafe_testing_override,
+        )
+    except InfraInvalidStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.message) from exc
+    except InfraApplySafetyError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": exc.message, "checklist": exc.checklist},
+        ) from exc
     except infra_svc.RealCloudApplyDisabledError as exc:
         raise HTTPException(status_code=409, detail=exc.message) from exc
     except ValueError as exc:
@@ -253,13 +268,20 @@ def confirm_infrastructure_deployment(
 )
 def destroy_infrastructure_deployment(
     deployment_id: UUID,
+    body: InfrastructureDeploymentDestroyRequest | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> InfrastructureDeploymentResponse:
     deployment = _get_deployment_for_user(db, user, deployment_id)
     require_topology_editor(db, user, deployment.topology_id)
+    confirmation_text = body.confirmation_text if body else None
     try:
-        deployment = infra_svc.destroy_deployment(db, deployment=deployment, actor=user)
+        deployment = infra_svc.destroy_deployment(
+            db,
+            deployment=deployment,
+            actor=user,
+            confirmation_text=confirmation_text,
+        )
     except infra_svc.PlanOnlyDestroyDisabledError as exc:
         raise HTTPException(status_code=409, detail=exc.message) from exc
     except ValueError as exc:

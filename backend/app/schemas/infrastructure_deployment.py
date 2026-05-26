@@ -104,3 +104,11 @@ class InfrastructureDeploymentConfirmRequest(BaseModel):
     """User approval gate before terraform apply."""
 
     confirm: bool = True
+    confirmation_text: str | None = Field(default=None, max_length=32)
+    unsafe_testing_override: bool = False
+
+
+class InfrastructureDeploymentDestroyRequest(BaseModel):
+    """Typed confirmation gate before terraform destroy."""
+
+    confirmation_text: str | None = Field(default=None, max_length=32)

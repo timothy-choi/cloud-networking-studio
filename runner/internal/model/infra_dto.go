@@ -12,7 +12,10 @@ type InfraExecutionRequest struct {
 	Variables     map[string]string `json:"variables,omitempty"`
 	CredentialsRef string           `json:"credentials_ref,omitempty"`
 	CredentialsEnv map[string]string `json:"credentials_env,omitempty"`
-	PlanOnly      bool              `json:"plan_only,omitempty"`
+	PlanOnly         bool              `json:"plan_only,omitempty"`
+	WorkspaceID      string            `json:"workspace_id,omitempty"`
+	PreserveWorkspace bool             `json:"preserve_workspace,omitempty"`
+	ApplyFromPlan    bool              `json:"apply_from_plan,omitempty"`
 	Inventory     map[string]any    `json:"inventory,omitempty"`
 	InventoryINI  string            `json:"inventory_ini,omitempty"`
 	PlaybookPaths []string          `json:"playbook_paths,omitempty"`

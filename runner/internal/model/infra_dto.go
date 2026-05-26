@@ -10,6 +10,9 @@ type InfraExecutionRequest struct {
 	TemplateDir   string            `json:"template_dir,omitempty"`
 	Provider      string            `json:"provider"`
 	Variables     map[string]string `json:"variables,omitempty"`
+	CredentialsRef string           `json:"credentials_ref,omitempty"`
+	CredentialsEnv map[string]string `json:"credentials_env,omitempty"`
+	PlanOnly      bool              `json:"plan_only,omitempty"`
 	Inventory     map[string]any    `json:"inventory,omitempty"`
 	InventoryINI  string            `json:"inventory_ini,omitempty"`
 	PlaybookPaths []string          `json:"playbook_paths,omitempty"`

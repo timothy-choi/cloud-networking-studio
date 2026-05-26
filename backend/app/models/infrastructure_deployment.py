@@ -73,6 +73,7 @@ class InfrastructureDeployment(Base):
         onupdate=_utc_now,
     )
     destroyed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    credentials_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     project: Mapped["Project"] = relationship(back_populates="infrastructure_deployments")
     topology: Mapped["Topology"] = relationship(back_populates="infrastructure_deployments")

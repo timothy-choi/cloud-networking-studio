@@ -7,6 +7,9 @@ import {
   canShowApplyAction,
   canShowPlanAction,
   canShowValidateAction,
+  applyDisabledReason,
+  credentialsRefHelpText,
+  destroyDisabledReason,
   deriveConfigurationStatus,
   deriveTerraformStatus,
   validateInfrastructureCreateForm,
@@ -79,6 +82,16 @@ describe('infrastructureDeploymentForm', () => {
         provider: 'local',
         region: 'us-east-1',
         vmCount: 2,
+        credentialsRef: '',
+        projectId: '',
+        zone: '',
+        machineType: 'e2-medium',
+        networkName: 'default',
+        instanceName: 'cns-docker-vm',
+        sshUser: 'ubuntu',
+        allowedSshCidr: '0.0.0.0/0',
+        allowedAppCidr: '0.0.0.0/0',
+        tags: 'cns-docker-vm',
       }),
     ).toEqual({
       name: 'lab',
@@ -88,12 +101,46 @@ describe('infrastructureDeploymentForm', () => {
     });
   });
 
-  it('shows apply only after plan reaches awaiting_confirmation', () => {
-    expect(canShowApplyAction('pending')).toBe(false);
-    expect(canShowApplyAction('awaiting_confirmation')).toBe(true);
+  it('shows apply only after plan reaches awaiting_confirmation for mock providers', () => {
+    expect(canShowApplyAction('pending', 'local')).toBe(false);
+    expect(canShowApplyAction('awaiting_confirmation', 'local')).toBe(true);
+    expect(canShowApplyAction('awaiting_confirmation', 'gcp')).toBe(false);
     expect(canShowValidateAction('pending')).toBe(true);
-    expect(canShowPlanAction('pending')).toBe(true);
+    expect(canShowPlanAction('validated')).toBe(true);
     expect(canShowPlanAction('awaiting_confirmation')).toBe(false);
+  });
+
+  it('shows credentials help for GCP', () => {
+    expect(credentialsRefHelpText('gcp')).toContain('GOOGLE_APPLICATION_CREDENTIALS');
+    expect(applyDisabledReason('gcp')).toContain('Apply disabled');
+    expect(destroyDisabledReason('awaiting_confirmation', 'gcp')).toContain('plan-only');
+  });
+
+  it('builds GCP docker-vm create payload', () => {
+    expect(
+      buildInfrastructureCreatePayload({
+        name: 'gcp-lab',
+        templateId: 'docker-vm',
+        provider: 'gcp',
+        region: 'us-central1',
+        vmCount: 1,
+        credentialsRef: 'env:GOOGLE_APPLICATION_CREDENTIALS',
+        projectId: 'my-gcp-project',
+        zone: 'us-central1-a',
+        machineType: 'e2-medium',
+        networkName: 'default',
+        instanceName: 'cns-docker-vm',
+        sshUser: 'ubuntu',
+        allowedSshCidr: '203.0.113.0/24',
+        allowedAppCidr: '203.0.113.0/24',
+        tags: 'cns-docker-vm',
+      }),
+    ).toMatchObject({
+      template_id: 'docker-vm',
+      provider: 'gcp',
+      credentials_ref: 'env:GOOGLE_APPLICATION_CREDENTIALS',
+      variables: { project_id: 'my-gcp-project', zone: 'us-central1-a' },
+    });
   });
 
   it('derives terraform and ansible status from events', () => {
@@ -114,7 +161,15 @@ describe('InfrastructureDeploymentsPanel', () => {
     vi.mocked(infraApi.listInfrastructureDeployments).mockResolvedValue([]);
   });
 
-  it('renders create button in form', () => {
+  it('renders create button and GCP credentials help when template supports gcp', () => {
+    vi.mocked(infraApi.listInfrastructureTemplates).mockResolvedValue([
+      {
+        template_id: 'docker-vm',
+        provider: 'docker-vm',
+        description: 'Docker VM',
+        supported_providers: ['local', 'mock', 'gcp', 'aws'],
+      },
+    ]);
     const html = renderToStaticMarkup(<InfrastructureDeploymentsPanel topologyId="topo-1" />);
     expect(html).toContain('Create Infrastructure Deployment');
     expect(html).toContain('Deployment name');
@@ -137,6 +192,16 @@ describe('submitInfrastructureCreate', () => {
       provider: 'local',
       region: 'local',
       vmCount: 1,
+      credentialsRef: '',
+      projectId: '',
+      zone: '',
+      machineType: 'e2-medium',
+      networkName: 'default',
+      instanceName: 'cns-docker-vm',
+      sshUser: 'ubuntu',
+      allowedSshCidr: '0.0.0.0/0',
+      allowedAppCidr: '0.0.0.0/0',
+      tags: 'cns-docker-vm',
     });
 
     expect(infraApi.createInfrastructureDeployment).toHaveBeenCalledWith('topo-1', {

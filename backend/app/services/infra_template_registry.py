@@ -20,11 +20,20 @@ class InfraTemplateSpec:
     description: str
     supported_providers: tuple[str, ...]
     terraform_dir: str
+    provider_terraform_dirs: dict[str, str]
     ansible_playbooks: tuple[str, ...]
 
     @property
     def terraform_path(self) -> Path:
         return TEMPLATES_ROOT / self.terraform_dir
+
+    def terraform_dir_for_provider(self, provider: str) -> str:
+        if provider in self.provider_terraform_dirs:
+            return self.provider_terraform_dirs[provider]
+        return self.terraform_dir
+
+    def terraform_path_for_provider(self, provider: str) -> Path:
+        return TEMPLATES_ROOT / self.terraform_dir_for_provider(provider)
 
 
 @dataclass(frozen=True)
@@ -56,6 +65,9 @@ def list_templates() -> list[InfraTemplateSpec]:
                 description=str(spec.get("description") or ""),
                 supported_providers=tuple(spec.get("supported_providers") or []),
                 terraform_dir=str(spec.get("terraform_dir") or template_id),
+                provider_terraform_dirs={
+                    str(k): str(v) for k, v in (spec.get("provider_terraform_dirs") or {}).items()
+                },
                 ansible_playbooks=tuple(spec.get("ansible_playbooks") or []),
             )
         )
@@ -99,14 +111,20 @@ def validate_template_provider(template_id: str, provider: str) -> None:
         )
 
 
-def assert_template_on_disk(template_id: str) -> Path:
+def assert_template_on_disk(template_id: str, provider: str | None = None) -> Path:
     spec = get_template(template_id)
-    path = spec.terraform_path
+    rel_dir = spec.terraform_dir_for_provider(provider) if provider else spec.terraform_dir
+    path = TEMPLATES_ROOT / rel_dir
     if not path.is_dir():
         raise ValueError(f"Template directory missing on disk: {path}")
     if not (path / "main.tf").is_file():
-        raise ValueError(f"Template {template_id} missing main.tf")
+        raise ValueError(f"Template {template_id} missing main.tf at {rel_dir}")
     return path
+
+
+def resolve_terraform_dir(template_id: str, provider: str) -> str:
+    spec = get_template(template_id)
+    return spec.terraform_dir_for_provider(provider)
 
 
 def assert_playbook_on_disk(playbook_id: str) -> Path:

@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,7 +85,7 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 		return resp
 	}
 
-	workdir, cleanup, err := prepareWorkdir(req.ExecutionID, req.TemplateID)
+	workdir, cleanup, err := prepareWorkdir(req.ExecutionID, req.TemplateID, req.TemplateDir)
 	if err != nil {
 		msg := err.Error()
 		resp.Error = &msg
@@ -94,11 +96,33 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 	var log strings.Builder
 	log.WriteString(fmt.Sprintf("[infra] terraform %s template=%s provider=%s\n", req.Mode, req.TemplateID, req.Provider))
 	log.WriteString(fmt.Sprintf("[infra] workdir=%s\n", workdir))
+	if req.TemplateDir != "" {
+		log.WriteString(fmt.Sprintf("[infra] template_dir=%s\n", req.TemplateDir))
+	}
+	if req.PlanOnly {
+		log.WriteString("[infra] plan_only=true (apply/destroy disabled)\n")
+	}
+	if req.CredentialsRef != "" {
+		log.WriteString(fmt.Sprintf("[infra] credentials_ref=%s\n", req.CredentialsRef))
+	}
+
+	if req.PlanOnly && (req.Mode == "apply" || req.Mode == "destroy") {
+		msg := "Real cloud apply is disabled in this version."
+		resp.Logs = log.String()
+		resp.Error = &msg
+		return finish(resp, start, req, "failed", msg)
+	}
 
 	tfPath, _ := exec.LookPath("terraform")
 	useMock := tfPath == "" || req.Provider == "mock" || req.Provider == "local"
 
 	if useMock {
+		if tfPath == "" && req.Provider != "mock" && req.Provider != "local" {
+			msg := "Terraform CLI is not installed in runner image."
+			resp.Logs = log.String()
+			resp.Error = &msg
+			return finish(resp, start, req, "failed", msg)
+		}
 		log.WriteString("[infra] terraform binary unavailable or local/mock provider — using mock executor\n")
 		outputs := mockTerraformOutputs(req)
 		resp.Outputs = outputs
@@ -119,8 +143,23 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 		return resp
 	}
 
+	if err := writeTerraformTfvars(workdir, req.Variables); err != nil {
+		msg := "failed to write terraform.tfvars.json"
+		resp.Logs = log.String()
+		resp.Error = &msg
+		return finish(resp, start, req, "failed", msg)
+	}
+
+	cmdEnv := os.Environ()
+	for k, v := range req.CredentialsEnv {
+		cmdEnv = append(cmdEnv, fmt.Sprintf("%s=%s", k, v))
+	}
+	if cacheDir := strings.TrimSpace(os.Getenv("TF_PLUGIN_CACHE_DIR")); cacheDir != "" {
+		cmdEnv = append(cmdEnv, "TF_PLUGIN_CACHE_DIR="+cacheDir)
+	}
+
 	if req.Mode == "fmt" {
-		out, err := runCmd(ctx, workdir, tfPath, "fmt", "-check", "-recursive")
+		out, err := runCmdEnv(ctx, workdir, cmdEnv, tfPath, "fmt", "-check", "-recursive")
 		log.WriteString(out)
 		if err != nil {
 			msg := "terraform fmt check failed"
@@ -133,7 +172,7 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 		return finish(resp, start, req, "succeeded", "")
 	}
 
-	initOut, err := runCmd(ctx, workdir, tfPath, "init", "-input=false", "-backend=false")
+	initOut, err := runCmdEnv(ctx, workdir, cmdEnv, tfPath, "init", "-input=false", "-backend=false")
 	log.WriteString(initOut)
 	if err != nil {
 		msg := "terraform init failed"
@@ -142,10 +181,9 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 		return finish(resp, start, req, "failed", msg)
 	}
 
-	varArgs := terraformVarArgs(req.Variables)
 	switch req.Mode {
 	case "validate":
-		out, err := runCmd(ctx, workdir, tfPath, append([]string{"validate"}, varArgs...)...)
+		out, err := runCmdEnv(ctx, workdir, cmdEnv, tfPath, "validate")
 		log.WriteString(out)
 		if err != nil {
 			msg := "terraform validate failed"
@@ -154,7 +192,8 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 			return finish(resp, start, req, "failed", msg)
 		}
 	case "plan":
-		out, err := runCmd(ctx, workdir, tfPath, append([]string{"plan", "-input=false", "-no-color"}, varArgs...)...)
+		planFile := filepath.Join(workdir, "tfplan")
+		out, err := runCmdEnv(ctx, workdir, cmdEnv, tfPath, "plan", "-input=false", "-no-color", "-refresh=false", "-out="+planFile)
 		log.WriteString(out)
 		if err != nil {
 			msg := "terraform plan failed"
@@ -162,9 +201,16 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 			resp.Error = &msg
 			return finish(resp, start, req, "failed", msg)
 		}
-		resp.Artifacts = append(resp.Artifacts, model.InfraArtifact{Type: "plan_file", URI: fmt.Sprintf("workspace://%s/plan.out", req.ExecutionID)})
+		preview := out
+		if len(preview) > 12000 {
+			preview = preview[:12000] + "\n... (truncated)"
+		}
+		resp.Artifacts = append(resp.Artifacts,
+			model.InfraArtifact{Type: "plan_file", URI: fmt.Sprintf("workspace://%s/tfplan", req.ExecutionID)},
+			model.InfraArtifact{Type: "plan_text", Preview: preview},
+		)
 	case "apply":
-		out, err := runCmd(ctx, workdir, tfPath, append([]string{"apply", "-input=false", "-auto-approve", "-no-color"}, varArgs...)...)
+		out, err := runCmdEnv(ctx, workdir, cmdEnv, tfPath, "apply", "-input=false", "-auto-approve", "-no-color")
 		log.WriteString(out)
 		if err != nil {
 			msg := "terraform apply failed"
@@ -173,7 +219,7 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 			return finish(resp, start, req, "failed", msg)
 		}
 	case "destroy":
-		out, err := runCmd(ctx, workdir, tfPath, append([]string{"destroy", "-input=false", "-auto-approve", "-no-color"}, varArgs...)...)
+		out, err := runCmdEnv(ctx, workdir, cmdEnv, tfPath, "destroy", "-input=false", "-auto-approve", "-no-color")
 		log.WriteString(out)
 		if err != nil {
 			msg := "terraform destroy failed"
@@ -183,7 +229,7 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 		}
 	}
 
-	outJSON, _ := runCmd(ctx, workdir, tfPath, "output", "-json")
+	outJSON, _ := runCmdEnv(ctx, workdir, cmdEnv, tfPath, "output", "-json")
 	if strings.TrimSpace(outJSON) != "" {
 		var parsed map[string]any
 		if json.Unmarshal([]byte(outJSON), &parsed) == nil {
@@ -213,7 +259,7 @@ func executeAnsible(ctx context.Context, req model.InfraExecutionRequest, start 
 		return resp
 	}
 
-	workdir, cleanup, err := prepareWorkdir(req.ExecutionID, "")
+	workdir, cleanup, err := prepareWorkdir(req.ExecutionID, "", "")
 	if err != nil {
 		msg := err.Error()
 		resp.Error = &msg
@@ -271,7 +317,7 @@ func executeAnsible(ctx context.Context, req model.InfraExecutionRequest, start 
 	return finish(resp, start, req, "succeeded", "")
 }
 
-func prepareWorkdir(executionID, templateID string) (string, func(), error) {
+func prepareWorkdir(executionID, templateID, templateDir string) (string, func(), error) {
 	base := filepath.Join(os.TempDir(), "cns-infra", executionID)
 	if err := os.RemoveAll(base); err != nil {
 		return "", func() {}, err
@@ -280,7 +326,7 @@ func prepareWorkdir(executionID, templateID string) (string, func(), error) {
 		return "", func() {}, err
 	}
 	if templateID != "" {
-		src := resolveTemplateDir(templateID)
+		src := resolveTemplateDir(templateID, templateDir)
 		if err := copyTemplateDir(src, base); err != nil {
 			return "", func() {}, err
 		}
@@ -302,7 +348,10 @@ func playbooksRoot() string {
 	return "/opt/cns/ansible_playbooks"
 }
 
-func resolveTemplateDir(templateID string) string {
+func resolveTemplateDir(templateID, templateDir string) string {
+	if strings.TrimSpace(templateDir) != "" {
+		return filepath.Join(templatesRoot(), templateDir)
+	}
 	return filepath.Join(templatesRoot(), templateID)
 }
 
@@ -350,10 +399,44 @@ func copyTemplateDir(src, dst string) error {
 }
 
 func runCmd(ctx context.Context, dir, bin string, args ...string) (string, error) {
+	return runCmdEnv(ctx, dir, os.Environ(), bin, args...)
+}
+
+func runCmdEnv(ctx context.Context, dir string, env []string, bin string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func writeTerraformTfvars(workdir string, vars map[string]string) error {
+	if len(vars) == 0 {
+		return nil
+	}
+	payload := make(map[string]any, len(vars))
+	intPattern := regexp.MustCompile(`^-?\d+$`)
+	for k, v := range vars {
+		if intPattern.MatchString(v) {
+			if n, err := strconv.Atoi(v); err == nil {
+				payload[k] = n
+				continue
+			}
+		}
+		switch strings.ToLower(v) {
+		case "true":
+			payload[k] = true
+		case "false":
+			payload[k] = false
+		default:
+			payload[k] = v
+		}
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(workdir, "terraform.tfvars.json"), data, 0o600)
 }
 
 func terraformVarArgs(vars map[string]string) []string {

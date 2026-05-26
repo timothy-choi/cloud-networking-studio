@@ -16,15 +16,23 @@ import {
 import { ApiErrorDisplay } from '../errors/ApiErrorDisplay';
 import { Spinner } from '../Spinner';
 import {
+  applyDisabledReason,
   buildInfrastructureCreatePayload,
   canShowApplyAction,
+  canShowDestroyAction,
   canShowPlanAction,
   canShowValidateAction,
+  credentialsRefHelpText,
+  defaultInfrastructureFormValues,
   deriveConfigurationStatus,
   deriveTerraformStatus,
+  destroyDisabledReason,
+  isGcpDockerVmForm,
   isMockInfrastructureDeployment,
+  isRealCloudProvider,
   validateInfrastructureCreateForm,
   type InfrastructureCreateFormErrors,
+  type InfrastructureCreateFormValues,
 } from './infrastructureDeploymentForm';
 
 function statusTone(status: string): string {
@@ -37,13 +45,7 @@ function statusTone(status: string): string {
 
 export async function submitInfrastructureCreate(
   topologyId: string,
-  values: {
-    name: string;
-    templateId: string;
-    provider: string;
-    region: string;
-    vmCount: number;
-  },
+  values: InfrastructureCreateFormValues,
 ) {
   const errors = validateInfrastructureCreateForm(values);
   if (Object.keys(errors).length > 0) {
@@ -67,11 +69,22 @@ export function InfrastructureDeploymentsPanel({
   const [deployments, setDeployments] = useState<InfrastructureDeployment[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [executions, setExecutions] = useState<InfrastructureExecution[]>([]);
-  const [name, setName] = useState('infra-stack');
-  const [templateId, setTemplateId] = useState('local-mock');
-  const [provider, setProvider] = useState('local');
-  const [region, setRegion] = useState('local');
-  const [vmCount, setVmCount] = useState(1);
+  const defaults = defaultInfrastructureFormValues();
+  const [name, setName] = useState(defaults.name);
+  const [templateId, setTemplateId] = useState(defaults.templateId);
+  const [provider, setProvider] = useState(defaults.provider);
+  const [region, setRegion] = useState(defaults.region);
+  const [vmCount, setVmCount] = useState(defaults.vmCount);
+  const [credentialsRef, setCredentialsRef] = useState(defaults.credentialsRef);
+  const [projectId, setProjectId] = useState(defaults.projectId);
+  const [zone, setZone] = useState(defaults.zone);
+  const [machineType, setMachineType] = useState(defaults.machineType);
+  const [networkName, setNetworkName] = useState(defaults.networkName);
+  const [instanceName, setInstanceName] = useState(defaults.instanceName);
+  const [sshUser, setSshUser] = useState(defaults.sshUser);
+  const [allowedSshCidr, setAllowedSshCidr] = useState(defaults.allowedSshCidr);
+  const [allowedAppCidr, setAllowedAppCidr] = useState(defaults.allowedAppCidr);
+  const [tags, setTags] = useState(defaults.tags);
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -124,7 +137,23 @@ export function InfrastructureDeploymentsPanel({
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    const values = { name, templateId, provider, region, vmCount };
+    const values: InfrastructureCreateFormValues = {
+      name,
+      templateId,
+      provider,
+      region,
+      vmCount,
+      credentialsRef,
+      projectId,
+      zone,
+      machineType,
+      networkName,
+      instanceName,
+      sshUser,
+      allowedSshCidr,
+      allowedAppCidr,
+      tags,
+    };
     const errors = validateInfrastructureCreateForm(values);
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
@@ -206,6 +235,10 @@ export function InfrastructureDeploymentsPanel({
   const isMockDeployment = selected
     ? isMockInfrastructureDeployment(selected.template_id, selected.provider)
     : false;
+  const applyDisabled = selected ? applyDisabledReason(selected.provider) : null;
+  const destroyDisabled = selected ? destroyDisabledReason(selected.status, selected.provider) : null;
+  const showGcpFields = isGcpDockerVmForm(templateId, provider);
+  const showCredentialsRef = isRealCloudProvider(provider);
   const targetSkipEvent = [...(selected?.events_json ?? [])]
     .reverse()
     .find(
@@ -292,6 +325,109 @@ export function InfrastructureDeploymentsPanel({
             />
             {fieldErrors.vmCount ? <p className="mt-1 text-xs text-red-600">{fieldErrors.vmCount}</p> : null}
           </div>
+          {showGcpFields ? (
+            <>
+              <div>
+                <input
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  placeholder="GCP project ID"
+                  className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                />
+                {fieldErrors.projectId ? (
+                  <p className="mt-1 text-xs text-red-600">{fieldErrors.projectId}</p>
+                ) : null}
+              </div>
+              <div>
+                <input
+                  value={zone}
+                  onChange={(e) => setZone(e.target.value)}
+                  placeholder="Zone (e.g. us-central1-a)"
+                  className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                />
+                {fieldErrors.zone ? <p className="mt-1 text-xs text-red-600">{fieldErrors.zone}</p> : null}
+              </div>
+              <div>
+                <input
+                  value={machineType}
+                  onChange={(e) => setMachineType(e.target.value)}
+                  placeholder="Machine type"
+                  className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                />
+              </div>
+              <div>
+                <input
+                  value={networkName}
+                  onChange={(e) => setNetworkName(e.target.value)}
+                  placeholder="VPC network name"
+                  className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                />
+              </div>
+              <div>
+                <input
+                  value={instanceName}
+                  onChange={(e) => setInstanceName(e.target.value)}
+                  placeholder="Instance name"
+                  className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                />
+                {fieldErrors.instanceName ? (
+                  <p className="mt-1 text-xs text-red-600">{fieldErrors.instanceName}</p>
+                ) : null}
+              </div>
+              <div>
+                <input
+                  value={sshUser}
+                  onChange={(e) => setSshUser(e.target.value)}
+                  placeholder="SSH user"
+                  className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                />
+              </div>
+              <div>
+                <input
+                  value={allowedSshCidr}
+                  onChange={(e) => setAllowedSshCidr(e.target.value)}
+                  placeholder="Allowed SSH CIDR"
+                  className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                />
+                {fieldErrors.allowedSshCidr ? (
+                  <p className="mt-1 text-xs text-red-600">{fieldErrors.allowedSshCidr}</p>
+                ) : null}
+              </div>
+              <div>
+                <input
+                  value={allowedAppCidr}
+                  onChange={(e) => setAllowedAppCidr(e.target.value)}
+                  placeholder="Allowed app CIDR"
+                  className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                />
+                {fieldErrors.allowedAppCidr ? (
+                  <p className="mt-1 text-xs text-red-600">{fieldErrors.allowedAppCidr}</p>
+                ) : null}
+              </div>
+              <div>
+                <input
+                  value={tags}
+                  onChange={(e) => setTags(e.target.value)}
+                  placeholder="Network tags (comma-separated)"
+                  className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                />
+              </div>
+            </>
+          ) : null}
+          {showCredentialsRef ? (
+            <div className="md:col-span-2">
+              <input
+                value={credentialsRef}
+                onChange={(e) => setCredentialsRef(e.target.value)}
+                placeholder="credentials_ref (e.g. env:GOOGLE_APPLICATION_CREDENTIALS)"
+                className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+              />
+              <p className="mt-1 text-xs text-cns-muted">{credentialsRefHelpText(provider)}</p>
+              {fieldErrors.credentialsRef ? (
+                <p className="mt-1 text-xs text-red-600">{fieldErrors.credentialsRef}</p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <div className="pt-1">
           <button
@@ -346,12 +482,37 @@ export function InfrastructureDeploymentsPanel({
                 ) : null}
                 {plan ? (
                   <div className="mt-2 space-y-1 text-xs">
+                    <div>Provider: {String(plan.provider ?? selected.provider)}</div>
+                    <div>Template: {String(plan.template_id ?? selected.template_id)}</div>
                     <div>VM count: {String(plan.vm_count ?? '—')}</div>
                     <div>Region: {String(plan.region ?? '—')}</div>
+                    <div>Zone: {String(plan.zone ?? '—')}</div>
+                    <div>Machine type: {String(plan.machine_type ?? '—')}</div>
                     <div>
                       Exposed ports: {Array.isArray(plan.exposed_ports) ? plan.exposed_ports.join(', ') : '—'}
                     </div>
+                    {Array.isArray(plan.firewall_rules) && plan.firewall_rules.length > 0 ? (
+                      <div>Firewall rules: {(plan.firewall_rules as string[]).join(', ')}</div>
+                    ) : null}
+                    {plan.estimated_resources && typeof plan.estimated_resources === 'object' ? (
+                      <div>
+                        Estimated resources:{' '}
+                        {Object.entries(plan.estimated_resources as Record<string, unknown>)
+                          .map(([k, v]) => `${k}=${String(v)}`)
+                          .join(', ')}
+                      </div>
+                    ) : null}
+                    {Array.isArray(plan.warnings) && plan.warnings.length > 0 ? (
+                      <div className="text-amber-700 dark:text-amber-300">
+                        Warnings: {(plan.warnings as string[]).join(' · ')}
+                      </div>
+                    ) : null}
                   </div>
+                ) : null}
+                {selected.credentials_ref ? (
+                  <p className="mt-2 text-xs text-cns-muted">
+                    credentials_ref: <code className="font-mono">{selected.credentials_ref}</code>
+                  </p>
                 ) : null}
 
                 <div className="mt-3 grid gap-2 rounded border border-zinc-200 p-2 text-xs dark:border-zinc-700">
@@ -408,7 +569,7 @@ export function InfrastructureDeploymentsPanel({
                   >
                     View Logs
                   </button>
-                  {canShowApplyAction(selected.status) ? (
+                  {canShowApplyAction(selected.status, selected.provider) ? (
                     <button
                       type="button"
                       disabled={busy}
@@ -417,8 +578,12 @@ export function InfrastructureDeploymentsPanel({
                     >
                       Confirm apply
                     </button>
+                  ) : applyDisabled && selected.status === 'awaiting_confirmation' ? (
+                    <span className="rounded border border-amber-500/50 px-3 py-1 text-xs text-amber-700 dark:text-amber-300">
+                      {applyDisabled}
+                    </span>
                   ) : null}
-                  {selected.status === 'succeeded' ? (
+                  {canShowDestroyAction(selected.status, selected.provider) ? (
                     <button
                       type="button"
                       disabled={busy}
@@ -427,6 +592,10 @@ export function InfrastructureDeploymentsPanel({
                     >
                       Destroy infrastructure
                     </button>
+                  ) : destroyDisabled ? (
+                    <span className="rounded border border-zinc-400/50 px-3 py-1 text-xs text-cns-muted">
+                      {destroyDisabled}
+                    </span>
                   ) : null}
                 </div>
               </div>

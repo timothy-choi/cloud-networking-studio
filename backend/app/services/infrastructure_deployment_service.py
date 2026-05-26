@@ -20,8 +20,30 @@ from app.services import deployment_target_service as target_svc
 from app.services import terraform_executor_service as tf_svc
 from app.services.audit_service import record_audit
 from app.services.infra_observability import append_event, increment_counter, record_metric
-from app.services.infra_security import sanitize_variables, validate_provider
+from app.services.infra_security import (
+    is_real_cloud_provider,
+    sanitize_variables,
+    validate_provider,
+    validate_template_variables,
+)
 from app.services.infra_template_registry import validate_template_provider
+from app.services.terraform_credentials_service import resolve_terraform_credentials_env
+
+
+class RealCloudApplyDisabledError(Exception):
+    """Raised when confirm/apply is attempted for a real cloud provider (Step 57D)."""
+
+    def __init__(self, message: str = "Real cloud apply is disabled in this version.") -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class PlanOnlyDestroyDisabledError(Exception):
+    """Raised when destroy is attempted without a prior apply."""
+
+    def __init__(self, message: str = "Nothing to destroy: plan-only deployment.") -> None:
+        super().__init__(message)
+        self.message = message
 
 
 def list_deployments_for_topology(db: Session, topology_id: UUID) -> list[InfrastructureDeployment]:
@@ -48,6 +70,21 @@ def list_executions(db: Session, deployment_id: UUID) -> list[InfrastructureExec
     )
 
 
+def _assert_cloud_template_ready(template_id: str, provider: str) -> None:
+    if template_id == "docker-vm" and provider == "aws":
+        raise ValueError("AWS docker-vm Terraform support is coming soon.")
+
+
+def _require_real_cloud_ready(deployment: InfrastructureDeployment) -> None:
+    _assert_cloud_template_ready(deployment.template_id, deployment.provider)
+    if not is_real_cloud_provider(deployment.provider):
+        return
+    ref = (deployment.credentials_ref or "").strip()
+    if not ref:
+        raise ValueError("Terraform credentials_ref is not configured on the server.")
+    resolve_terraform_credentials_env(deployment.provider, ref)
+
+
 def create_deployment(
     db: Session,
     *,
@@ -57,10 +94,19 @@ def create_deployment(
     template_id: str,
     provider: str,
     variables: dict | None,
+    credentials_ref: str | None = None,
 ) -> InfrastructureDeployment:
     validate_provider(provider, SUPPORTED_PROVIDERS)
     validate_template_provider(template_id, provider)
     clean_vars = sanitize_variables(variables)
+    validate_template_variables(template_id, provider, clean_vars)
+    _assert_cloud_template_ready(template_id, provider)
+    cred_ref = (credentials_ref or "").strip() or None
+    if is_real_cloud_provider(provider):
+        if not cred_ref:
+            raise ValueError("Terraform credentials_ref is not configured on the server.")
+        resolve_terraform_credentials_env(provider, cred_ref)
+
     deployment = InfrastructureDeployment(
         project_id=topology.project_id,
         topology_id=topology.id,
@@ -69,6 +115,7 @@ def create_deployment(
         provider=provider,
         status="pending",
         variables_json=clean_vars,
+        credentials_ref=cred_ref,
         created_by_user_id=actor.id,
         events_json=append_event([], "created", message="Infrastructure deployment created"),
     )
@@ -219,6 +266,7 @@ def _register_runtime_targets(
 
 def run_validate(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
     try:
+        _require_real_cloud_ready(deployment)
         deployment.status = "validating"
         deployment.events_json = append_event(deployment.events_json, "validate_started")
         db.flush()
@@ -229,7 +277,7 @@ def run_validate(db: Session, *, deployment: InfrastructureDeployment, actor: Us
         tf_fmt = _new_execution(db, deployment=deployment, execution_type="terraform", mode="fmt")
         tf_svc.execute_fmt(db, execution=tf_fmt, deployment=deployment)
 
-        deployment.status = "pending"
+        deployment.status = "validated"
         deployment.events_json = append_event(
             deployment.events_json,
             "validate_completed",
@@ -257,6 +305,9 @@ def run_validate(db: Session, *, deployment: InfrastructureDeployment, actor: Us
 def run_plan(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
     started = time.monotonic()
     try:
+        if deployment.status not in {"validated", "failed"}:
+            raise ValueError("Run Validate first (deployment must be in validated status).")
+        _require_real_cloud_ready(deployment)
         deployment.status = "planning"
         deployment.events_json = append_event(deployment.events_json, "plan_started")
         db.flush()
@@ -432,6 +483,9 @@ def confirm_and_apply(db: Session, *, deployment: InfrastructureDeployment, acto
     if deployment.status != "awaiting_confirmation":
         raise ValueError(f"Deployment must be awaiting_confirmation (current: {deployment.status})")
 
+    if is_real_cloud_provider(deployment.provider) and not is_mock_infrastructure_deployment(deployment):
+        raise RealCloudApplyDisabledError()
+
     started = time.monotonic()
     deployment.confirmed_at = datetime.now(UTC)
     deployment.confirmed_by_user_id = actor.id
@@ -511,6 +565,9 @@ def confirm_and_apply(db: Session, *, deployment: InfrastructureDeployment, acto
 def destroy_deployment(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
     if deployment.status in {"destroyed", "destroying"}:
         return deployment
+
+    if is_real_cloud_provider(deployment.provider) and deployment.status != "succeeded":
+        raise PlanOnlyDestroyDisabledError()
 
     deployment.status = "destroying"
     deployment.events_json = append_event(deployment.events_json, "destroy_started")

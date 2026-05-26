@@ -1,8 +1,60 @@
-# Infrastructure Deployments (Step 57C)
+# Infrastructure Deployments (Step 57C / 57D)
 
 Cloud Networking Studio orchestrates **Terraform provisioning**, **Ansible host configuration**, and **remote_docker workload deployment** as separate, auditable platform stages.
 
 > **Not Kubernetes orchestration.** This step prepares runtime hosts. Kubernetes support comes later.
+
+## Step 57D: Real Terraform validate + plan (GCP)
+
+57D adds **real Terraform validate and plan** for cloud providers while **apply remains disabled** for real cloud deployments. No cloud resources are created in this step.
+
+| Capability | local/mock | GCP `docker-vm` | AWS `docker-vm` |
+|------------|------------|-----------------|-----------------|
+| `terraform init -backend=false` | mock or real | real | coming soon |
+| `terraform validate` | yes | yes | — |
+| `terraform plan` | yes | yes | — |
+| `terraform apply` | mock in-process | **409 disabled** | — |
+| Destroy | mock after apply | plan-only → **409 disabled** | — |
+
+Templates live under:
+
+```
+infra_templates/terraform/gcp/docker_vm/
+  main.tf
+  variables.tf
+  outputs.tf
+```
+
+The registry maps `docker-vm` + `gcp` → `terraform/gcp/docker_vm` via `provider_terraform_dirs`.
+
+### GCP credentials_ref
+
+Never store raw credentials in the database. Pass a server-side pointer:
+
+| credentials_ref | Server env var | Notes |
+|-----------------|----------------|-------|
+| `env:GOOGLE_APPLICATION_CREDENTIALS` | path to service account JSON | mount file read-only in backend/runner |
+| `env:GOOGLE_CREDENTIALS_JSON` | inline JSON | validated but never logged |
+
+Example compose/backend env:
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=/opt/cns/secrets/gcp-sa.json
+```
+
+Create deployment with `"credentials_ref": "env:GOOGLE_APPLICATION_CREDENTIALS"`.
+
+If missing: `Terraform credentials_ref is not configured on the server.`
+
+### Plan-only safety
+
+- Real cloud apply returns **409**: `Real cloud apply is disabled in this version.`
+- Destroy without apply returns **409**: `Nothing to destroy: plan-only deployment.`
+- local-mock confirm/apply/configure flow is unchanged.
+
+### Terraform → future runtime targets
+
+GCP template outputs (`hosts`, `exposed_ports`, `zone`) map to future `remote_docker` target registration after apply is enabled. 57D persists plan summaries and outputs metadata only.
 
 ## Architecture
 
@@ -56,9 +108,9 @@ Modules under `infra_templates/modules/`:
 
 ## Deployment statuses
 
-`pending` → `validating` → `planning` → `awaiting_confirmation` → `applying` → `configuring` → `succeeded`
+`pending` → `validating` → `validated` → `planning` → `awaiting_confirmation` → `applying` → `configuring` → `succeeded`
 
-Destroy: `destroying` → `destroyed`
+Destroy: `destroying` → `destroyed` (real cloud: only after a successful apply in a future release)
 
 ## API
 
@@ -66,11 +118,13 @@ Destroy: `destroying` → `destroyed`
 |--------|------|-------------|
 | GET | `/infrastructure/templates` | List whitelisted templates |
 | GET | `/topologies/{id}/infrastructure-deployments` | List deployments |
-| POST | `/topologies/{id}/infrastructure-deployments` | Create + validate + plan |
+| POST | `/topologies/{id}/infrastructure-deployments` | Create deployment (`credentials_ref` for cloud) |
+| POST | `/infrastructure-deployments/{id}/validate` | Terraform init + fmt + validate |
+| POST | `/infrastructure-deployments/{id}/plan` | Terraform plan (requires `validated`) |
 | GET | `/infrastructure-deployments/{id}` | Deployment detail |
 | GET | `/infrastructure-deployments/{id}/executions` | Execution logs/artifacts |
-| POST | `/infrastructure-deployments/{id}/confirm` | User approval gate → apply + ansible |
-| POST | `/infrastructure-deployments/{id}/destroy` | Terraform destroy + cleanup |
+| POST | `/infrastructure-deployments/{id}/confirm` | User approval gate → apply + ansible (409 for real cloud in 57D) |
+| POST | `/infrastructure-deployments/{id}/destroy` | Terraform destroy (409 for plan-only cloud) |
 
 ## Confirmation gate
 
@@ -86,10 +140,23 @@ The user must POST `/confirm` with `{ "confirm": true }`.
 ## Security restrictions
 
 - Template/playbook allowlists only (`infra_templates/registry.json`)
-- Variable keys sanitized (no secrets in `variables_json`)
+- Per-template variable allowlists (unknown keys rejected)
+- Variable keys sanitized (no secrets in `variables_json`; use `credentials_ref`)
+- CIDR, region, zone, and machine type validation for GCP
 - Path traversal rejected
+- No arbitrary module upload, remote modules, custom provisioners, or backend config
 - Terraform state contents are **not** exposed via API — only metadata (`state_metadata_json`)
-- Local backend initially; S3/GCS backends planned
+- Local backend only (`-backend=false`); remote backends planned
+
+## Troubleshooting (57D)
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `Terraform CLI is not installed in runner image` | runner image missing terraform | rebuild runner (`runner/Dockerfile` installs terraform) |
+| `Terraform credentials_ref is not configured on the server` | missing env var or file | set `GOOGLE_APPLICATION_CREDENTIALS` or `GOOGLE_CREDENTIALS_JSON` on backend |
+| `terraform init failed` | provider plugin download/auth | check network; verify service account has minimal read roles for plan |
+| `terraform plan failed` | invalid variables or missing VPC | review plan logs in executions; confirm `network_name` exists |
+| Apply button disabled (GCP) | intentional 57D guard | wait for apply enablement in a later step |
 
 ## Observability
 
@@ -105,8 +172,8 @@ Runner records infra operations in `/runtime/operations/recent`.
 | Provider | Terraform | Ansible | Notes |
 |----------|-----------|---------|-------|
 | local/mock | mock executor | mock/local | Default for dev & CI |
-| gcp | module stubs + future provider wiring | SSH over inventory | Credentials via env refs |
-| aws | module stubs + future provider wiring | SSH over inventory | Credentials via env refs |
+| gcp | **real validate/plan** (57D) | after future apply | `credentials_ref` env pointers |
+| aws | coming soon (docker-vm) | after future apply | stub rejected at create |
 
 ## Future: Kubernetes
 

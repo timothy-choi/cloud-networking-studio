@@ -74,7 +74,8 @@ resource "google_compute_instance" "docker_vm" {
   }
 
   metadata = {
-    enable-oslogin = "TRUE"
+    enable-oslogin = "FALSE"
+    ssh-keys       = "${var.ssh_user}:${trimspace(var.ssh_public_key)}"
   }
 
   service_account {

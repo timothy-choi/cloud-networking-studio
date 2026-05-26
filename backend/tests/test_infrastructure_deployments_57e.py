@@ -122,6 +122,9 @@ def _gcp_credentials(monkeypatch, tmp_path):
     cred_file = tmp_path / "gcp-sa.json"
     cred_file.write_text(json.dumps({"type": "service_account", "project_id": "my-gcp-project"}))
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(cred_file))
+    pub = tmp_path / "gcp-remote-docker-key.pub"
+    pub.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGtestkey cns-remote-docker\n")
+    monkeypatch.setenv("CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH", str(pub))
 
 
 def _create_gcp_deployment(client, headers, topo_id, *, variables: dict | None = None) -> str:
@@ -369,8 +372,12 @@ def test_local_mock_still_works(client_strict, monkeypatch):
     assert len(confirm.json()["runtime_targets_json"]) == 1
 
 
-def test_build_apply_safety_checklist_unit():
+def test_build_apply_safety_checklist_unit(monkeypatch, tmp_path):
     from app.models.infrastructure_deployment import InfrastructureDeployment
+
+    pub = tmp_path / "gcp-remote-docker-key.pub"
+    pub.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGtestkey cns-remote-docker\n")
+    monkeypatch.setenv("CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH", str(pub))
 
     dep = InfrastructureDeployment(
         project_id=uuid.uuid4(),

@@ -35,6 +35,7 @@ from app.services.infra_apply_safety import (
     validate_gcp_apply_safety,
     variables_hash,
 )
+from app.services import infra_ssh_readiness as ssh_readiness_svc
 from app.services.remote_ssh_public_key_service import resolve_remote_docker_ssh_public_key
 
 
@@ -125,11 +126,41 @@ def _run_host_configuration(
     *,
     deployment: InfrastructureDeployment,
 ) -> tuple[str, str | None]:
-    """Run Ansible inventory + configure. Returns (completed|failed, error_message)."""
+    """Run SSH readiness, Ansible inventory/configure, and Docker verification."""
     try:
         inv_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="inventory")
         _, _, inv_outputs = ansible_svc.execute_inventory(db, execution=inv_exec, deployment=deployment)
         deployment.inventory_json = inv_outputs.get("inventory") or ansible_svc.generate_inventory(deployment)
+
+        if is_gcp_docker_vm_apply_eligible(deployment):
+            readiness_exec = _new_execution(
+                db, deployment=deployment, execution_type="ansible", mode="ssh_readiness"
+            )
+            readiness_exec.status = "running"
+            readiness_exec.started_at = datetime.now(UTC)
+            db.flush()
+            try:
+                readiness_log = ssh_readiness_svc.wait_for_ssh_ready(deployment)
+                readiness_exec.status = "succeeded"
+                readiness_exec.logs = readiness_log
+                readiness_exec.finished_at = datetime.now(UTC)
+                deployment.events_json = append_event(
+                    deployment.events_json,
+                    "ssh_readiness_completed",
+                    message="SSH port and authentication ready",
+                    metadata={"log_preview": readiness_log[-2000:]},
+                )
+            except ValueError as exc:
+                readiness_exec.status = "failed"
+                readiness_exec.logs = str(exc)
+                readiness_exec.finished_at = datetime.now(UTC)
+                deployment.events_json = append_event(
+                    deployment.events_json,
+                    "ssh_readiness_failed",
+                    message=str(exc),
+                )
+                db.flush()
+                raise
 
         deployment.status = "configuring"
         deployment.events_json = append_event(
@@ -142,6 +173,19 @@ def _run_host_configuration(
         ansible_started = time.monotonic()
         ansible_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="playbook")
         ansible_svc.execute_configure(db, execution=ansible_exec, deployment=deployment)
+
+        if is_gcp_docker_vm_apply_eligible(deployment):
+            verify_exec = _new_execution(
+                db, deployment=deployment, execution_type="ansible", mode="docker_verify"
+            )
+            verify_exec.status = "running"
+            verify_exec.started_at = datetime.now(UTC)
+            db.flush()
+            verify_log = ssh_readiness_svc.verify_remote_docker(deployment)
+            verify_exec.status = "succeeded"
+            verify_exec.logs = verify_log
+            verify_exec.finished_at = datetime.now(UTC)
+
         deployment.events_json = append_event(
             deployment.events_json,
             "configure_completed",
@@ -360,17 +404,20 @@ def _register_runtime_targets(
         return snapshots
 
     is_mock = is_mock_infrastructure_deployment(deployment)
-    hosts = deployment.outputs_json.get("hosts") if deployment.outputs_json else None
-    if not hosts and is_mock:
-        hosts = [
-            {
-                "name": f"{deployment.name}-vm-1",
-                "public_ip": "203.0.113.10",
-                "private_ip": "10.0.0.10",
-                "ssh_user": "ubuntu",
-                "ssh_port": 22,
-            }
-        ]
+    if is_mock:
+        hosts = deployment.outputs_json.get("hosts") if deployment.outputs_json else None
+        if not hosts:
+            hosts = [
+                {
+                    "name": f"{deployment.name}-vm-1",
+                    "public_ip": "203.0.113.10",
+                    "private_ip": "10.0.0.10",
+                    "ssh_user": "ubuntu",
+                    "ssh_port": 22,
+                }
+            ]
+    else:
+        hosts = ssh_readiness_svc.resolve_inventory_hosts(deployment)
     if not isinstance(hosts, list) or not hosts:
         reason = "No host outputs available to register a runtime target"
         deployment.runtime_targets_json = []

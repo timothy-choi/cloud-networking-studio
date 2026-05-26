@@ -118,6 +118,18 @@ def _install_runner(monkeypatch) -> _CapturingInfraRunner:
     return mock
 
 
+def _patch_gcp_ssh_gates(monkeypatch) -> None:
+    """Stub backend SSH probes in integration tests (runner/ansible remain mocked)."""
+    monkeypatch.setattr(
+        "app.services.infrastructure_deployment_service.ssh_readiness_svc.wait_for_ssh_ready",
+        lambda deployment, **kwargs: "[ssh-readiness] test stub ready",
+    )
+    monkeypatch.setattr(
+        "app.services.infrastructure_deployment_service.ssh_readiness_svc.verify_remote_docker",
+        lambda deployment: "[docker-verify] test stub ok",
+    )
+
+
 def _gcp_credentials(monkeypatch, tmp_path):
     cred_file = tmp_path / "gcp-sa.json"
     cred_file.write_text(json.dumps({"type": "service_account", "project_id": "my-gcp-project"}))
@@ -125,6 +137,11 @@ def _gcp_credentials(monkeypatch, tmp_path):
     pub = tmp_path / "gcp-remote-docker-key.pub"
     pub.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGtestkey cns-remote-docker\n")
     monkeypatch.setenv("CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH", str(pub))
+
+
+@pytest.fixture(autouse=True)
+def _stub_gcp_ssh_gates(monkeypatch):
+    _patch_gcp_ssh_gates(monkeypatch)
 
 
 def _create_gcp_deployment(client, headers, topo_id, *, variables: dict | None = None) -> str:

@@ -1,4 +1,4 @@
-"""Terraform execution via Go runner (Step 57C/57D)."""
+"""Terraform execution via Go runner (Step 57C/57D/57E)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.models.infrastructure_deployment import InfrastructureDeployment
 from app.models.infrastructure_execution import InfrastructureExecution
 from app.runtime.infra_runner_client import get_infra_runner_client
+from app.services.infra_apply_safety import is_gcp_docker_vm_apply_eligible
 from app.services.infra_security import is_real_cloud_provider, redact_logs
 from app.services.infra_template_registry import assert_template_on_disk, get_template, resolve_terraform_dir
 from app.services.terraform_credentials_service import (
@@ -21,10 +22,23 @@ from app.services.terraform_credentials_service import (
 )
 
 
+def _uses_persistent_workspace(deployment: InfrastructureDeployment, mode: str) -> bool:
+    return is_gcp_docker_vm_apply_eligible(deployment) and mode in {"plan", "apply", "destroy"}
+
+
+def _plan_only(deployment: InfrastructureDeployment, mode: str) -> bool:
+    if not is_real_cloud_provider(deployment.provider):
+        return False
+    if is_gcp_docker_vm_apply_eligible(deployment) and mode in {"apply", "destroy"}:
+        return False
+    return True
+
+
 def _base_payload(
     *,
     execution: InfrastructureExecution,
     deployment: InfrastructureDeployment,
+    mode: str,
 ) -> dict[str, Any]:
     template = get_template(deployment.template_id)
     template_dir = resolve_terraform_dir(deployment.template_id, deployment.provider)
@@ -45,8 +59,14 @@ def _base_payload(
         ),
         "deployment_id": str(deployment.id),
         "topology_id": str(deployment.topology_id),
-        "plan_only": is_real_cloud_provider(deployment.provider),
+        "plan_only": _plan_only(deployment, mode),
     }
+
+    if _uses_persistent_workspace(deployment, mode):
+        payload["workspace_id"] = str(deployment.id)
+        payload["preserve_workspace"] = True
+    if is_gcp_docker_vm_apply_eligible(deployment) and mode == "apply":
+        payload["apply_from_plan"] = True
 
     if is_real_cloud_provider(deployment.provider):
         cred_env = resolve_terraform_credentials_env(deployment.provider, deployment.credentials_ref)
@@ -77,11 +97,10 @@ def _run(
     execution.started_at = datetime.now(UTC)
     db.flush()
 
-    payload = _base_payload(execution=execution, deployment=deployment)
+    payload = _base_payload(execution=execution, deployment=deployment, mode=mode)
     payload["mode"] = mode
     if payload.get("credentials_env"):
-        safe_env = redact_credentials_env(payload["credentials_env"])
-        payload_for_log = {**payload, "credentials_env": safe_env}
+        payload_for_log = {**payload, "credentials_env": redact_credentials_env(payload["credentials_env"])}
     else:
         payload_for_log = payload
 
@@ -176,6 +195,8 @@ def build_plan_summary(
     artifacts: list[dict],
     plan_logs: str = "",
 ) -> dict[str, Any]:
+    from app.services.infra_apply_safety import build_apply_safety_checklist
+
     hosts = outputs.get("hosts") or []
     if isinstance(hosts, str):
         try:
@@ -195,6 +216,10 @@ def build_plan_summary(
 
     plan_counts = _parse_plan_counts(plan_logs or plan_preview)
     variables = deployment.variables_json or {}
+    apply_eligible = is_gcp_docker_vm_apply_eligible(deployment)
+    safety_checklist = (
+        build_apply_safety_checklist(deployment) if apply_eligible else None
+    )
 
     return {
         "template_id": deployment.template_id,
@@ -210,6 +235,9 @@ def build_plan_summary(
         "plan_counts": plan_counts,
         "warnings": list(warnings) if isinstance(warnings, list) else [],
         "requires_confirmation": True,
-        "apply_disabled": is_real_cloud_provider(deployment.provider),
+        "apply_disabled": not apply_eligible and is_real_cloud_provider(deployment.provider),
+        "apply_eligible": apply_eligible,
+        "safety_checklist": safety_checklist,
+        "cost_warning": "This may create billable cloud resources." if apply_eligible else None,
         "artifacts_count": len(artifacts),
     }

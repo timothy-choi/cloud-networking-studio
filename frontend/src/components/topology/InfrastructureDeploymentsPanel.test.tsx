@@ -3,15 +3,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as infraApi from '../../api/infrastructureDeployments';
 import {
+  applyDisabledReason,
   buildInfrastructureCreatePayload,
   canShowApplyAction,
+  canShowDestroyAction,
   canShowPlanAction,
   canShowValidateAction,
-  applyDisabledReason,
   credentialsRefHelpText,
   destroyDisabledReason,
   deriveConfigurationStatus,
   deriveTerraformStatus,
+  extractApplySafetyChecklist,
+  hasOpenInternetCidr,
   validateInfrastructureCreateForm,
 } from './infrastructureDeploymentForm';
 import { InfrastructureDeploymentsPanel, submitInfrastructureCreate } from './InfrastructureDeploymentsPanel';
@@ -52,10 +55,25 @@ const sampleDeployment: infraApi.InfrastructureDeployment = {
   metrics_json: {},
   runtime_targets_json: [],
   error_message: null,
+  credentials_ref: null,
   confirmed_at: null,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
   destroyed_at: null,
+};
+
+const gcpPlanSummary = {
+  provider: 'gcp',
+  template_id: 'docker-vm',
+  apply_eligible: true,
+  cost_warning: 'This may create billable cloud resources.',
+  safety_checklist: {
+    passed: true,
+    items: [
+      { name: 'provider_template', ok: true, message: 'Provider/template must be gcp + docker-vm' },
+      { name: 'cost_warning', ok: true, warning: true, message: 'This may create billable cloud resources.' },
+    ],
+  },
 };
 
 describe('infrastructureDeploymentForm', () => {
@@ -66,6 +84,16 @@ describe('infrastructureDeploymentForm', () => {
       provider: '',
       region: '',
       vmCount: 0,
+      credentialsRef: '',
+      projectId: '',
+      zone: '',
+      machineType: 'e2-medium',
+      networkName: 'default',
+      instanceName: 'cns-docker-vm',
+      sshUser: 'ubuntu',
+      allowedSshCidr: '203.0.113.0/24',
+      allowedAppCidr: '203.0.113.0/24',
+      tags: 'cns-docker-vm',
     });
     expect(errors.name).toBeTruthy();
     expect(errors.templateId).toBeTruthy();
@@ -89,8 +117,8 @@ describe('infrastructureDeploymentForm', () => {
         networkName: 'default',
         instanceName: 'cns-docker-vm',
         sshUser: 'ubuntu',
-        allowedSshCidr: '0.0.0.0/0',
-        allowedAppCidr: '0.0.0.0/0',
+        allowedSshCidr: '203.0.113.0/24',
+        allowedAppCidr: '203.0.113.0/24',
         tags: 'cns-docker-vm',
       }),
     ).toEqual({
@@ -102,9 +130,12 @@ describe('infrastructureDeploymentForm', () => {
   });
 
   it('shows apply only after plan reaches awaiting_confirmation for mock providers', () => {
-    expect(canShowApplyAction('pending', 'local')).toBe(false);
-    expect(canShowApplyAction('awaiting_confirmation', 'local')).toBe(true);
-    expect(canShowApplyAction('awaiting_confirmation', 'gcp')).toBe(false);
+    expect(canShowApplyAction('pending', 'local-mock', 'local', null)).toBe(false);
+    expect(canShowApplyAction('awaiting_confirmation', 'local-mock', 'local', null)).toBe(true);
+    expect(canShowApplyAction('awaiting_confirmation', 'docker-vm', 'gcp', gcpPlanSummary)).toBe(true);
+    expect(canShowApplyAction('awaiting_confirmation', 'docker-vm', 'gcp', { safety_checklist: { passed: false } })).toBe(
+      false,
+    );
     expect(canShowValidateAction('pending')).toBe(true);
     expect(canShowPlanAction('validated')).toBe(true);
     expect(canShowPlanAction('awaiting_confirmation')).toBe(false);
@@ -112,8 +143,22 @@ describe('infrastructureDeploymentForm', () => {
 
   it('shows credentials help for GCP', () => {
     expect(credentialsRefHelpText('gcp')).toContain('GOOGLE_APPLICATION_CREDENTIALS');
-    expect(applyDisabledReason('gcp')).toContain('Apply disabled');
-    expect(destroyDisabledReason('awaiting_confirmation', 'gcp')).toContain('plan-only');
+    expect(
+      applyDisabledReason('awaiting_confirmation', 'docker-vm', 'gcp', { safety_checklist: { passed: false, items: [] } }),
+    ).toContain('Safety checks failed');
+    expect(destroyDisabledReason('awaiting_confirmation', 'gcp', 'docker-vm')).toContain('not been applied');
+  });
+
+  it('extracts safety checklist and open CIDR warning', () => {
+    const checklist = extractApplySafetyChecklist(gcpPlanSummary);
+    expect(checklist?.passed).toBe(true);
+    expect(hasOpenInternetCidr({ allowed_ssh_cidr: '0.0.0.0/0' })).toBe(true);
+    expect(hasOpenInternetCidr({ allowed_ssh_cidr: '203.0.113.0/24' })).toBe(false);
+  });
+
+  it('shows destroy only after succeeded for GCP', () => {
+    expect(canShowDestroyAction('awaiting_confirmation', 'gcp', 'docker-vm')).toBe(false);
+    expect(canShowDestroyAction('succeeded', 'gcp', 'docker-vm')).toBe(true);
   });
 
   it('builds GCP docker-vm create payload', () => {
@@ -176,6 +221,18 @@ describe('InfrastructureDeploymentsPanel', () => {
     expect(html).toContain('New infrastructure deployment');
     expect(html).toContain('Terraform to provision');
   });
+
+  it('provides data needed to render GCP safety checklist in detail view', () => {
+    const checklist = extractApplySafetyChecklist(gcpPlanSummary);
+    expect(checklist?.items?.some((item) => item.name === 'cost_warning')).toBe(true);
+    expect(gcpPlanSummary.cost_warning).toContain('billable');
+    expect(
+      canShowApplyAction('awaiting_confirmation', 'docker-vm', 'gcp', gcpPlanSummary),
+    ).toBe(true);
+    expect(
+      hasOpenInternetCidr({ allowed_ssh_cidr: '0.0.0.0/0', allowed_app_cidr: '203.0.113.0/24' }),
+    ).toBe(true);
+  });
 });
 
 describe('submitInfrastructureCreate', () => {
@@ -199,8 +256,8 @@ describe('submitInfrastructureCreate', () => {
       networkName: 'default',
       instanceName: 'cns-docker-vm',
       sshUser: 'ubuntu',
-      allowedSshCidr: '0.0.0.0/0',
-      allowedAppCidr: '0.0.0.0/0',
+      allowedSshCidr: '203.0.113.0/24',
+      allowedAppCidr: '203.0.113.0/24',
       tags: 'cns-docker-vm',
     });
 

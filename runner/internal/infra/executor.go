@@ -85,7 +85,7 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 		return resp
 	}
 
-	workdir, cleanup, err := prepareWorkdir(req.ExecutionID, req.TemplateID, req.TemplateDir)
+	workdir, cleanup, err := prepareWorkdir(req.ExecutionID, req.TemplateID, req.TemplateDir, req.WorkspaceID, req.PreserveWorkspace)
 	if err != nil {
 		msg := err.Error()
 		resp.Error = &msg
@@ -107,7 +107,7 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 	}
 
 	if req.PlanOnly && (req.Mode == "apply" || req.Mode == "destroy") {
-		msg := "Real cloud apply is disabled in this version."
+		msg := "Real cloud apply/destroy is disabled for this provider in plan-only mode."
 		resp.Logs = log.String()
 		resp.Error = &msg
 		return finish(resp, start, req, "failed", msg)
@@ -210,13 +210,32 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 			model.InfraArtifact{Type: "plan_text", Preview: preview},
 		)
 	case "apply":
-		out, err := runCmdEnv(ctx, workdir, cmdEnv, tfPath, "apply", "-input=false", "-auto-approve", "-no-color")
-		log.WriteString(out)
-		if err != nil {
-			msg := "terraform apply failed"
-			resp.Logs = log.String()
-			resp.Error = &msg
-			return finish(resp, start, req, "failed", msg)
+		if req.ApplyFromPlan {
+			planFile := filepath.Join(workdir, "tfplan")
+			if _, statErr := os.Stat(planFile); statErr != nil {
+				msg := "stored terraform plan file missing"
+				resp.Logs = log.String()
+				resp.Error = &msg
+				return finish(resp, start, req, "failed", msg)
+			}
+			out, err := runCmdEnv(ctx, workdir, cmdEnv, tfPath, "apply", "-input=false", "-no-color", planFile)
+			log.WriteString(out)
+			if err != nil {
+				msg := "terraform apply failed"
+				resp.Logs = log.String()
+				resp.Error = &msg
+				return finish(resp, start, req, "failed", msg)
+			}
+			resp.Artifacts = append(resp.Artifacts, model.InfraArtifact{Type: "apply_summary", URI: fmt.Sprintf("workspace://%s/apply", req.WorkspaceID)})
+		} else {
+			out, err := runCmdEnv(ctx, workdir, cmdEnv, tfPath, "apply", "-input=false", "-auto-approve", "-no-color")
+			log.WriteString(out)
+			if err != nil {
+				msg := "terraform apply failed"
+				resp.Logs = log.String()
+				resp.Error = &msg
+				return finish(resp, start, req, "failed", msg)
+			}
 		}
 	case "destroy":
 		out, err := runCmdEnv(ctx, workdir, cmdEnv, tfPath, "destroy", "-input=false", "-auto-approve", "-no-color")
@@ -259,7 +278,7 @@ func executeAnsible(ctx context.Context, req model.InfraExecutionRequest, start 
 		return resp
 	}
 
-	workdir, cleanup, err := prepareWorkdir(req.ExecutionID, "", "")
+	workdir, cleanup, err := prepareWorkdir(req.ExecutionID, "", "", "", false)
 	if err != nil {
 		msg := err.Error()
 		resp.Error = &msg
@@ -317,21 +336,40 @@ func executeAnsible(ctx context.Context, req model.InfraExecutionRequest, start 
 	return finish(resp, start, req, "succeeded", "")
 }
 
-func prepareWorkdir(executionID, templateID, templateDir string) (string, func(), error) {
-	base := filepath.Join(os.TempDir(), "cns-infra", executionID)
-	if err := os.RemoveAll(base); err != nil {
-		return "", func() {}, err
+func prepareWorkdir(executionID, templateID, templateDir, workspaceID string, preserve bool) (string, func(), error) {
+	var base string
+	if strings.TrimSpace(workspaceID) != "" {
+		base = filepath.Join(workspacesRoot(), workspaceID)
+	} else {
+		base = filepath.Join(os.TempDir(), "cns-infra", executionID)
+		if err := os.RemoveAll(base); err != nil {
+			return "", func() {}, err
+		}
 	}
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return "", func() {}, err
 	}
 	if templateID != "" {
-		src := resolveTemplateDir(templateID, templateDir)
-		if err := copyTemplateDir(src, base); err != nil {
-			return "", func() {}, err
+		mainTf := filepath.Join(base, "main.tf")
+		if _, err := os.Stat(mainTf); os.IsNotExist(err) {
+			src := resolveTemplateDir(templateID, templateDir)
+			if err := copyTemplateDir(src, base); err != nil {
+				return "", func() {}, err
+			}
 		}
 	}
-	return base, func() { _ = os.RemoveAll(base) }, nil
+	cleanup := func() {}
+	if !preserve {
+		cleanup = func() { _ = os.RemoveAll(base) }
+	}
+	return base, cleanup, nil
+}
+
+func workspacesRoot() string {
+	if v := strings.TrimSpace(os.Getenv("CNS_INFRA_WORKSPACES_ROOT")); v != "" {
+		return v
+	}
+	return "/opt/cns/infra-workspaces"
 }
 
 func templatesRoot() string {

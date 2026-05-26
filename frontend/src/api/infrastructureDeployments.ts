@@ -111,15 +111,30 @@ export async function listInfrastructureExecutions(deploymentId: string): Promis
   return res.items;
 }
 
-export async function confirmInfrastructureDeployment(deploymentId: string): Promise<InfrastructureDeployment> {
+export async function confirmInfrastructureDeployment(
+  deploymentId: string,
+  body: {
+    confirm?: boolean;
+    confirmation_text?: string;
+    unsafe_testing_override?: boolean;
+  } = {},
+): Promise<InfrastructureDeployment> {
   return apiFetch<InfrastructureDeployment>(`/infrastructure-deployments/${deploymentId}/confirm`, {
     method: 'POST',
-    body: JSON.stringify({ confirm: true }),
+    body: JSON.stringify({
+      confirm: body.confirm ?? true,
+      confirmation_text: body.confirmation_text,
+      unsafe_testing_override: body.unsafe_testing_override ?? false,
+    }),
   });
 }
 
-export async function destroyInfrastructureDeployment(deploymentId: string): Promise<InfrastructureDeployment> {
+export async function destroyInfrastructureDeployment(
+  deploymentId: string,
+  body: { confirmation_text?: string } = {},
+): Promise<InfrastructureDeployment> {
   return apiFetch<InfrastructureDeployment>(`/infrastructure-deployments/${deploymentId}/destroy`, {
     method: 'POST',
+    body: JSON.stringify(body),
   });
 }

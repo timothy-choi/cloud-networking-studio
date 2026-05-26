@@ -27,6 +27,9 @@ import {
   deriveConfigurationStatus,
   deriveTerraformStatus,
   destroyDisabledReason,
+  extractApplySafetyChecklist,
+  hasOpenInternetCidr,
+  isGcpDockerVmDeployment,
   isGcpDockerVmForm,
   isMockInfrastructureDeployment,
   isRealCloudProvider,
@@ -90,6 +93,11 @@ export function InfrastructureDeploymentsPanel({
   const [error, setError] = useState<unknown>(null);
   const [fieldErrors, setFieldErrors] = useState<InfrastructureCreateFormErrors>({});
   const [showLogs, setShowLogs] = useState(false);
+  const [applyConfirmText, setApplyConfirmText] = useState('');
+  const [destroyConfirmText, setDestroyConfirmText] = useState('');
+  const [unsafeTestingOverride, setUnsafeTestingOverride] = useState(false);
+  const [showApplyDialog, setShowApplyDialog] = useState(false);
+  const [showDestroyDialog, setShowDestroyDialog] = useState(false);
 
   const refreshDeployments = useCallback(
     async (selectId?: string) => {
@@ -208,18 +216,40 @@ export function InfrastructureDeploymentsPanel({
 
   async function handleConfirm() {
     if (!selected) return;
-    await runAction(() => confirmInfrastructureDeployment(selected.id));
+    const needsTypedConfirm = isGcpDockerVmDeployment(selected.template_id, selected.provider);
+    if (needsTypedConfirm && applyConfirmText.trim() !== 'APPLY') {
+      setError(new Error('Type APPLY to confirm real cloud apply.'));
+      return;
+    }
+    await runAction(() =>
+      confirmInfrastructureDeployment(selected.id, {
+        confirmation_text: needsTypedConfirm ? applyConfirmText.trim() : undefined,
+        unsafe_testing_override: needsTypedConfirm ? unsafeTestingOverride : undefined,
+      }),
+    );
+    setShowApplyDialog(false);
+    setApplyConfirmText('');
+    setUnsafeTestingOverride(false);
     await refreshDeployments(selected.id);
     onRuntimeTargetsChanged?.();
   }
 
   async function handleDestroy() {
     if (!selected) return;
+    const needsTypedConfirm = isGcpDockerVmDeployment(selected.template_id, selected.provider);
+    if (needsTypedConfirm && destroyConfirmText.trim() !== 'DESTROY') {
+      setError(new Error('Type DESTROY to confirm infrastructure destroy.'));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const updated = await destroyInfrastructureDeployment(selected.id);
+      const updated = await destroyInfrastructureDeployment(selected.id, {
+        confirmation_text: needsTypedConfirm ? destroyConfirmText.trim() : undefined,
+      });
       setDeployments((current) => current.map((d) => (d.id === updated.id ? updated : d)));
+      setShowDestroyDialog(false);
+      setDestroyConfirmText('');
     } catch (err) {
       setError(err);
     } finally {
@@ -235,8 +265,24 @@ export function InfrastructureDeploymentsPanel({
   const isMockDeployment = selected
     ? isMockInfrastructureDeployment(selected.template_id, selected.provider)
     : false;
-  const applyDisabled = selected ? applyDisabledReason(selected.provider) : null;
-  const destroyDisabled = selected ? destroyDisabledReason(selected.status, selected.provider) : null;
+  const isGcpDeployment = selected
+    ? isGcpDockerVmDeployment(selected.template_id, selected.provider)
+    : false;
+  const safetyChecklist = extractApplySafetyChecklist(plan);
+  const applyDisabled = selected
+    ? applyDisabledReason(selected.status, selected.template_id, selected.provider, plan)
+    : null;
+  const destroyDisabled = selected
+    ? destroyDisabledReason(selected.status, selected.provider, selected.template_id)
+    : null;
+  const showApplyButton = selected
+    ? canShowApplyAction(selected.status, selected.template_id, selected.provider, plan)
+    : false;
+  const showDestroyButton = selected
+    ? canShowDestroyAction(selected.status, selected.provider, selected.template_id)
+    : false;
+  const openCidrWarning =
+    isGcpDeployment && hasOpenInternetCidr(selected?.variables_json as Record<string, unknown> | undefined);
   const showGcpFields = isGcpDockerVmForm(templateId, provider);
   const showCredentialsRef = isRealCloudProvider(provider);
   const targetSkipEvent = [...(selected?.events_json ?? [])]
@@ -507,6 +553,58 @@ export function InfrastructureDeploymentsPanel({
                         Warnings: {(plan.warnings as string[]).join(' · ')}
                       </div>
                     ) : null}
+                    {plan.cost_warning ? (
+                      <div className="font-medium text-amber-800 dark:text-amber-200">
+                        {String(plan.cost_warning)}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {safetyChecklist?.items && safetyChecklist.items.length > 0 ? (
+                  <div className="mt-3 rounded border border-amber-500/40 bg-amber-50/50 p-2 text-xs dark:border-amber-700/50 dark:bg-amber-950/20">
+                    <div className="font-medium">Apply safety checklist</div>
+                    <ul className="mt-2 space-y-1">
+                      {safetyChecklist.items.map((item) => (
+                        <li
+                          key={item.name}
+                          className={
+                            item.warning
+                              ? 'text-amber-800 dark:text-amber-200'
+                              : item.ok
+                                ? 'text-emerald-700 dark:text-emerald-400'
+                                : 'text-red-700 dark:text-red-400'
+                          }
+                        >
+                          {item.ok ? '✓' : item.warning ? '⚠' : '✗'} {item.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {openCidrWarning ? (
+                  <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
+                    Warning: open CIDR (0.0.0.0/0) detected. Apply requires explicit unsafe testing override.
+                  </p>
+                ) : null}
+                {selected.outputs_json && Object.keys(selected.outputs_json).length > 0 ? (
+                  <div className="mt-2 space-y-1 text-xs">
+                    <div className="font-medium">Terraform outputs</div>
+                    {selected.outputs_json.public_ip ? (
+                      <div>Public IP: {String(selected.outputs_json.public_ip)}</div>
+                    ) : null}
+                    {selected.outputs_json.private_ip ? (
+                      <div>Private IP: {String(selected.outputs_json.private_ip)}</div>
+                    ) : null}
+                    {selected.outputs_json.instance_name ? (
+                      <div>Instance: {String(selected.outputs_json.instance_name)}</div>
+                    ) : null}
+                    {selected.outputs_json.zone ? <div>Zone: {String(selected.outputs_json.zone)}</div> : null}
+                    {selected.outputs_json.network_name ? (
+                      <div>Network: {String(selected.outputs_json.network_name)}</div>
+                    ) : null}
+                    {selected.outputs_json.ssh_user ? (
+                      <div>SSH user: {String(selected.outputs_json.ssh_user)}</div>
+                    ) : null}
                   </div>
                 ) : null}
                 {selected.credentials_ref ? (
@@ -569,11 +667,17 @@ export function InfrastructureDeploymentsPanel({
                   >
                     View Logs
                   </button>
-                  {canShowApplyAction(selected.status, selected.provider) ? (
+                  {showApplyButton ? (
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => void handleConfirm()}
+                      onClick={() => {
+                        if (isGcpDeployment) {
+                          setShowApplyDialog(true);
+                        } else {
+                          void handleConfirm();
+                        }
+                      }}
                       className="rounded bg-amber-600 px-3 py-1 text-xs text-white disabled:opacity-50"
                     >
                       Confirm apply
@@ -583,11 +687,17 @@ export function InfrastructureDeploymentsPanel({
                       {applyDisabled}
                     </span>
                   ) : null}
-                  {canShowDestroyAction(selected.status, selected.provider) ? (
+                  {showDestroyButton ? (
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => void handleDestroy()}
+                      onClick={() => {
+                        if (isGcpDeployment) {
+                          setShowDestroyDialog(true);
+                        } else {
+                          void handleDestroy();
+                        }
+                      }}
                       className="rounded border border-red-500 px-3 py-1 text-xs text-red-600 disabled:opacity-50"
                     >
                       Destroy infrastructure
@@ -598,6 +708,85 @@ export function InfrastructureDeploymentsPanel({
                     </span>
                   ) : null}
                 </div>
+                {showApplyDialog && isGcpDeployment ? (
+                  <div className="mt-3 space-y-2 rounded border border-amber-500/50 bg-amber-50/40 p-3 text-xs dark:border-amber-700/50 dark:bg-amber-950/20">
+                    <p className="font-medium text-amber-900 dark:text-amber-100">
+                      This may create billable cloud resources.
+                    </p>
+                    <p>Type <strong>APPLY</strong> to confirm Terraform apply using the stored plan.</p>
+                    <input
+                      value={applyConfirmText}
+                      onChange={(e) => setApplyConfirmText(e.target.value)}
+                      placeholder="Type APPLY"
+                      className="w-full rounded border px-2 py-1 font-mono dark:border-zinc-600 dark:bg-zinc-900"
+                    />
+                    {openCidrWarning ? (
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={unsafeTestingOverride}
+                          onChange={(e) => setUnsafeTestingOverride(e.target.checked)}
+                        />
+                        Allow open CIDR (0.0.0.0/0) for testing only
+                      </label>
+                    ) : null}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={busy || applyConfirmText.trim() !== 'APPLY'}
+                        onClick={() => void handleConfirm()}
+                        className="rounded bg-amber-600 px-3 py-1 text-white disabled:opacity-50"
+                      >
+                        Apply infrastructure
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowApplyDialog(false);
+                          setApplyConfirmText('');
+                          setUnsafeTestingOverride(false);
+                        }}
+                        className="rounded border px-3 py-1 dark:border-zinc-600"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {showDestroyDialog && isGcpDeployment ? (
+                  <div className="mt-3 space-y-2 rounded border border-red-500/50 bg-red-50/40 p-3 text-xs dark:border-red-800/50 dark:bg-red-950/20">
+                    <p className="font-medium text-red-900 dark:text-red-100">
+                      Destroy will remove GCP resources created by this deployment.
+                    </p>
+                    <p>Type <strong>DESTROY</strong> to confirm.</p>
+                    <input
+                      value={destroyConfirmText}
+                      onChange={(e) => setDestroyConfirmText(e.target.value)}
+                      placeholder="Type DESTROY"
+                      className="w-full rounded border px-2 py-1 font-mono dark:border-zinc-600 dark:bg-zinc-900"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={busy || destroyConfirmText.trim() !== 'DESTROY'}
+                        onClick={() => void handleDestroy()}
+                        className="rounded border border-red-600 px-3 py-1 text-red-700 disabled:opacity-50 dark:text-red-300"
+                      >
+                        Destroy infrastructure
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowDestroyDialog(false);
+                          setDestroyConfirmText('');
+                        }}
+                        className="rounded border px-3 py-1 dark:border-zinc-600"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               {showLogs ? (

@@ -50,10 +50,12 @@ services:
       RUNTIME_PROVIDER: ${RUNTIME_PROVIDER:-docker}
       CNS_INFRA_TEMPLATES_ROOT: /opt/cns/infra_templates
       CNS_ANSIBLE_PLAYBOOKS_ROOT: /opt/cns/ansible_playbooks
+      CNS_INFRA_WORKSPACES_ROOT: /opt/cns/infra-workspaces
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/cns/secrets:/opt/cns/secrets:ro
+      - /opt/cns/infra-workspaces:/opt/cns/infra-workspaces
       - ./infra_templates:/opt/cns/infra_templates:ro
       - ./ansible_playbooks:/opt/cns/ansible_playbooks:ro
     expose:

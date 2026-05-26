@@ -38,14 +38,32 @@ export type InfrastructureCreateFormErrors = Partial<
   >
 >;
 
+export type ApplySafetyChecklistItem = {
+  name: string;
+  ok: boolean;
+  warning?: boolean;
+  message: string;
+};
+
+export type ApplySafetyChecklist = {
+  passed?: boolean;
+  items?: ApplySafetyChecklistItem[];
+  apply_eligible?: boolean;
+  cost_warning?: string | null;
+};
+
 export const REAL_CLOUD_PROVIDERS = new Set(['gcp', 'aws']);
 
 export function isRealCloudProvider(provider: string): boolean {
   return REAL_CLOUD_PROVIDERS.has(provider);
 }
 
-export function isGcpDockerVmForm(templateId: string, provider: string): boolean {
+export function isGcpDockerVmDeployment(templateId: string, provider: string): boolean {
   return templateId === 'docker-vm' && provider === 'gcp';
+}
+
+export function isGcpDockerVmForm(templateId: string, provider: string): boolean {
+  return isGcpDockerVmDeployment(templateId, provider);
 }
 
 export function defaultInfrastructureFormValues(): InfrastructureCreateFormValues {
@@ -62,8 +80,8 @@ export function defaultInfrastructureFormValues(): InfrastructureCreateFormValue
     networkName: 'default',
     instanceName: 'cns-docker-vm',
     sshUser: 'ubuntu',
-    allowedSshCidr: '0.0.0.0/0',
-    allowedAppCidr: '0.0.0.0/0',
+    allowedSshCidr: '203.0.113.0/24',
+    allowedAppCidr: '203.0.113.0/24',
     tags: 'cns-docker-vm',
   };
 }
@@ -145,28 +163,78 @@ export function buildInfrastructureCreatePayload(values: InfrastructureCreateFor
   return payload;
 }
 
-export function canShowApplyAction(status: string, provider: string): boolean {
+export function extractApplySafetyChecklist(
+  planSummary: Record<string, unknown> | null | undefined,
+): ApplySafetyChecklist | null {
+  const checklist = planSummary?.safety_checklist;
+  if (!checklist || typeof checklist !== 'object') {
+    return null;
+  }
+  return checklist as ApplySafetyChecklist;
+}
+
+export function canShowApplyAction(
+  status: string,
+  templateId: string,
+  provider: string,
+  planSummary: Record<string, unknown> | null | undefined,
+): boolean {
+  if (status !== 'awaiting_confirmation') {
+    return false;
+  }
+  if (isGcpDockerVmDeployment(templateId, provider)) {
+    const checklist = extractApplySafetyChecklist(planSummary);
+    return checklist?.passed === true && planSummary?.apply_eligible === true;
+  }
   if (isRealCloudProvider(provider)) {
     return false;
   }
-  return status === 'awaiting_confirmation';
+  return true;
 }
 
-export function applyDisabledReason(provider: string): string | null {
+export function applyDisabledReason(
+  status: string,
+  templateId: string,
+  provider: string,
+  planSummary: Record<string, unknown> | null | undefined,
+): string | null {
+  if (status !== 'awaiting_confirmation') {
+    return null;
+  }
+  if (isGcpDockerVmDeployment(templateId, provider)) {
+    const checklist = extractApplySafetyChecklist(planSummary);
+    if (!checklist) {
+      return 'Run Plan first to generate a safety checklist.';
+    }
+    if (!checklist.passed) {
+      const failed = (checklist.items ?? []).filter((item) => !item.ok && !item.warning);
+      if (failed.length > 0) {
+        return failed[0]?.message ?? 'Safety checks failed.';
+      }
+      return 'Safety checks failed.';
+    }
+    return null;
+  }
   if (isRealCloudProvider(provider)) {
-    return 'Apply disabled: real cloud apply will be enabled in a later step.';
+    return 'Apply disabled: real cloud apply is not enabled for this provider.';
   }
   return null;
 }
 
-export function canShowDestroyAction(status: string, provider: string): boolean {
+export function canShowDestroyAction(status: string, provider: string, templateId: string): boolean {
+  if (isGcpDockerVmDeployment(templateId, provider)) {
+    return status === 'succeeded';
+  }
   if (isRealCloudProvider(provider)) {
     return status === 'succeeded';
   }
   return status === 'succeeded';
 }
 
-export function destroyDisabledReason(status: string, provider: string): string | null {
+export function destroyDisabledReason(status: string, provider: string, templateId: string): string | null {
+  if (isGcpDockerVmDeployment(templateId, provider) && status !== 'succeeded') {
+    return 'Nothing to destroy: deployment has not been applied.';
+  }
   if (isRealCloudProvider(provider) && status !== 'succeeded') {
     return 'Nothing to destroy: plan-only deployment.';
   }
@@ -234,4 +302,10 @@ export function credentialsRefHelpText(provider: string): string {
     return 'Use env:AWS_PROFILE or env:AWS_ACCESS_KEY_ID (requires AWS_SECRET_ACCESS_KEY on server).';
   }
   return 'Not required for local/mock providers.';
+}
+
+export function hasOpenInternetCidr(variables: Record<string, unknown> | undefined): boolean {
+  const ssh = String(variables?.allowed_ssh_cidr ?? '').trim();
+  const app = String(variables?.allowed_app_cidr ?? '').trim();
+  return ssh === '0.0.0.0/0' || app === '0.0.0.0/0';
 }

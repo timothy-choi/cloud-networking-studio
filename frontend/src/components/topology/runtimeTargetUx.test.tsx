@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import type { DeploymentTarget } from '../../api/deploymentTargets';
-import { mockTargetLabel, workloadApplyDisabledReason } from './runtimeTargetHelpers';
+import { MOCK_TARGET_LABEL, mockTargetLabel, workloadApplyDisabledReason } from './runtimeTargetHelpers';
 
 const mockTarget: DeploymentTarget = {
   id: 'target-mock',
@@ -12,9 +12,9 @@ const mockTarget: DeploymentTarget = {
   config_json: {
     host: '203.0.113.10',
     is_mock: true,
-    mock_label: 'Mock target — for workflow testing only',
+    target_source: 'local_mock_infra',
+    mock_label: MOCK_TARGET_LABEL,
     workload_apply_disabled: true,
-    workload_apply_disabled_reason: 'Mock/simulated target — real workload apply is disabled for workflow testing only.',
   },
   credentials_ref: 'env:CNS_REMOTE_DOCKER_SSH_KEY_PATH',
   status: 'active',
@@ -25,8 +25,8 @@ const mockTarget: DeploymentTarget = {
 
 describe('runtime target UX copy', () => {
   it('labels mock targets clearly', () => {
-    expect(mockTargetLabel(mockTarget)).toBe('Mock target — for workflow testing only');
-    expect(workloadApplyDisabledReason(mockTarget)).toContain('disabled');
+    expect(mockTargetLabel(mockTarget)).toBe(MOCK_TARGET_LABEL);
+    expect(workloadApplyDisabledReason(mockTarget)).toContain('simulated');
   });
 
   it('uses consistent use-created-target button label', () => {

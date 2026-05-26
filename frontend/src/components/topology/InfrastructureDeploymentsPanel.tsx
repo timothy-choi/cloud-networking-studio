@@ -488,7 +488,7 @@ export function InfrastructureDeploymentsPanel({
                           </div>
                           {row.is_mock || isMockDeployment ? (
                             <div className="mt-1 text-amber-700 dark:text-amber-300">
-                              Mock target — for workflow testing only
+                              Mock target — workflow testing only
                             </div>
                           ) : null}
                           {row.target_id && onUseRuntimeTarget ? (

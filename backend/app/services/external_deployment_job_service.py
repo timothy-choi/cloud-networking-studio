@@ -13,6 +13,7 @@ from app.models.external_deployment_job import ExternalDeploymentJob
 from app.models.topology import Topology
 from app.models.user import User
 from app.services.audit_service import record_audit
+from app.services import deployment_target_service as target_svc
 from app.services import remote_docker_executor_service as remote_docker_svc
 
 JOB_MODES = frozenset({"validate", "plan", "apply", "destroy"})
@@ -126,10 +127,13 @@ def _execute_job(
 
     try:
         if target.target_type == "remote_docker":
-            logs, artifacts = _run_remote_docker(db, job=job, topology=topology, target=target)
-            job.logs = logs
-            job.artifact_refs = artifacts
-            job.status = "succeeded"
+            if target_svc.is_mock_runtime_target(target):
+                _execute_mock_remote_docker_job(job=job, topology=topology, target=target)
+            else:
+                logs, artifacts = _run_remote_docker(db, job=job, topology=topology, target=target)
+                job.logs = logs
+                job.artifact_refs = artifacts
+                job.status = "succeeded"
         else:
             _execute_stub_job(job=job, topology=topology, target=target)
     except ValueError as exc:
@@ -167,6 +171,44 @@ def _run_remote_docker(
     if job.mode == "destroy":
         return remote_docker_svc.execute_destroy(db, job=job, target=target, topology=topology)
     raise ValueError(f"Unsupported mode: {job.mode}")
+
+
+def _execute_mock_remote_docker_job(
+    *,
+    job: ExternalDeploymentJob,
+    topology: Topology,
+    target: DeploymentTarget,
+) -> None:
+    cfg = target.config_json or {}
+    host = cfg.get("host") or "unknown"
+    label = cfg.get("mock_label") or "Mock target — workflow testing only"
+    lines = [
+        f"[external-job][mock] id={job.id}",
+        f"[external-job][mock] topology={topology.name} ({topology.id})",
+        f"[external-job][mock] target={target.name} ({target.target_type})",
+        f"[external-job][mock] host={host}",
+        f"[external-job][mock] {label}",
+        f"[external-job][mock] mode={job.mode}",
+        "[external-job][mock] Skipped real SSH/Docker operations for documentation/test host.",
+    ]
+    if job.mode == "validate":
+        lines.append("[external-job][mock] Simulated validate succeeded (no SSH attempted).")
+        job.status = "succeeded"
+    elif job.mode == "plan":
+        job.artifact_refs = [
+            {
+                "type": "plan_summary",
+                "uri": f"mock://external-jobs/{job.id}/plan.json",
+                "simulated": True,
+                "target_type": target.target_type,
+            }
+        ]
+        lines.append("[external-job][mock] Simulated plan succeeded (no remote files generated).")
+        job.status = "succeeded"
+    else:
+        reason = cfg.get("workload_apply_disabled_reason") or "Real workload operations are disabled for mock targets."
+        raise ValueError(reason)
+    job.logs = mask_secrets_in_text("\n".join(lines)) or ""
 
 
 def _execute_stub_job(

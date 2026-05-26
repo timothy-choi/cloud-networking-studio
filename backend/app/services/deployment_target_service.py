@@ -27,21 +27,39 @@ def is_documentation_test_host(host: str | None) -> bool:
     return host.strip() in DOCUMENTATION_TEST_HOSTS
 
 
+def is_mock_runtime_target(target: DeploymentTarget | None) -> bool:
+    if target is None:
+        return False
+    cfg = target.config_json or {}
+    return bool(
+        cfg.get("is_mock")
+        or cfg.get("target_source") == "local_mock_infra"
+        or cfg.get("workload_apply_disabled")
+    )
+
+
 def mock_target_config_overrides(*, is_mock: bool, host: str) -> dict[str, object]:
     disabled = is_mock or is_documentation_test_host(host)
     if not disabled:
         return {}
     reason = (
-        "Mock/simulated target — real workload apply is disabled for workflow testing only."
+        "Mock/simulated target — real workload validate/apply is disabled for workflow testing only."
         if is_mock
-        else f"Documentation/test IP ({host}) — real workload apply is disabled."
+        else f"Documentation/test IP ({host}) — real workload validate/apply is disabled."
     )
-    return {
-        "is_mock": is_mock,
-        "mock_label": "Mock target — for workflow testing only" if is_mock else None,
+    overrides: dict[str, object] = {
         "workload_apply_disabled": True,
         "workload_apply_disabled_reason": reason,
     }
+    if is_mock:
+        overrides.update(
+            {
+                "is_mock": True,
+                "target_source": "local_mock_infra",
+                "mock_label": "Mock target — workflow testing only",
+            }
+        )
+    return overrides
 
 
 def runtime_target_snapshot(target: DeploymentTarget) -> dict:

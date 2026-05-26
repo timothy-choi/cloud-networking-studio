@@ -320,7 +320,12 @@ func executeAnsible(ctx context.Context, req model.InfraExecutionRequest, start 
 			resp.Error = &msg
 			return resp
 		}
-		out, err := runCmd(ctx, workdir, ansiblePath, "-i", inventoryPath, pbPath)
+		ansibleEnv := append([]string{}, os.Environ()...)
+		ansibleEnv = append(ansibleEnv, "ANSIBLE_HOST_KEY_CHECKING=False")
+		for k, v := range req.AnsibleEnv {
+			ansibleEnv = append(ansibleEnv, fmt.Sprintf("%s=%s", k, v))
+		}
+		out, err := runCmdEnv(ctx, workdir, ansibleEnv, ansiblePath, "-i", inventoryPath, pbPath)
 		log.WriteString(fmt.Sprintf("[infra] playbook %s\n%s\n", filepath.Base(pbPath), out))
 		if err != nil {
 			msg := fmt.Sprintf("ansible-playbook failed: %s", filepath.Base(pbPath))

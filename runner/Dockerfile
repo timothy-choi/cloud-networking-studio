@@ -9,7 +9,7 @@ RUN CGO_ENABLED=0 go build -ldflags "-X github.com/timothy-choi/cloud-networking
 FROM debian:bookworm-slim
 ARG TARGETARCH
 ARG TERRAFORM_VERSION=1.9.8
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget unzip ansible \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget unzip ansible openssh-client \
   && rm -rf /var/lib/apt/lists/* \
   && case "${TARGETARCH}" in amd64) TF_ARCH=amd64 ;; arm64) TF_ARCH=arm64 ;; *) TF_ARCH=amd64 ;; esac \
   && wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TF_ARCH}.zip" -O /tmp/terraform.zip \

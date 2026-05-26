@@ -52,6 +52,7 @@ services:
       CNS_ANSIBLE_PLAYBOOKS_ROOT: /opt/cns/ansible_playbooks
       CNS_INFRA_WORKSPACES_ROOT: /opt/cns/infra-workspaces
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key}
       CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key.pub}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

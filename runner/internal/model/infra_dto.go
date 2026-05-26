@@ -19,6 +19,7 @@ type InfraExecutionRequest struct {
 	Inventory     map[string]any    `json:"inventory,omitempty"`
 	InventoryINI  string            `json:"inventory_ini,omitempty"`
 	PlaybookPaths []string          `json:"playbook_paths,omitempty"`
+	AnsibleEnv    map[string]string `json:"ansible_env,omitempty"`
 	DeploymentID  string            `json:"deployment_id,omitempty"`
 	TopologyID    string            `json:"topology_id,omitempty"`
 }

@@ -14,10 +14,44 @@ from tests.test_infrastructure_deployments_57e import (
     _create_gcp_deployment,
     _gcp_credentials,
     _install_runner,
+    _patch_gcp_ssh_gates,
     _plan_gcp,
     _project_and_topology,
     _register,
 )
+
+
+@pytest.fixture(autouse=True)
+def _stub_gcp_ssh_gates(monkeypatch):
+    _patch_gcp_ssh_gates(monkeypatch)
+
+
+def test_configuration_failed_when_ssh_not_ready(client_strict, monkeypatch, tmp_path):
+    _gcp_credentials(monkeypatch, tmp_path)
+    _install_runner(monkeypatch)
+    h = _register(client_strict, prefix="sshwait")
+    _, topo_id = _project_and_topology(client_strict, h)
+    dep_id = _create_gcp_deployment(client_strict, h, topo_id)
+    _plan_gcp(client_strict, h, dep_id)
+
+    def _fail_readiness(deployment, **kwargs):
+        raise ValueError("SSH readiness timed out after 300s")
+
+    monkeypatch.setattr(
+        "app.services.infrastructure_deployment_service.ssh_readiness_svc.wait_for_ssh_ready",
+        _fail_readiness,
+    )
+
+    confirm = client_strict.post(
+        f"/infrastructure-deployments/{dep_id}/confirm",
+        headers=h,
+        json={"confirm": True, "confirmation_text": "APPLY"},
+    )
+    assert confirm.status_code == 200, confirm.text
+    body = confirm.json()
+    assert body["status"] == "configuration_failed"
+    assert "SSH readiness timed out" in (body.get("error_message") or "")
+    assert any(ev["type"] == "ssh_readiness_failed" for ev in body["events_json"])
 
 
 def test_configuration_failed_when_ansible_fails(client_strict, monkeypatch, tmp_path):

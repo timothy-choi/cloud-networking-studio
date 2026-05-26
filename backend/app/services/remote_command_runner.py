@@ -26,6 +26,7 @@ class RemoteHostConnection:
     user: str
     port: int
     key_path: str
+    known_hosts_file: str | None = None
 
 
 class RemoteCommandRunner(Protocol):
@@ -51,7 +52,7 @@ class SubprocessRemoteCommandRunner:
     """Run ssh/scp via subprocess (production path)."""
 
     def _ssh_base(self, conn: RemoteHostConnection) -> list[str]:
-        return [
+        opts = [
             "ssh",
             "-i",
             conn.key_path,
@@ -60,11 +61,21 @@ class SubprocessRemoteCommandRunner:
             "-o",
             "BatchMode=yes",
             "-o",
-            "StrictHostKeyChecking=accept-new",
-            "-o",
             "ConnectTimeout=15",
-            f"{conn.user}@{conn.host}",
         ]
+        if conn.known_hosts_file:
+            opts.extend(
+                [
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    "-o",
+                    f"UserKnownHostsFile={conn.known_hosts_file}",
+                ]
+            )
+        else:
+            opts.extend(["-o", "StrictHostKeyChecking=accept-new"])
+        opts.append(f"{conn.user}@{conn.host}")
+        return opts
 
     def run_ssh(
         self,
@@ -107,9 +118,18 @@ class SubprocessRemoteCommandRunner:
             str(conn.port),
             "-o",
             "BatchMode=yes",
-            "-o",
-            "StrictHostKeyChecking=accept-new",
         ]
+        if conn.known_hosts_file:
+            scp_base.extend(
+                [
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    "-o",
+                    f"UserKnownHostsFile={conn.known_hosts_file}",
+                ]
+            )
+        else:
+            scp_base.extend(["-o", "StrictHostKeyChecking=accept-new"])
         outputs: list[str] = []
         errors: list[str] = []
         for local_path, remote_name in local_paths:

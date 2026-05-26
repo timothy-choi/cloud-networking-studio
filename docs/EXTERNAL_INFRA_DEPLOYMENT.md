@@ -21,11 +21,13 @@ flowchart LR
 2. **Validate** → Terraform init/validate/fmt
 3. **Plan** → Terraform plan (stored in persistent workspace)
 4. **Confirm apply** (typed `APPLY`) → Terraform apply from stored plan
-5. **Configure** → Ansible installs Docker, creates `/opt/cns-external-deployments`
-6. **Register** → CNS creates linked `remote_docker` runtime target
-7. **External deploy** → Validate/plan/apply topology to generated target
-8. **Destroy workload** → External deployment destroy (remote `docker compose down`)
-9. **Destroy infra** (typed `DESTROY`) → Terraform destroy + deactivate target
+5. **SSH readiness wait** → TCP/22 + SSH auth probe (up to 5 minutes, logged)
+6. **Configure** → Ansible installs Docker, creates `/opt/cns-external-deployments`
+7. **Verify Docker** → `docker --version` and `docker compose version` over SSH
+8. **Register** → CNS creates linked `remote_docker` runtime target
+9. **External deploy** → Validate/plan/apply topology to generated target
+10. **Destroy workload** → External deployment destroy (remote `docker compose down`)
+11. **Destroy infra** (typed `DESTROY`) → Terraform destroy + deactivate target
 
 ## Required GCP setup
 
@@ -123,6 +125,8 @@ Destroy is **idempotent**: repeated destroy returns `destroyed` without 500.
 | `network ... not found` | Invalid `network_name` | Use `default` or existing VPC |
 | Plan stale | Variables changed after plan | Re-run Plan |
 | Partial apply / `configuration_failed` | SSH or Ansible issue after VM created | Retry configuration or Destroy infra |
+| SSH connection refused after apply | VM still booting; port 22 not open yet | CNS waits up to 5 minutes; use **Retry configuration** if timeout |
+| Host key verification failed | Ephemeral GCP VM IP changed | CNS uses per-deployment known_hosts (`/tmp/cns-known-hosts-<id>`) with StrictHostKeyChecking=no |
 | Runner 422 on apply | Missing stored `tfplan` | Ensure `/opt/cns/infra-workspaces` mounted on runner |
 
 ## Cleanup

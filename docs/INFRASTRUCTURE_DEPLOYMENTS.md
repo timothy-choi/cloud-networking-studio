@@ -272,5 +272,6 @@ See `docs/ROADMAP.md`.
 
 ## Related docs
 
+- [EXTERNAL_INFRA_DEPLOYMENT.md](./EXTERNAL_INFRA_DEPLOYMENT.md) — GCP release candidate smoke flow (57F)
 - [EXTERNAL_DEPLOYMENTS.md](./EXTERNAL_DEPLOYMENTS.md) — remote_docker validate/plan/apply
 - [STAGING_DEPLOYMENT.md](./STAGING_DEPLOYMENT.md) — platform hosting (separate from user infra stacks)

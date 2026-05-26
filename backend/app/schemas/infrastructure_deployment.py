@@ -17,6 +17,8 @@ INFRA_DEPLOYMENT_STATUSES = frozenset(
         "applying",
         "configuring",
         "succeeded",
+        "configuration_failed",
+        "registration_failed",
         "failed",
         "destroying",
         "destroyed",

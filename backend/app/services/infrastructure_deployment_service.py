@@ -98,6 +98,175 @@ def _require_real_cloud_ready(deployment: InfrastructureDeployment) -> None:
         resolve_remote_docker_ssh_public_key()
 
 
+POST_APPLY_DESTROYABLE_STATUSES = frozenset(
+    {"succeeded", "configuration_failed", "registration_failed", "failed"}
+)
+
+RETRY_CONFIGURATION_STATUSES = frozenset({"configuration_failed", "registration_failed"})
+
+
+def _has_been_applied(deployment: InfrastructureDeployment) -> bool:
+    meta = deployment.state_metadata_json or {}
+    return bool(meta.get("applied_at") or meta.get("apply_execution_id"))
+
+
+def _can_destroy_deployment(deployment: InfrastructureDeployment) -> bool:
+    if deployment.status in {"destroyed", "destroying"}:
+        return True
+    if is_mock_infrastructure_deployment(deployment):
+        return deployment.status == "succeeded"
+    if deployment.status in POST_APPLY_DESTROYABLE_STATUSES:
+        return _has_been_applied(deployment)
+    return False
+
+
+def _run_host_configuration(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+) -> tuple[str, str | None]:
+    """Run Ansible inventory + configure. Returns (completed|failed, error_message)."""
+    try:
+        inv_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="inventory")
+        _, _, inv_outputs = ansible_svc.execute_inventory(db, execution=inv_exec, deployment=deployment)
+        deployment.inventory_json = inv_outputs.get("inventory") or ansible_svc.generate_inventory(deployment)
+
+        deployment.status = "configuring"
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "configure_started",
+            message="Ansible configuration started",
+        )
+        db.flush()
+
+        ansible_started = time.monotonic()
+        ansible_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="playbook")
+        ansible_svc.execute_configure(db, execution=ansible_exec, deployment=deployment)
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "configure_completed",
+            message="Host configuration completed",
+        )
+        deployment.metrics_json = record_metric(
+            deployment.metrics_json,
+            "ansible_duration_ms",
+            int((time.monotonic() - ansible_started) * 1000),
+        )
+        return "completed", None
+    except ValueError as exc:
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "configure_failed",
+            message=str(exc),
+        )
+        return "failed", str(exc)
+
+
+def _registration_failure_reason(deployment: InfrastructureDeployment) -> str:
+    for ev in reversed(deployment.events_json or []):
+        ev_type = ev.get("type")
+        if ev_type in {"runtime_target_creation_skipped", "runtime_target_creation_failed"}:
+            return str(ev.get("message") or "Runtime target registration failed.")
+    return "Runtime target registration failed."
+
+
+def _finalize_after_configuration(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+    actor: User,
+    configuration_status: str,
+    configuration_error: str | None,
+) -> None:
+    if configuration_status != "completed":
+        deployment.status = "configuration_failed"
+        deployment.error_message = configuration_error or "Host configuration failed."
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "recovery_hint",
+            message="Retry configuration or destroy infrastructure to cleanup cloud resources.",
+        )
+        db.flush()
+        return
+
+    targets = _register_runtime_targets(db, deployment=deployment, actor=actor)
+    if not targets and not is_mock_infrastructure_deployment(deployment):
+        reason = _registration_failure_reason(deployment)
+        deployment.status = "registration_failed"
+        deployment.error_message = reason
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "registration_failed",
+            message=reason,
+        )
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "recovery_hint",
+            message="Retry configuration to re-register runtime target, or destroy infrastructure.",
+        )
+        db.flush()
+        return
+
+    deployment.status = "succeeded"
+    deployment.error_message = None
+    deployment.events_json = append_event(
+        deployment.events_json,
+        "runtime_ready",
+        message=f"Registered {len(targets)} remote_docker target(s)",
+        metadata={"targets": targets, "configuration_status": configuration_status},
+    )
+    deployment.metrics_json = increment_counter(deployment.metrics_json, "success_count")
+    db.flush()
+
+
+def retry_configuration(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+    actor: User,
+) -> InfrastructureDeployment:
+    if deployment.status not in RETRY_CONFIGURATION_STATUSES:
+        raise InfraInvalidStateError(
+            f"Retry configuration requires configuration_failed or registration_failed (current: {deployment.status})"
+        )
+    if not _has_been_applied(deployment):
+        raise ValueError("Cannot retry configuration before Terraform apply completed.")
+
+    _require_real_cloud_ready(deployment)
+    deployment.events_json = append_event(
+        deployment.events_json,
+        "configure_retry_started",
+        message="Retrying host configuration",
+    )
+    db.flush()
+
+    try:
+        configuration_status, configuration_error = _run_host_configuration(db, deployment=deployment)
+        _finalize_after_configuration(
+            db,
+            deployment=deployment,
+            actor=actor,
+            configuration_status=configuration_status,
+            configuration_error=configuration_error,
+        )
+    except ValueError as exc:
+        deployment.status = "configuration_failed"
+        deployment.error_message = str(exc)
+        deployment.events_json = append_event(deployment.events_json, "configure_failed", message=str(exc))
+
+    db.flush()
+    record_audit(
+        db,
+        action="infrastructure_deployment.retry_configure",
+        resource_type="infrastructure_deployment",
+        resource_id=deployment.id,
+        project_id=deployment.project_id,
+        actor_user_id=actor.id,
+        status=deployment.status,
+    )
+    return deployment
+
+
 def create_deployment(
     db: Session,
     *,
@@ -591,53 +760,14 @@ def _confirm_and_apply_real(
         int((time.monotonic() - started) * 1000),
     )
 
-    configuration_status = "pending"
-    try:
-        inv_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="inventory")
-        _, _, inv_outputs = ansible_svc.execute_inventory(db, execution=inv_exec, deployment=deployment)
-        deployment.inventory_json = inv_outputs.get("inventory") or ansible_svc.generate_inventory(deployment)
-
-        deployment.status = "configuring"
-        deployment.events_json = append_event(
-            deployment.events_json,
-            "configure_started",
-            message="Ansible configuration started",
-        )
-        db.flush()
-
-        ansible_started = time.monotonic()
-        ansible_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="playbook")
-        ansible_svc.execute_configure(db, execution=ansible_exec, deployment=deployment)
-        deployment.events_json = append_event(
-            deployment.events_json,
-            "configure_completed",
-            message="Host configuration completed",
-        )
-        configuration_status = "completed"
-        deployment.metrics_json = record_metric(
-            deployment.metrics_json,
-            "ansible_duration_ms",
-            int((time.monotonic() - ansible_started) * 1000),
-        )
-    except ValueError as exc:
-        configuration_status = "pending"
-        deployment.events_json = append_event(
-            deployment.events_json,
-            "configure_completed",
-            message=f"Configuration pending: {exc}",
-            metadata={"configuration_pending": True},
-        )
-
-    targets = _register_runtime_targets(db, deployment=deployment, actor=actor)
-    deployment.status = "succeeded"
-    deployment.events_json = append_event(
-        deployment.events_json,
-        "runtime_ready",
-        message=f"Registered {len(targets)} remote_docker target(s)",
-        metadata={"targets": targets, "configuration_status": configuration_status},
+    configuration_status, configuration_error = _run_host_configuration(db, deployment=deployment)
+    _finalize_after_configuration(
+        db,
+        deployment=deployment,
+        actor=actor,
+        configuration_status=configuration_status,
+        configuration_error=configuration_error,
     )
-    deployment.metrics_json = increment_counter(deployment.metrics_json, "success_count")
-    deployment.error_message = None
 
 
 def destroy_deployment(
@@ -650,13 +780,14 @@ def destroy_deployment(
     if deployment.status in {"destroyed", "destroying"}:
         return deployment
 
+    if not _can_destroy_deployment(deployment):
+        raise PlanOnlyDestroyDisabledError()
+
     if is_gcp_docker_vm_apply_eligible(deployment):
-        if deployment.status != "succeeded":
-            raise PlanOnlyDestroyDisabledError()
         if (confirmation_text or "").strip() != "DESTROY":
             raise ValueError("Typed confirmation required: enter DESTROY to confirm destroy.")
         _require_real_cloud_ready(deployment)
-    elif is_real_cloud_provider(deployment.provider) and deployment.status != "succeeded":
+    elif is_real_cloud_provider(deployment.provider):
         raise PlanOnlyDestroyDisabledError()
 
     deployment.status = "destroying"

@@ -8,6 +8,7 @@ import {
   listInfrastructureExecutions,
   listInfrastructureTemplates,
   planInfrastructureDeployment,
+  retryInfrastructureConfiguration,
   validateInfrastructureDeployment,
   type InfrastructureDeployment,
   type InfrastructureExecution,
@@ -21,6 +22,7 @@ import {
   canShowApplyAction,
   canShowDestroyAction,
   canShowPlanAction,
+  canShowRetryConfigurationAction,
   canShowValidateAction,
   credentialsRefHelpText,
   defaultInfrastructureFormValues,
@@ -40,7 +42,8 @@ import {
 
 function statusTone(status: string): string {
   if (status === 'succeeded') return 'text-emerald-700 dark:text-emerald-400';
-  if (status === 'failed') return 'text-red-700 dark:text-red-400';
+  if (status === 'failed' || status === 'configuration_failed') return 'text-red-700 dark:text-red-400';
+  if (status === 'registration_failed') return 'text-amber-700 dark:text-amber-400';
   if (status === 'awaiting_confirmation') return 'text-amber-700 dark:text-amber-400';
   if (status === 'destroyed') return 'text-cns-muted';
   return 'text-cns-muted';
@@ -243,6 +246,26 @@ export function InfrastructureDeploymentsPanel({
     }
   }
 
+  async function handleRetryConfigure() {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await retryInfrastructureConfiguration(selected.id);
+      setDeployments((current) => current.map((d) => (d.id === updated.id ? updated : d)));
+      await refreshExecutions(updated.id);
+      if (updated.status === 'succeeded') {
+        onRuntimeTargetsChanged?.();
+      }
+    } catch (err) {
+      setError(err);
+      await refreshDeployments(selected.id);
+      await refreshExecutions(selected.id);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDestroy() {
     if (!selected) return;
     const needsTypedConfirm = isGcpDockerVmDeployment(selected.template_id, selected.provider);
@@ -259,6 +282,9 @@ export function InfrastructureDeploymentsPanel({
       setDeployments((current) => current.map((d) => (d.id === updated.id ? updated : d)));
       setShowDestroyDialog(false);
       setDestroyConfirmText('');
+      if (updated.status === 'destroyed') {
+        setError(null);
+      }
     } catch (err) {
       setError(err);
     } finally {
@@ -282,14 +308,25 @@ export function InfrastructureDeploymentsPanel({
     ? applyDisabledReason(selected.status, selected.template_id, selected.provider, plan)
     : null;
   const destroyDisabled = selected
-    ? destroyDisabledReason(selected.status, selected.provider, selected.template_id)
+    ? destroyDisabledReason(
+        selected.status,
+        selected.template_id,
+        selected.provider,
+        selected.state_metadata_json,
+      )
     : null;
   const showApplyButton = selected
     ? canShowApplyAction(selected.status, selected.template_id, selected.provider, plan)
     : false;
   const showDestroyButton = selected
-    ? canShowDestroyAction(selected.status, selected.provider, selected.template_id)
+    ? canShowDestroyAction(
+        selected.status,
+        selected.template_id,
+        selected.provider,
+        selected.state_metadata_json,
+      )
     : false;
+  const showRetryConfigureButton = selected ? canShowRetryConfigurationAction(selected.status) : false;
   const openCidrWarning =
     isGcpDeployment && hasOpenInternetCidr(selected?.variables_json as Record<string, unknown> | undefined);
   const showGcpFields = isGcpDockerVmForm(templateId, provider);
@@ -535,6 +572,12 @@ export function InfrastructureDeploymentsPanel({
                 {selected.error_message ? (
                   <p className="mt-2 text-xs text-red-600">{selected.error_message}</p>
                 ) : null}
+                {showRetryConfigureButton ? (
+                  <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
+                    Host configuration or runtime target registration did not complete. Retry configuration or
+                    destroy infrastructure to cleanup cloud resources.
+                  </p>
+                ) : null}
                 {plan ? (
                   <div className="mt-2 space-y-1 text-xs">
                     <div>Provider: {String(plan.provider ?? selected.provider)}</div>
@@ -695,6 +738,16 @@ export function InfrastructureDeploymentsPanel({
                     <span className="rounded border border-amber-500/50 px-3 py-1 text-xs text-amber-700 dark:text-amber-300">
                       {applyDisabled}
                     </span>
+                  ) : null}
+                  {showRetryConfigureButton ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void handleRetryConfigure()}
+                      className="rounded bg-blue-700 px-3 py-1 text-xs text-white disabled:opacity-50"
+                    >
+                      Retry configuration
+                    </button>
                   ) : null}
                   {showDestroyButton ? (
                     <button

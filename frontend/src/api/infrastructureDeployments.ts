@@ -3,6 +3,7 @@ import { apiFetch } from './client';
 export type InfrastructureDeploymentStatus =
   | 'pending'
   | 'validating'
+  | 'validated'
   | 'planning'
   | 'awaiting_confirmation'
   | 'applying'
@@ -37,6 +38,7 @@ export interface InfrastructureDeployment {
   metrics_json: Record<string, unknown>;
   runtime_targets_json: Array<Record<string, unknown>>;
   error_message: string | null;
+  credentials_ref: string | null;
   confirmed_at: string | null;
   created_at: string;
   updated_at: string;
@@ -72,7 +74,13 @@ export async function listInfrastructureDeployments(topologyId: string): Promise
 
 export async function createInfrastructureDeployment(
   topologyId: string,
-  body: { name: string; template_id: string; provider: string; variables?: Record<string, unknown> },
+  body: {
+    name: string;
+    template_id: string;
+    provider: string;
+    variables?: Record<string, unknown>;
+    credentials_ref?: string;
+  },
 ): Promise<InfrastructureDeployment> {
   return apiFetch<InfrastructureDeployment>(`/topologies/${topologyId}/infrastructure-deployments`, {
     method: 'POST',

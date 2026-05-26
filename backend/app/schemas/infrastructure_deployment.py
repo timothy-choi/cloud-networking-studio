@@ -11,6 +11,7 @@ INFRA_DEPLOYMENT_STATUSES = frozenset(
     {
         "pending",
         "validating",
+        "validated",
         "planning",
         "awaiting_confirmation",
         "applying",
@@ -31,6 +32,7 @@ class InfrastructureDeploymentCreate(BaseModel):
     template_id: str
     provider: str = "local"
     variables: dict[str, Any] = Field(default_factory=dict)
+    credentials_ref: str | None = Field(default=None, max_length=255)
 
 
 class InfrastructureDeploymentResponse(BaseModel):
@@ -51,6 +53,7 @@ class InfrastructureDeploymentResponse(BaseModel):
     metrics_json: dict[str, Any]
     runtime_targets_json: list[dict[str, Any]]
     error_message: str | None
+    credentials_ref: str | None
     confirmed_at: datetime | None
     confirmed_by_user_id: str | None
     created_by_user_id: str | None

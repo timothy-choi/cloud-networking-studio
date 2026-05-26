@@ -22,6 +22,12 @@
       "description": "Generic Docker-ready VM (provider-agnostic module composition).",
       "supported_providers": ["local", "mock", "gcp", "aws"],
       "terraform_dir": "docker-vm",
+      "provider_terraform_dirs": {
+        "local": "local-mock",
+        "mock": "local-mock",
+        "gcp": "terraform/gcp/docker_vm",
+        "aws": "terraform/aws/docker_vm"
+      },
       "ansible_playbooks": ["install-docker", "install-docker-compose", "cns-runtime-dirs"]
     }
   },

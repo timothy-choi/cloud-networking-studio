@@ -46,6 +46,7 @@ def _to_deployment(row) -> InfrastructureDeploymentResponse:
         metrics_json=row.metrics_json or {},
         runtime_targets_json=row.runtime_targets_json or [],
         error_message=row.error_message,
+        credentials_ref=row.credentials_ref,
         confirmed_at=row.confirmed_at,
         confirmed_by_user_id=str(row.confirmed_by_user_id) if row.confirmed_by_user_id else None,
         created_by_user_id=str(row.created_by_user_id) if row.created_by_user_id else None,
@@ -133,6 +134,7 @@ def create_infrastructure_deployment(
             template_id=body.template_id,
             provider=body.provider,
             variables=body.variables,
+            credentials_ref=body.credentials_ref,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -236,6 +238,8 @@ def confirm_infrastructure_deployment(
         )
     try:
         deployment = infra_svc.confirm_and_apply(db, deployment=deployment, actor=user)
+    except infra_svc.RealCloudApplyDisabledError as exc:
+        raise HTTPException(status_code=409, detail=exc.message) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
@@ -256,6 +260,8 @@ def destroy_infrastructure_deployment(
     require_topology_editor(db, user, deployment.topology_id)
     try:
         deployment = infra_svc.destroy_deployment(db, deployment=deployment, actor=user)
+    except infra_svc.PlanOnlyDestroyDisabledError as exc:
+        raise HTTPException(status_code=409, detail=exc.message) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()

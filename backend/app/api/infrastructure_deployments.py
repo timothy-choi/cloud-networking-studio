@@ -25,6 +25,7 @@ from app.services.access_control import get_topology_for_user, require_topology_
 from app.services import infrastructure_deployment_service as infra_svc
 from app.services.infra_apply_safety import InfraApplySafetyError, InfraInvalidStateError
 from app.services.infra_template_registry import list_templates
+from app.runtime.infra_runner_client import InfraRunnerClientError
 
 router = APIRouter(tags=["infrastructure-deployments"])
 
@@ -255,10 +256,24 @@ def confirm_infrastructure_deployment(
         ) from exc
     except infra_svc.RealCloudApplyDisabledError as exc:
         raise HTTPException(status_code=409, detail=exc.message) from exc
+    except InfraRunnerClientError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"message": exc.message, "runner_status": exc.status_code},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     db.refresh(deployment)
+    if deployment.status == "failed":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": deployment.error_message or "Infrastructure apply failed",
+                "status": deployment.status,
+                "deployment_id": str(deployment.id),
+            },
+        )
     return _to_deployment(deployment)
 
 

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.infrastructure_deployment import InfrastructureDeployment
 from app.models.infrastructure_execution import InfrastructureExecution
-from app.runtime.infra_runner_client import get_infra_runner_client
+from app.runtime.infra_runner_client import InfraRunnerClientError, get_infra_runner_client
 from app.services.infra_security import redact_logs
 from app.services.infra_template_registry import assert_playbook_on_disk, get_playbook, get_template
 
@@ -91,11 +91,19 @@ def _run_playbooks(
         "topology_id": str(deployment.topology_id),
     }
     started = time.monotonic()
-    result = get_infra_runner_client().run_execution(payload)
+    try:
+        result = get_infra_runner_client().run_execution(payload)
+    except InfraRunnerClientError as exc:
+        execution.finished_at = datetime.now(UTC)
+        execution.status = "failed"
+        err_msg = redact_logs(exc.detail or exc.message)
+        execution.logs = err_msg
+        db.flush()
+        raise ValueError(err_msg) from exc
     duration_ms = int((time.monotonic() - started) * 1000)
 
     execution.runner_execution_id = result.execution_id
-    execution.duration_ms = duration_ms
+    execution.duration_ms = duration_ms or result.duration_ms
     execution.finished_at = datetime.now(UTC)
     execution.logs = redact_logs(result.logs)
     execution.artifact_refs = list(result.artifacts)
@@ -103,7 +111,8 @@ def _run_playbooks(
     db.flush()
 
     if execution.status != "succeeded":
-        raise ValueError(result.error or f"Ansible {mode} failed")
+        err = result.error or f"Ansible {mode} failed"
+        raise ValueError(redact_logs(err))
 
     outputs = dict(result.outputs or {})
     outputs["inventory"] = inventory

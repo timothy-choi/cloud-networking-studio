@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.infrastructure_deployment import InfrastructureDeployment
 from app.models.infrastructure_execution import InfrastructureExecution
-from app.runtime.infra_runner_client import get_infra_runner_client
+from app.runtime.infra_runner_client import InfraRunnerClientError, get_infra_runner_client
 from app.services.infra_apply_safety import is_gcp_docker_vm_apply_eligible
 from app.services.infra_security import is_real_cloud_provider, redact_logs
 from app.services.infra_template_registry import assert_template_on_disk, get_template, resolve_terraform_dir
@@ -105,11 +105,19 @@ def _run(
         payload_for_log = payload
 
     started = time.monotonic()
-    result = get_infra_runner_client().run_execution(payload)
+    try:
+        result = get_infra_runner_client().run_execution(payload)
+    except InfraRunnerClientError as exc:
+        execution.finished_at = datetime.now(UTC)
+        execution.status = "failed"
+        err_msg = redact_logs(exc.detail or exc.message)
+        execution.logs = err_msg
+        db.flush()
+        raise ValueError(err_msg) from exc
     duration_ms = int((time.monotonic() - started) * 1000)
 
     execution.runner_execution_id = result.execution_id
-    execution.duration_ms = duration_ms
+    execution.duration_ms = duration_ms or result.duration_ms
     execution.finished_at = datetime.now(UTC)
     execution.logs = redact_logs(result.logs)
     execution.artifact_refs = list(result.artifacts)
@@ -117,7 +125,8 @@ def _run(
     db.flush()
 
     if execution.status != "succeeded":
-        err = result.error or f"Terraform {mode} failed"
+        err = result.error or (result.logs.strip().splitlines()[-1] if result.logs.strip() else None)
+        err = err or f"Terraform {mode} failed"
         if payload.get("credentials_env"):
             err = redact_logs(err)
         raise ValueError(err)

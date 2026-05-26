@@ -41,6 +41,17 @@ variable "ssh_user" {
   default     = "ubuntu"
 }
 
+variable "ssh_public_key" {
+  type        = string
+  description = "OpenSSH public key installed for ssh_user (injected by CNS from server env)."
+  sensitive   = true
+
+  validation {
+    condition     = length(trimspace(var.ssh_public_key)) > 0
+    error_message = "ssh_public_key is required for CNS-managed SSH access."
+  }
+}
+
 variable "allowed_ssh_cidr" {
   type        = string
   description = "CIDR allowed for SSH (tcp/22)."

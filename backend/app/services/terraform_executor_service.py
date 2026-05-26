@@ -16,6 +16,7 @@ from app.runtime.infra_runner_client import InfraRunnerClientError, get_infra_ru
 from app.services.infra_apply_safety import is_gcp_docker_vm_apply_eligible
 from app.services.infra_security import is_real_cloud_provider, redact_logs
 from app.services.infra_template_registry import assert_template_on_disk, get_template, resolve_terraform_dir
+from app.services.remote_ssh_public_key_service import resolve_remote_docker_ssh_public_key
 from app.services.terraform_credentials_service import (
     redact_credentials_env,
     resolve_terraform_credentials_env,
@@ -55,6 +56,7 @@ def _base_payload(
             {
                 **(deployment.variables_json or {}),
                 "deployment_name": deployment.name,
+                **_gcp_docker_vm_extra_variables(deployment),
             }
         ),
         "deployment_id": str(deployment.id),
@@ -74,6 +76,12 @@ def _base_payload(
         payload["credentials_ref"] = (deployment.credentials_ref or "").strip()
 
     return payload
+
+
+def _gcp_docker_vm_extra_variables(deployment: InfrastructureDeployment) -> dict[str, str]:
+    if not is_gcp_docker_vm_apply_eligible(deployment):
+        return {}
+    return {"ssh_public_key": resolve_remote_docker_ssh_public_key()}
 
 
 def _stringify_variables(raw: dict) -> dict[str, str]:
@@ -100,7 +108,19 @@ def _run(
     payload = _base_payload(execution=execution, deployment=deployment, mode=mode)
     payload["mode"] = mode
     if payload.get("credentials_env"):
-        payload_for_log = {**payload, "credentials_env": redact_credentials_env(payload["credentials_env"])}
+        payload_for_log = {
+            **payload,
+            "credentials_env": redact_credentials_env(payload["credentials_env"]),
+            "variables": {
+                **payload.get("variables", {}),
+                "ssh_public_key": "[redacted]",
+            },
+        }
+    elif "ssh_public_key" in payload.get("variables", {}):
+        payload_for_log = {
+            **payload,
+            "variables": {**payload["variables"], "ssh_public_key": "[redacted]"},
+        }
     else:
         payload_for_log = payload
 

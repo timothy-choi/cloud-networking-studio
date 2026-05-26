@@ -68,6 +68,9 @@ def test_gcp_apply_payload_fields_match_runner_schema(monkeypatch, tmp_path):
     cred_file = tmp_path / "gcp-sa.json"
     cred_file.write_text("{}")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(cred_file))
+    pub = tmp_path / "gcp-remote-docker-key.pub"
+    pub.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGtestkey cns-remote-docker\n")
+    monkeypatch.setenv("CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH", str(pub))
 
     dep_id = uuid.uuid4()
     deployment = SimpleNamespace(
@@ -107,6 +110,8 @@ def test_gcp_apply_payload_fields_match_runner_schema(monkeypatch, tmp_path):
     assert payload["preserve_workspace"] is True
     assert payload["apply_from_plan"] is True
     assert payload["credentials_ref"] == "env:GOOGLE_APPLICATION_CREDENTIALS"
+    assert "ssh_public_key" in payload["variables"]
+    assert payload["variables"]["ssh_public_key"].startswith("ssh-ed25519 ")
     assert "GOOGLE_APPLICATION_CREDENTIALS" in payload["credentials_env"]
 
 

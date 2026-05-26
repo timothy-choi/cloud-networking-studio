@@ -94,6 +94,9 @@ def _gcp_credentials(monkeypatch, tmp_path):
     cred_file = tmp_path / "gcp-sa.json"
     cred_file.write_text(json.dumps({"type": "service_account", "project_id": "my-gcp-project"}))
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(cred_file))
+    pub = tmp_path / "gcp-remote-docker-key.pub"
+    pub.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGtestkey cns-remote-docker\n")
+    monkeypatch.setenv("CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH", str(pub))
 
 
 def test_create_gcp_docker_vm_deployment(client_strict, monkeypatch, tmp_path):

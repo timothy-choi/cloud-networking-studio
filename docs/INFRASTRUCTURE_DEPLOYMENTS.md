@@ -63,7 +63,26 @@ Apply is **rejected** when:
 | `env:GOOGLE_APPLICATION_CREDENTIALS` | path to service account JSON | mount read-only in backend/runner |
 | `env:GOOGLE_CREDENTIALS_JSON` | inline JSON | validated but never logged |
 
-SSH for post-apply configuration uses `env:CNS_REMOTE_DOCKER_SSH_KEY_PATH` (never logged).
+SSH for post-apply configuration and runtime targets uses:
+
+| Purpose | Env var | Default path |
+|---------|---------|--------------|
+| Private key (runtime target `credentials_ref`) | `CNS_REMOTE_DOCKER_SSH_KEY_PATH` | `/opt/cns/secrets/gcp-remote-docker-key` |
+| Public key (Terraform instance metadata) | `CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH` | `/opt/cns/secrets/gcp-remote-docker-key.pub` |
+
+CNS-created GCP Docker VMs automatically receive the public key via instance metadata (`ssh-keys`) with **OS Login disabled** (`enable-oslogin=FALSE`). The matching private key path is never stored in the database.
+
+Registered runtime targets use:
+
+- `credentials_ref=env:CNS_REMOTE_DOCKER_SSH_KEY_PATH`
+- `ssh_user` from deployment variables (default `ubuntu`)
+- `host` = Terraform `public_ip` output
+
+If the public key file is missing or unreadable, validate/plan/apply are blocked with:
+
+`CNS remote Docker SSH public key is not configured.`
+
+Mount `/opt/cns/secrets:/opt/cns/secrets:ro` on backend and runner; set both env vars in compose.
 
 Persistent Terraform workspaces: `/opt/cns/infra-workspaces/{deployment_id}` on the runner (mounted in production compose).
 
@@ -220,7 +239,9 @@ Destroy (GCP): `{ "confirmation_text": "DESTROY" }`
 | Apply rejected: type APPLY | missing typed confirmation | enter exactly `APPLY` in confirm request |
 | `stored terraform plan file missing` | workspace lost between plan and apply | ensure runner volume `/opt/cns/infra-workspaces` is mounted |
 | Destroy rejected | plan-only or wrong status | apply first; use typed `DESTROY` |
-| Ansible configuration pending | SSH not ready | verify VM SSH access and `CNS_REMOTE_DOCKER_SSH_KEY_PATH` |
+| Ansible configuration pending | SSH not ready | verify VM SSH access; confirm `CNS_REMOTE_DOCKER_SSH_*` key pair on server and instance metadata |
+| `CNS remote Docker SSH public key is not configured` | missing `.pub` file | set `CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH`; mount `/opt/cns/secrets` |
+| SSH permission denied on runtime target | OS Login enabled or key not in metadata | redeploy with updated Terraform template; ensure public key env is set before apply |
 
 ## Observability
 

@@ -35,6 +35,7 @@ from app.services.infra_apply_safety import (
     validate_gcp_apply_safety,
     variables_hash,
 )
+from app.services.remote_ssh_public_key_service import resolve_remote_docker_ssh_public_key
 
 
 from app.services.terraform_credentials_service import resolve_terraform_credentials_env
@@ -93,6 +94,8 @@ def _require_real_cloud_ready(deployment: InfrastructureDeployment) -> None:
     if not ref:
         raise ValueError("Terraform credentials_ref is not configured on the server.")
     resolve_terraform_credentials_env(deployment.provider, ref)
+    if is_gcp_docker_vm_apply_eligible(deployment):
+        resolve_remote_docker_ssh_public_key()
 
 
 def create_deployment(

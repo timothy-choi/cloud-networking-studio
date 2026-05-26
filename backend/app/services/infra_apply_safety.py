@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from app.models.infrastructure_deployment import InfrastructureDeployment
+from app.services.remote_ssh_public_key_service import resolve_remote_docker_ssh_public_key
 
 GCP_DOCKER_VM_APPLY_PROVIDER = "gcp"
 GCP_DOCKER_VM_APPLY_TEMPLATE = "docker-vm"
@@ -149,6 +150,15 @@ def build_apply_safety_checklist(
         bool((deployment.credentials_ref or "").strip()),
         "Terraform credentials_ref must be configured",
     )
+
+    ssh_key_ok = True
+    ssh_key_message = "CNS remote Docker SSH public key is configured"
+    try:
+        resolve_remote_docker_ssh_public_key()
+    except ValueError:
+        ssh_key_ok = False
+        ssh_key_message = "CNS remote Docker SSH public key is not configured."
+    add("ssh_public_key", ssh_key_ok, ssh_key_message)
 
     add(
         "public_ip_warning",

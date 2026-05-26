@@ -333,7 +333,6 @@ def run_plan(db: Session, *, deployment: InfrastructureDeployment, actor: User) 
         _, artifacts, outputs = tf_svc.execute_plan(db, execution=tf_plan, deployment=deployment)
         deployment.outputs_json = {**(deployment.outputs_json or {}), **outputs}
         plan_summary = next((a for a in artifacts if a.get("type") == "plan_summary"), None)
-        deployment.plan_summary_json = plan_summary
         var_hash = variables_hash(deployment.variables_json)
         deployment.state_metadata_json = {
             **(deployment.state_metadata_json or {}),
@@ -344,8 +343,13 @@ def run_plan(db: Session, *, deployment: InfrastructureDeployment, actor: User) 
             "plan_file": "tfplan",
             "variables_hash": var_hash,
         }
-
         deployment.status = "awaiting_confirmation"
+        if plan_summary and is_gcp_docker_vm_apply_eligible(deployment):
+            plan_summary = {
+                **plan_summary,
+                "safety_checklist": build_apply_safety_checklist(deployment),
+            }
+        deployment.plan_summary_json = plan_summary
         deployment.events_json = append_event(
             deployment.events_json,
             "plan_completed",

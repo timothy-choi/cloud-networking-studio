@@ -8,6 +8,7 @@ import {
   canShowApplyAction,
   canShowDestroyAction,
   canShowPlanAction,
+  canShowRetryConfigurationAction,
   canShowValidateAction,
   credentialsRefHelpText,
   destroyDisabledReason,
@@ -146,7 +147,30 @@ describe('infrastructureDeploymentForm', () => {
     expect(
       applyDisabledReason('awaiting_confirmation', 'docker-vm', 'gcp', { safety_checklist: { passed: false, items: [] } }),
     ).toContain('Safety checks failed');
-    expect(destroyDisabledReason('awaiting_confirmation', 'gcp', 'docker-vm')).toContain('not been applied');
+    expect(destroyDisabledReason('awaiting_confirmation', 'docker-vm', 'gcp', {})).toContain('not been applied');
+  });
+
+  it('shows destroy from partial failure states when apply metadata exists', () => {
+    const appliedMeta = { applied_at: '2026-01-01T00:00:00Z', apply_execution_id: 'x' };
+    expect(canShowDestroyAction('configuration_failed', 'docker-vm', 'gcp', appliedMeta)).toBe(true);
+    expect(canShowDestroyAction('registration_failed', 'docker-vm', 'gcp', appliedMeta)).toBe(true);
+    expect(canShowRetryConfigurationAction('configuration_failed')).toBe(true);
+    expect(canShowRetryConfigurationAction('registration_failed')).toBe(true);
+    expect(canShowRetryConfigurationAction('succeeded')).toBe(false);
+    expect(destroyDisabledReason('configuration_failed', 'docker-vm', 'gcp', appliedMeta)).toBeNull();
+  });
+
+  it('allows idempotent destroy from destroyed without disabled reason', () => {
+    expect(canShowDestroyAction('destroyed', 'docker-vm', 'gcp', {})).toBe(true);
+    expect(destroyDisabledReason('destroyed', 'docker-vm', 'gcp', {})).toBeNull();
+  });
+
+  it('derives configuration_failed and registration_failed display status', () => {
+    expect(deriveConfigurationStatus('configuration_failed', ['configure_failed'])).toBe('failed');
+    expect(deriveConfigurationStatus('registration_failed', ['registration_failed'])).toBe('registration_failed');
+    expect(
+      deriveTerraformStatus('configuration_failed', ['apply_completed', 'configure_failed']),
+    ).toBe('applied');
   });
 
   it('extracts safety checklist and open CIDR warning', () => {
@@ -156,9 +180,10 @@ describe('infrastructureDeploymentForm', () => {
     expect(hasOpenInternetCidr({ allowed_ssh_cidr: '203.0.113.0/24' })).toBe(false);
   });
 
-  it('shows destroy only after succeeded for GCP', () => {
-    expect(canShowDestroyAction('awaiting_confirmation', 'gcp', 'docker-vm')).toBe(false);
-    expect(canShowDestroyAction('succeeded', 'gcp', 'docker-vm')).toBe(true);
+  it('shows destroy only after apply for GCP', () => {
+    const appliedMeta = { applied_at: '2026-01-01T00:00:00Z' };
+    expect(canShowDestroyAction('awaiting_confirmation', 'docker-vm', 'gcp', {})).toBe(false);
+    expect(canShowDestroyAction('succeeded', 'docker-vm', 'gcp', appliedMeta)).toBe(true);
   });
 
   it('builds GCP docker-vm create payload', () => {

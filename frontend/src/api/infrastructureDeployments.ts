@@ -9,6 +9,8 @@ export type InfrastructureDeploymentStatus =
   | 'applying'
   | 'configuring'
   | 'succeeded'
+  | 'configuration_failed'
+  | 'registration_failed'
   | 'failed'
   | 'destroying'
   | 'destroyed';
@@ -126,6 +128,12 @@ export async function confirmInfrastructureDeployment(
       confirmation_text: body.confirmation_text,
       unsafe_testing_override: body.unsafe_testing_override ?? false,
     }),
+  });
+}
+
+export async function retryInfrastructureConfiguration(deploymentId: string): Promise<InfrastructureDeployment> {
+  return apiFetch<InfrastructureDeployment>(`/infrastructure-deployments/${deploymentId}/retry-configure`, {
+    method: 'POST',
   });
 }
 

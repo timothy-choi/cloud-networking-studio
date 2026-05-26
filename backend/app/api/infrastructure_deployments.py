@@ -278,6 +278,28 @@ def confirm_infrastructure_deployment(
 
 
 @router.post(
+    "/infrastructure-deployments/{deployment_id}/retry-configure",
+    response_model=InfrastructureDeploymentResponse,
+)
+def retry_infrastructure_configuration(
+    deployment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> InfrastructureDeploymentResponse:
+    deployment = _get_deployment_for_user(db, user, deployment_id)
+    require_topology_editor(db, user, deployment.topology_id)
+    try:
+        deployment = infra_svc.retry_configuration(db, deployment=deployment, actor=user)
+    except InfraInvalidStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.message) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(deployment)
+    return _to_deployment(deployment)
+
+
+@router.post(
     "/infrastructure-deployments/{deployment_id}/destroy",
     response_model=InfrastructureDeploymentResponse,
 )

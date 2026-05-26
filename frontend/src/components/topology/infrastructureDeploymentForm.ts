@@ -221,21 +221,58 @@ export function applyDisabledReason(
   return null;
 }
 
-export function canShowDestroyAction(status: string, provider: string, templateId: string): boolean {
-  if (isGcpDockerVmDeployment(templateId, provider)) {
+export const POST_APPLY_DESTROYABLE_STATUSES = new Set([
+  'succeeded',
+  'configuration_failed',
+  'registration_failed',
+  'failed',
+]);
+
+export function canDestroyInfrastructureDeployment(
+  status: string,
+  templateId: string,
+  provider: string,
+  stateMetadata: Record<string, unknown> | null | undefined,
+): boolean {
+  if (status === 'destroyed' || status === 'destroying') {
+    return true;
+  }
+  if (isMockInfrastructureDeployment(templateId, provider)) {
     return status === 'succeeded';
   }
-  if (isRealCloudProvider(provider)) {
-    return status === 'succeeded';
+  if (!POST_APPLY_DESTROYABLE_STATUSES.has(status)) {
+    return false;
   }
-  return status === 'succeeded';
+  const meta = stateMetadata ?? {};
+  return Boolean(meta.applied_at || meta.apply_execution_id);
 }
 
-export function destroyDisabledReason(status: string, provider: string, templateId: string): string | null {
-  if (isGcpDockerVmDeployment(templateId, provider) && status !== 'succeeded') {
+export function canShowRetryConfigurationAction(status: string): boolean {
+  return status === 'configuration_failed' || status === 'registration_failed';
+}
+
+export function canShowDestroyAction(
+  status: string,
+  templateId: string,
+  provider: string,
+  stateMetadata?: Record<string, unknown> | null,
+): boolean {
+  return canDestroyInfrastructureDeployment(status, templateId, provider, stateMetadata);
+}
+
+export function destroyDisabledReason(
+  status: string,
+  templateId: string,
+  provider: string,
+  stateMetadata?: Record<string, unknown> | null,
+): string | null {
+  if (canDestroyInfrastructureDeployment(status, templateId, provider, stateMetadata)) {
+    return null;
+  }
+  if (isGcpDockerVmDeployment(templateId, provider)) {
     return 'Nothing to destroy: deployment has not been applied.';
   }
-  if (isRealCloudProvider(provider) && status !== 'succeeded') {
+  if (isRealCloudProvider(provider)) {
     return 'Nothing to destroy: plan-only deployment.';
   }
   return null;
@@ -253,7 +290,13 @@ export function deriveTerraformStatus(
   status: string,
   eventTypes: string[],
 ): string {
-  if (eventTypes.includes('apply_completed') || status === 'configuring' || status === 'succeeded') {
+  if (
+    eventTypes.includes('apply_completed') ||
+    status === 'configuring' ||
+    status === 'succeeded' ||
+    status === 'configuration_failed' ||
+    status === 'registration_failed'
+  ) {
     return 'applied';
   }
   if (status === 'applying' || eventTypes.includes('apply_started')) {
@@ -275,6 +318,12 @@ export function deriveConfigurationStatus(
   status: string,
   eventTypes: string[],
 ): string {
+  if (status === 'configuration_failed' || eventTypes.includes('configure_failed')) {
+    return 'failed';
+  }
+  if (status === 'registration_failed' || eventTypes.includes('registration_failed')) {
+    return 'registration_failed';
+  }
   if (eventTypes.includes('runtime_ready') || status === 'succeeded') {
     return 'completed';
   }

@@ -8,8 +8,16 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.test_infrastructure_deployments_57d import _CapturingInfraRunner, _gcp_credentials, _install_runner
-from tests.test_infrastructure_deployments_57e import GCP_VARS, _create_gcp_deployment, _plan_gcp, _project_and_topology, _register
+from tests.test_infrastructure_deployments_57e import (
+    GCP_VARS,
+    _CapturingInfraRunner,
+    _create_gcp_deployment,
+    _gcp_credentials,
+    _install_runner,
+    _plan_gcp,
+    _project_and_topology,
+    _register,
+)
 
 
 def test_configuration_failed_when_ansible_fails(client_strict, monkeypatch, tmp_path):

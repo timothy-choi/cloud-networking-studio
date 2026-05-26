@@ -139,6 +139,7 @@ export function TopologyDetailPage() {
     targetId: string;
     highlight: boolean;
     fromInfra: boolean;
+    tab: 'targets' | 'jobs' | 'deployments';
   } | null>(null);
   const [targetsRefreshToken, setTargetsRefreshToken] = useState(0);
 
@@ -529,7 +530,12 @@ export function TopologyDetailPage() {
             topologyId={id}
             onUseRuntimeTarget={(targetId) => {
               setExternalDeploymentsOpen(true);
-              setExternalTargetSelection({ targetId, highlight: true, fromInfra: true });
+              setExternalTargetSelection({
+                targetId,
+                highlight: true,
+                fromInfra: true,
+                tab: 'targets',
+              });
               setTargetsRefreshToken((current) => current + 1);
               window.requestAnimationFrame(() => {
                 document.getElementById('external-deployments')?.scrollIntoView({ behavior: 'smooth' });
@@ -552,6 +558,7 @@ export function TopologyDetailPage() {
             topologyId={id}
             projectId={topology.project_id}
             readOnly={viewerMode}
+            preferredTab={externalTargetSelection?.tab ?? null}
             preselectedTargetId={externalTargetSelection?.targetId ?? null}
             highlightTargetId={
               externalTargetSelection?.highlight ? externalTargetSelection.targetId : null

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   createDeploymentTarget,
@@ -27,9 +27,16 @@ import {
   type TargetFormState,
 } from './externalDeploymentTargetForm';
 import {
+  buildInfraNavigationKey,
+  shouldApplyInfraNavigation,
+  type ExternalDeploymentsTab,
+} from './externalDeploymentNavigation';
+import {
   enabledWorkloadModes,
   isMockOrTestTarget,
   mockTargetLabel,
+  supportsRealRemoteValidation,
+  supportsSimulatedValidation,
   workloadApplyDisabledReason,
 } from './runtimeTargetHelpers';
 
@@ -154,6 +161,7 @@ export function ExternalDeploymentsPanel({
   selectedFromInfra,
   onSelectedFromInfraAck,
   refreshToken,
+  preferredTab,
 }: {
   topologyId: string;
   projectId: string;
@@ -164,8 +172,9 @@ export function ExternalDeploymentsPanel({
   selectedFromInfra?: boolean;
   onSelectedFromInfraAck?: () => void;
   refreshToken?: number;
+  preferredTab?: ExternalDeploymentsTab | null;
 }) {
-  const [tab, setTab] = useState<'targets' | 'jobs' | 'deployments'>('targets');
+  const [tab, setTab] = useState<ExternalDeploymentsTab>('targets');
   const [targets, setTargets] = useState<DeploymentTarget[]>([]);
   const [jobs, setJobs] = useState<ExternalDeploymentJob[]>([]);
   const [deployments, setDeployments] = useState<ExternalDeployment[]>([]);
@@ -180,10 +189,12 @@ export function ExternalDeploymentsPanel({
   const [selectedJob, setSelectedJob] = useState<ExternalDeploymentJob | null>(null);
   const [applyConfirmOpen, setApplyConfirmOpen] = useState(false);
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<DeploymentTarget | null>(null);
+  const lastNavigationKeyRef = useRef('');
 
   const selectedTarget = targets.find((t) => t.id === selectedTargetId);
   const enabledModes = enabledWorkloadModes(selectedTarget ?? null);
   const applyDisabledReason = workloadApplyDisabledReason(selectedTarget ?? null);
+  const isMockTarget = isMockOrTestTarget(selectedTarget ?? null);
   const activeDeployment = deployments.find((d) => d.status === 'active');
 
   const reload = useCallback(async () => {
@@ -223,28 +234,34 @@ export function ExternalDeploymentsPanel({
   }, [reload]);
 
   useEffect(() => {
-    if (preselectedTargetId) {
-      setSelectedTargetId(preselectedTargetId);
-      setTab('jobs');
+    if (!highlightTargetId) {
+      lastNavigationKeyRef.current = '';
     }
-  }, [preselectedTargetId]);
+  }, [highlightTargetId]);
+
+  useEffect(() => {
+    const navigationKey = buildInfraNavigationKey(preferredTab, preselectedTargetId, highlightTargetId);
+    if (!preselectedTargetId || !shouldApplyInfraNavigation(navigationKey, lastNavigationKeyRef.current)) {
+      return;
+    }
+    lastNavigationKeyRef.current = navigationKey;
+    setSelectedTargetId(preselectedTargetId);
+    setTab(preferredTab ?? 'targets');
+    if (highlightTargetId) {
+      setHighlightedTargetId(highlightTargetId);
+      const timer = window.setTimeout(() => {
+        setHighlightedTargetId(null);
+        onHighlightDone?.();
+      }, HIGHLIGHT_MS);
+      return () => window.clearTimeout(timer);
+    }
+  }, [preferredTab, preselectedTargetId, highlightTargetId, onHighlightDone]);
 
   useEffect(() => {
     if (refreshToken != null && refreshToken > 0) {
       void reload();
     }
   }, [refreshToken, reload]);
-
-  useEffect(() => {
-    if (!highlightTargetId) return;
-    setHighlightedTargetId(highlightTargetId);
-    setTab('jobs');
-    const timer = window.setTimeout(() => {
-      setHighlightedTargetId(null);
-      onHighlightDone?.();
-    }, HIGHLIGHT_MS);
-    return () => window.clearTimeout(timer);
-  }, [highlightTargetId, onHighlightDone]);
 
   function closeTargetForm() {
     setTargetFormMode('closed');
@@ -499,7 +516,6 @@ export function ExternalDeploymentsPanel({
                         disabled={busy || targetFormMode === 'edit'}
                         onClick={() => {
                           setSelectedTargetId(t.id);
-                          setTab('jobs');
                         }}
                         className="rounded border px-2 py-0.5 text-xs disabled:opacity-50"
                       >
@@ -575,7 +591,7 @@ export function ExternalDeploymentsPanel({
                   <select
                     value={selectedTargetId}
                     onChange={(e) => setSelectedTargetId(e.target.value)}
-                    className={`ml-2 rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900 ${targetRowClass(selectedTargetId)}`}
+                    className="ml-2 rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
                   >
                     <option value="">Select runtime target</option>
                     {targets.map((t) => (
@@ -588,11 +604,16 @@ export function ExternalDeploymentsPanel({
                 </label>
                 <button
                   type="button"
-                  disabled={busy || !selectedTargetId || !enabledModes.includes('validate')}
+                  disabled={
+                    busy ||
+                    !selectedTargetId ||
+                    !enabledModes.includes('validate') ||
+                    (isMockTarget ? !supportsSimulatedValidation(selectedTarget) : !supportsRealRemoteValidation(selectedTarget))
+                  }
                   onClick={() => void onCreateJob('validate')}
                   className="rounded bg-zinc-800 px-3 py-1 text-xs text-white disabled:opacity-50 dark:bg-zinc-200 dark:text-zinc-900"
                 >
-                  Run validate
+                  {isMockTarget ? 'Simulate validate' : 'Run validate'}
                 </button>
                 <button
                   type="button"
@@ -600,7 +621,7 @@ export function ExternalDeploymentsPanel({
                   onClick={() => void onCreateJob('plan')}
                   className="rounded bg-emerald-700 px-3 py-1 text-xs text-white disabled:opacity-50"
                 >
-                  Run plan
+                  {isMockTarget ? 'Simulate plan' : 'Run plan'}
                 </button>
                 <button
                   type="button"
@@ -627,7 +648,13 @@ export function ExternalDeploymentsPanel({
                   Destroy
                 </button>
               </div>
-              {applyDisabledReason && selectedTarget ? (
+              {isMockTarget && selectedTarget ? (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  {mockTargetLabel(selectedTarget)} — validate/plan are simulated; no SSH to{' '}
+                  {String(selectedTarget.config_json?.host ?? 'test host')}.
+                </p>
+              ) : null}
+              {applyDisabledReason && selectedTarget && !isMockTarget ? (
                 <p className="text-xs text-amber-700 dark:text-amber-300">{applyDisabledReason}</p>
               ) : null}
               {applyConfirmOpen ? (

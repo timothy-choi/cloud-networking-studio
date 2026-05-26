@@ -4,7 +4,10 @@ import type { DeploymentTarget } from '../../api/deploymentTargets';
 import {
   enabledWorkloadModes,
   isMockOrTestTarget,
+  MOCK_TARGET_LABEL,
   mockTargetLabel,
+  supportsRealRemoteValidation,
+  supportsSimulatedValidation,
   workloadApplyDisabledReason,
 } from './runtimeTargetHelpers';
 
@@ -16,9 +19,11 @@ const mockTarget: DeploymentTarget = {
   config_json: {
     host: '203.0.113.10',
     is_mock: true,
-    mock_label: 'Mock target — for workflow testing only',
+    target_source: 'local_mock_infra',
+    mock_label: MOCK_TARGET_LABEL,
     workload_apply_disabled: true,
-    workload_apply_disabled_reason: 'Mock/simulated target — real workload apply is disabled for workflow testing only.',
+    workload_apply_disabled_reason:
+      'Mock/simulated target — real workload validate/apply is disabled for workflow testing only.',
   },
   credentials_ref: null,
   status: 'active',
@@ -28,19 +33,23 @@ const mockTarget: DeploymentTarget = {
 };
 
 describe('runtimeTargetHelpers', () => {
-  it('detects mock targets and disables apply/destroy', () => {
+  it('detects mock targets and disables real apply/destroy', () => {
     expect(isMockOrTestTarget(mockTarget)).toBe(true);
-    expect(mockTargetLabel(mockTarget)).toContain('Mock target');
-    expect(workloadApplyDisabledReason(mockTarget)).toContain('disabled');
+    expect(mockTargetLabel(mockTarget)).toBe(MOCK_TARGET_LABEL);
+    expect(workloadApplyDisabledReason(mockTarget)).toContain('simulated');
+    expect(supportsSimulatedValidation(mockTarget)).toBe(true);
+    expect(supportsRealRemoteValidation(mockTarget)).toBe(false);
     expect(enabledWorkloadModes(mockTarget)).toEqual(['validate', 'plan']);
   });
 
-  it('allows apply/destroy for real remote_docker targets', () => {
+  it('allows real validate/apply/destroy for real remote_docker targets', () => {
     const realTarget: DeploymentTarget = {
       ...mockTarget,
       config_json: { host: '10.0.0.5' },
     };
     expect(isMockOrTestTarget(realTarget)).toBe(false);
+    expect(supportsRealRemoteValidation(realTarget)).toBe(true);
+    expect(supportsSimulatedValidation(realTarget)).toBe(false);
     expect(enabledWorkloadModes(realTarget)).toEqual(['validate', 'plan', 'apply', 'destroy']);
   });
 });

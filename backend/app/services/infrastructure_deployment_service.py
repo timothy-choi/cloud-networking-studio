@@ -545,6 +545,11 @@ def confirm_and_apply(
     except ValueError as exc:
         deployment.status = "failed"
         deployment.error_message = str(exc)
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "apply_failed",
+            message=str(exc),
+        )
         deployment.events_json = append_event(deployment.events_json, "failed", message=str(exc))
         deployment.metrics_json = increment_counter(deployment.metrics_json, "failure_count")
 

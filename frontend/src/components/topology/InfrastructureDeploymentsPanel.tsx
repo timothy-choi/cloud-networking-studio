@@ -221,17 +221,26 @@ export function InfrastructureDeploymentsPanel({
       setError(new Error('Type APPLY to confirm real cloud apply.'));
       return;
     }
-    await runAction(() =>
-      confirmInfrastructureDeployment(selected.id, {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await confirmInfrastructureDeployment(selected.id, {
         confirmation_text: needsTypedConfirm ? applyConfirmText.trim() : undefined,
         unsafe_testing_override: needsTypedConfirm ? unsafeTestingOverride : undefined,
-      }),
-    );
-    setShowApplyDialog(false);
-    setApplyConfirmText('');
-    setUnsafeTestingOverride(false);
-    await refreshDeployments(selected.id);
-    onRuntimeTargetsChanged?.();
+      });
+      setDeployments((current) => current.map((d) => (d.id === updated.id ? updated : d)));
+      await refreshExecutions(updated.id);
+      setShowApplyDialog(false);
+      setApplyConfirmText('');
+      setUnsafeTestingOverride(false);
+      onRuntimeTargetsChanged?.();
+    } catch (err) {
+      setError(err);
+      await refreshDeployments(selected.id);
+      await refreshExecutions(selected.id);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleDestroy() {

@@ -86,6 +86,11 @@ def test_gcp_apply_payload_includes_ssh_public_key(monkeypatch, tmp_path):
     assert payload["variables"]["ssh_user"] == "ubuntu"
 
 
+def _clear_ssh_public_key(monkeypatch, tmp_path) -> None:
+    """Force missing public key — delenv alone still falls back to the default path on CI."""
+    monkeypatch.setenv("CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH", str(tmp_path / "missing-cns-remote-docker-key.pub"))
+
+
 def test_gcp_plan_fails_without_ssh_public_key(client_strict, monkeypatch, tmp_path):
     import json
     import uuid
@@ -95,7 +100,7 @@ def test_gcp_plan_fails_without_ssh_public_key(client_strict, monkeypatch, tmp_p
     cred_file = tmp_path / "gcp-sa.json"
     cred_file.write_text(json.dumps({"type": "service_account"}))
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(cred_file))
-    monkeypatch.delenv("CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH", raising=False)
+    _clear_ssh_public_key(monkeypatch, tmp_path)
     _install_runner(monkeypatch)
 
     email = f"nopub{uuid.uuid4().hex[:8]}@example.com"
@@ -145,7 +150,7 @@ def test_gcp_apply_blocked_without_ssh_public_key(client_strict, monkeypatch, tm
 
     _gcp_credentials(monkeypatch, tmp_path)
     _install_runner(monkeypatch)
-    monkeypatch.delenv("CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH", raising=False)
+    _clear_ssh_public_key(monkeypatch, tmp_path)
 
     email = f"applynopub{uuid.uuid4().hex[:8]}@example.com"
     reg = client_strict.post(

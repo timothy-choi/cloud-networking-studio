@@ -372,8 +372,12 @@ def test_local_mock_still_works(client_strict, monkeypatch):
     assert len(confirm.json()["runtime_targets_json"]) == 1
 
 
-def test_build_apply_safety_checklist_unit():
+def test_build_apply_safety_checklist_unit(monkeypatch, tmp_path):
     from app.models.infrastructure_deployment import InfrastructureDeployment
+
+    pub = tmp_path / "gcp-remote-docker-key.pub"
+    pub.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGtestkey cns-remote-docker\n")
+    monkeypatch.setenv("CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH", str(pub))
 
     dep = InfrastructureDeployment(
         project_id=uuid.uuid4(),

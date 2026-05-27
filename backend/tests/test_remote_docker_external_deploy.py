@@ -155,12 +155,13 @@ def test_validate_mocked_ssh_succeeds(client_strict, ssh_key_env, mock_runner):
     logs = job["logs"] or ""
     assert "[remote-docker]" in logs
     assert "Validation succeeded" in logs
-    assert "ssh IdentitiesOnly=yes enabled" in logs
-    assert "ssh key_path=" in logs
-    assert "ssh key_readable=true" in logs
+    assert "operation=validate" in logs
+    assert "ssh_options=" in logs
+    assert "IdentitiesOnly=yes" in logs
+    assert "key_readable=true" in logs
     assert any("docker --version" in c for c in mock_runner.ssh_commands)
     assert any("docker compose version" in c for c in mock_runner.ssh_commands)
-    assert f"ssh key_path={ssh_key_env}" in logs
+    assert f"resolved_key_path={ssh_key_env}" in logs
     assert "-----BEGIN TEST KEY-----" not in logs
     assert mock_runner.ssh_connections
     conn = mock_runner.ssh_connections[0]
@@ -201,7 +202,7 @@ def test_validate_gcp_generated_target_ssh_options(client_strict, monkeypatch, t
     job = jr.json()
     assert job["status"] == "succeeded"
     logs = job["logs"] or ""
-    assert "ssh key_path=" + str(key_file) in logs
+    assert "resolved_key_path=" + str(key_file) in logs
     assert "IdentitiesOnly=yes" in logs
     conn = mock_runner.ssh_connections[0]
     assert conn.key_path == str(key_file)
@@ -297,6 +298,49 @@ def test_apply_mode_enabled_for_remote_docker(client_strict, ssh_key_env, mock_r
     )
     assert jr.status_code == 201
     assert jr.json()["status"] == "succeeded"
+
+
+def test_apply_gcp_generated_target_logs_scp_options(client_strict, monkeypatch, tmp_path, mock_runner):
+    key_file = tmp_path / "gcp-remote-docker-key"
+    key_file.write_text("fake-key\n", encoding="utf-8")
+    monkeypatch.setenv("CNS_REMOTE_DOCKER_SSH_KEY_PATH", str(key_file))
+
+    h = _register(client_strict, prefix="gcpapply")
+    pid, tid = _project_and_topology(client_strict, h)
+    target = _create_remote_target(
+        client_strict,
+        h,
+        pid,
+        name="GCP Generated Target",
+        credentials_ref="env:CNS_REMOTE_DOCKER_SSH_KEY_PATH",
+        config_json={
+            "host": "104.155.166.99",
+            "ssh_user": "tchoi720",
+            "ssh_port": 22,
+            "remote_workdir": "/opt/cns-external-deployments",
+            "supports_compose": True,
+            "target_source": "terraform_gcp_docker_vm",
+            "infrastructure_source": "terraform_gcp_docker_vm",
+        },
+    )
+
+    jr = client_strict.post(
+        f"/topologies/{tid}/external-deployment-jobs",
+        headers=h,
+        json={"target_id": target["id"], "mode": "apply"},
+    )
+    assert jr.status_code == 201, jr.text
+    job = jr.json()
+    assert job["status"] == "succeeded"
+    logs = job["logs"] or ""
+    assert "operation=apply" in logs
+    assert "upload_command_type=scp" in logs
+    assert "scp command preview:" in logs
+    assert "IdentitiesOnly=yes" in logs
+    assert f"resolved_key_path={key_file}" in logs
+    assert mock_runner.uploads
+    upload_conn = mock_runner.uploads[0][0]
+    assert upload_conn == "104.155.166.99"
 
 
 def test_legacy_infra_target_types_rejected_at_create(client_strict):

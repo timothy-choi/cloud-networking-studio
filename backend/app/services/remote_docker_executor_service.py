@@ -21,8 +21,10 @@ from app.services import external_deployment_service as ext_dep_svc
 from app.services import topology_iac_export_service as iac_svc
 from app.services.remote_command_runner import (
     RemoteHostConnection,
+    format_scp_command_for_log,
     format_ssh_command_for_log,
     get_remote_command_runner,
+    ssh_options_summary,
 )
 from app.services.remote_credentials_service import resolve_ssh_key_path
 from app.services.remote_ssh_runtime import ensure_ssh_client_installed, raise_for_ssh_failure
@@ -101,19 +103,31 @@ def _connection(target: DeploymentTarget, cfg: RemoteDockerTargetConfig) -> Remo
 def _log_ssh_connection_debug(
     log: JobLogBuffer,
     *,
+    operation: str,
     target: DeploymentTarget,
     cfg: RemoteDockerTargetConfig,
     conn: RemoteHostConnection,
+    remote_workdir: str | None = None,
+    upload_command_type: str | None = None,
+    scp_preview: str | None = None,
 ) -> None:
     key_readable = os.path.isfile(conn.key_path) and os.access(conn.key_path, os.R_OK)
-    log.append(f"[remote-docker] ssh host={cfg.host}")
-    log.append(f"[remote-docker] ssh user={cfg.ssh_user}")
+    log.append(f"[remote-docker] operation={operation}")
+    log.append(f"[remote-docker] target_id={target.id}")
+    log.append(f"[remote-docker] target_name={target.name or ''}")
+    log.append(f"[remote-docker] host={cfg.host}")
+    log.append(f"[remote-docker] ssh_user={cfg.ssh_user}")
     log.append(f"[remote-docker] ssh port={cfg.ssh_port}")
-    log.append(f"[remote-docker] ssh credentials_ref={target.credentials_ref or ''}")
-    log.append(f"[remote-docker] ssh key_path={conn.key_path}")
-    log.append(f"[remote-docker] ssh key_readable={str(key_readable).lower()}")
-    log.append(f"[remote-docker] ssh known_hosts_file={conn.known_hosts_file}")
-    log.append("[remote-docker] ssh IdentitiesOnly=yes enabled")
+    log.append(f"[remote-docker] credentials_ref={target.credentials_ref or ''}")
+    log.append(f"[remote-docker] resolved_key_path={conn.key_path}")
+    log.append(f"[remote-docker] key_readable={str(key_readable).lower()}")
+    if remote_workdir is not None:
+        log.append(f"[remote-docker] remote_workdir={remote_workdir}")
+    log.append(f"[remote-docker] ssh_options={ssh_options_summary(conn)}")
+    if upload_command_type:
+        log.append(f"[remote-docker] upload_command_type={upload_command_type}")
+    if scp_preview:
+        log.append(f"[remote-docker] scp command preview: {scp_preview}")
     log.append(
         "[remote-docker] ssh command preview: "
         f"{format_ssh_command_for_log(conn, 'docker --version')}"
@@ -191,7 +205,7 @@ def execute_validate(
     ensure_ssh_client_installed()
     cfg = parse_remote_docker_config(target.config_json)
     conn = _connection(target, cfg)
-    _log_ssh_connection_debug(log, target=target, cfg=cfg, conn=conn)
+    _log_ssh_connection_debug(log, operation="validate", target=target, cfg=cfg, conn=conn)
     runner = get_remote_command_runner()
 
     for cmd, label in (
@@ -278,7 +292,6 @@ def execute_apply(
     ensure_ssh_client_installed()
     cfg = parse_remote_docker_config(target.config_json)
     conn = _connection(target, cfg)
-    _log_ssh_connection_debug(log, target=target, cfg=cfg, conn=conn)
     runner = get_remote_command_runner()
 
     bundle = iac_svc.load_topology_export_bundle(db, topology.id)
@@ -310,6 +323,22 @@ def execute_apply(
             json.dump(metadata, fh, indent=2)
         uploads.append((meta_path, METADATA_FILENAME))
 
+        scp_preview = format_scp_command_for_log(
+            conn,
+            uploads[0][0],
+            uploads[0][1],
+            remote_dir,
+        )
+        _log_ssh_connection_debug(
+            log,
+            operation="apply",
+            target=target,
+            cfg=cfg,
+            conn=conn,
+            remote_workdir=remote_dir,
+            upload_command_type="scp",
+            scp_preview=scp_preview,
+        )
         log.append(f"[remote-docker] uploading {len(uploads)} file(s) to {remote_dir}")
         upload_result = runner.upload_files(conn, uploads, remote_dir)
         if upload_result.stdout.strip():
@@ -370,7 +399,6 @@ def execute_destroy(
     ensure_ssh_client_installed()
     cfg = parse_remote_docker_config(target.config_json)
     conn = _connection(target, cfg)
-    _log_ssh_connection_debug(log, target=target, cfg=cfg, conn=conn)
     runner = get_remote_command_runner()
 
     active = ext_dep_svc.get_active_external_deployment(
@@ -381,6 +409,14 @@ def execute_destroy(
 
     remote_dir = active.remote_workdir
     project_name = active.compose_project_name
+    _log_ssh_connection_debug(
+        log,
+        operation="destroy",
+        target=target,
+        cfg=cfg,
+        conn=conn,
+        remote_workdir=remote_dir,
+    )
     log.append(f"[remote-docker] destroying project={project_name} at {remote_dir}")
 
     down_cmd = (

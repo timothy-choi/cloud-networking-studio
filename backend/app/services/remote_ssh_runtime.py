@@ -15,6 +15,13 @@ SSH_CLIENT_MISSING_MESSAGE = "SSH/SCP client is missing from backend container"
 SSH_PERMISSION_DENIED_MESSAGE = (
     "SSH permission denied. Check public key is installed for ssh_user on target host."
 )
+SCP_WRITE_PERMISSION_DENIED_MESSAGE = (
+    "SCP upload permission denied. Check ssh_user can write to remote_workdir on target host."
+)
+REMOTE_MKDIR_PERMISSION_DENIED_MESSAGE = (
+    "Remote directory creation failed (permission denied). "
+    "Ensure remote_workdir is writable by ssh_user on target host."
+)
 
 
 def ssh_client_status() -> tuple[bool, str | None]:
@@ -45,11 +52,25 @@ def ensure_ssh_client_installed() -> None:
         raise ValueError(SSH_CLIENT_MISSING_MESSAGE)
 
 
+def _is_ssh_auth_permission_denied(combined_lower: str) -> bool:
+    return (
+        "permission denied (publickey" in combined_lower
+        or "permission denied, please try again" in combined_lower
+        or "no supported authentication methods available" in combined_lower
+    )
+
+
 def raise_for_ssh_failure(result, *, context: str = "SSH") -> None:
     """Map subprocess SSH/SCP failures to actionable job errors."""
     if result.ok:
         return
-    combined = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
-    if "permission denied" in combined:
+    combined_lower = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
+    if _is_ssh_auth_permission_denied(combined_lower):
+        raise ValueError(SSH_PERMISSION_DENIED_MESSAGE)
+    if "permission denied" in combined_lower:
+        if context == "SCP upload":
+            raise ValueError(SCP_WRITE_PERMISSION_DENIED_MESSAGE)
+        if context == "SSH mkdir":
+            raise ValueError(REMOTE_MKDIR_PERMISSION_DENIED_MESSAGE)
         raise ValueError(SSH_PERMISSION_DENIED_MESSAGE)
     raise ValueError(f"Remote check failed ({context}): exit {result.exit_code}")

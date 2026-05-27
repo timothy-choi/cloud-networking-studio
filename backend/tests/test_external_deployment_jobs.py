@@ -99,7 +99,7 @@ def test_create_validate_job_and_logs(client_strict, monkeypatch, tmp_path):
         assert job["logs"]
         assert "[remote-docker]" in job["logs"].lower()
         assert "validation succeeded" in job["logs"].lower()
-        assert f"ssh key_path={key_file}" in job["logs"]
+        assert f"resolved_key_path={key_file}" in job["logs"]
         assert "IdentitiesOnly=yes" in job["logs"]
         assert "fake-key" not in job["logs"]
 

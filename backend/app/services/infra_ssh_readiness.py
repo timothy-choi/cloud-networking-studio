@@ -219,7 +219,7 @@ def verify_remote_docker(deployment: InfrastructureDeployment) -> str:
         conn = _remote_connection(deployment, host)
         name = str(host.get("name") or host["public_ip"])
 
-        docker_path_result = runner.run_ssh(conn, "command -v docker", timeout_seconds=30)
+        docker_path_result = runner.run_ssh(conn, "which docker", timeout_seconds=30)
         docker_path = _command_output(docker_path_result) if docker_path_result.ok else "unknown"
         lines.append(f"[docker-verify] {name}: docker binary path={docker_path}")
 

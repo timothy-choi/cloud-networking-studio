@@ -87,15 +87,21 @@ def test_subprocess_runner_invokes_ssh_and_scp(tmp_path, monkeypatch):
     local = tmp_path / "compose.yml"
     local.write_text("services: {}\n", encoding="utf-8")
     runner.upload_files(conn, [(str(local), "docker-compose.cns.yml")], "/opt/cns")
-    assert any(cmd[0] == "ssh" for cmd in calls)
-    assert any(cmd[0] == "scp" for cmd in calls)
+    ssh_cmd = next(cmd for cmd in calls if cmd[0] == "ssh")
+    scp_cmd = next(cmd for cmd in calls if cmd[0] == "scp")
+    assert "IdentitiesOnly=yes" in ssh_cmd
+    assert "IdentitiesOnly=yes" in scp_cmd
+    assert str(key_file) in ssh_cmd
 
 
 def test_compose_backend_contains_env_and_secrets_mount():
     compose_text = Path(__file__).resolve().parents[2].joinpath("docker-compose.prod.yml").read_text(
         encoding="utf-8"
     )
-    assert "CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-}" in compose_text
+    assert (
+        "CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key}"
+        in compose_text
+    )
     assert "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}" in compose_text
     assert compose_text.count("/opt/cns/secrets:/opt/cns/secrets:ro") >= 2
     runner_idx = compose_text.index("  runner:")

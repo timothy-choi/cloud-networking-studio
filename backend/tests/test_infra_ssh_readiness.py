@@ -188,5 +188,6 @@ def test_remote_connection_uses_per_deployment_known_hosts(tmp_path, monkeypatch
 
     SubprocessRemoteCommandRunner().run_ssh(conn, "echo cns-ssh-ready")
     ssh_cmd = captured[0]
+    assert "IdentitiesOnly=yes" in ssh_cmd
     assert "StrictHostKeyChecking=no" in ssh_cmd
     assert f"UserKnownHostsFile=/tmp/cns-known-hosts-{dep.id}" in ssh_cmd

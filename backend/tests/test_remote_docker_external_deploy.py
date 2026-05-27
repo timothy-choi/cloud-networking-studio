@@ -33,6 +33,7 @@ REMOTE_DOCKER_CONFIG = {
 @dataclass
 class MockRemoteCommandRunner:
     ssh_commands: list[str] = field(default_factory=list)
+    ssh_connections: list[RemoteHostConnection] = field(default_factory=list)
     uploads: list[tuple[str, list[tuple[str, str]], str]] = field(default_factory=list)
 
     def run_ssh(
@@ -42,6 +43,7 @@ class MockRemoteCommandRunner:
         *,
         timeout_seconds: int = 120,
     ) -> RemoteCommandResult:
+        self.ssh_connections.append(conn)
         self.ssh_commands.append(remote_command)
         if "docker --version" in remote_command:
             return RemoteCommandResult(0, "Docker version 26.0.0", "")
@@ -150,11 +152,60 @@ def test_validate_mocked_ssh_succeeds(client_strict, ssh_key_env, mock_runner):
     assert jr.status_code == 201, jr.text
     job = jr.json()
     assert job["status"] == "succeeded"
-    assert "[remote-docker]" in (job["logs"] or "")
-    assert "Validation succeeded" in (job["logs"] or "")
+    logs = job["logs"] or ""
+    assert "[remote-docker]" in logs
+    assert "Validation succeeded" in logs
+    assert "ssh IdentitiesOnly=yes enabled" in logs
+    assert "ssh key_path=" in logs
+    assert "ssh key_readable=true" in logs
     assert any("docker --version" in c for c in mock_runner.ssh_commands)
     assert any("docker compose version" in c for c in mock_runner.ssh_commands)
-    assert ssh_key_env not in (job["logs"] or "")
+    assert ssh_key_env not in logs
+    assert mock_runner.ssh_connections
+    conn = mock_runner.ssh_connections[0]
+    assert conn.known_hosts_file == f"/tmp/cns_known_hosts_{target['id']}"
+    assert conn.key_path == ssh_key_env
+
+
+def test_validate_gcp_generated_target_ssh_options(client_strict, monkeypatch, tmp_path, mock_runner):
+    key_file = tmp_path / "gcp-remote-docker-key"
+    key_file.write_text("fake-key\n", encoding="utf-8")
+    monkeypatch.setenv("CNS_REMOTE_DOCKER_SSH_KEY_PATH", str(key_file))
+
+    h = _register(client_strict, prefix="gcpssh")
+    pid, tid = _project_and_topology(client_strict, h)
+    target = _create_remote_target(
+        client_strict,
+        h,
+        pid,
+        name="GCP Generated Target",
+        credentials_ref="env:CNS_REMOTE_DOCKER_SSH_KEY_PATH",
+        config_json={
+            "host": "104.155.166.99",
+            "ssh_user": "tchoi720",
+            "ssh_port": 22,
+            "remote_workdir": "/opt/cns-external-deployments",
+            "supports_compose": True,
+            "target_source": "terraform_gcp_docker_vm",
+            "infrastructure_source": "terraform_gcp_docker_vm",
+        },
+    )
+
+    jr = client_strict.post(
+        f"/topologies/{tid}/external-deployment-jobs",
+        headers=h,
+        json={"target_id": target["id"], "mode": "validate"},
+    )
+    assert jr.status_code == 201, jr.text
+    job = jr.json()
+    assert job["status"] == "succeeded"
+    logs = job["logs"] or ""
+    assert "ssh key_path=" + str(key_file) in logs
+    assert "IdentitiesOnly=yes" in logs
+    conn = mock_runner.ssh_connections[0]
+    assert conn.key_path == str(key_file)
+    assert conn.user == "tchoi720"
+    assert conn.known_hosts_file == f"/tmp/cns_known_hosts_{target['id']}"
 
 
 def test_plan_generates_compose_artifact(client_strict, ssh_key_env, mock_runner):

@@ -78,6 +78,77 @@ def test_configuration_failed_when_ansible_fails(client_strict, monkeypatch, tmp
     assert any(ev["type"] == "configure_failed" for ev in body["events_json"])
 
 
+def test_configuration_failed_when_remote_workdir_not_writable(client_strict, monkeypatch, tmp_path):
+    _gcp_credentials(monkeypatch, tmp_path)
+    _install_runner(monkeypatch)
+    h = _register(client_strict, prefix="workdirfail")
+    _, topo_id = _project_and_topology(client_strict, h)
+    dep_id = _create_gcp_deployment(client_strict, h, topo_id)
+    _plan_gcp(client_strict, h, dep_id)
+
+    def _fail_workdir(deployment):
+        raise ValueError("remote_workdir is not writable by ssh_user")
+
+    monkeypatch.setattr(
+        "app.services.infrastructure_deployment_service.ssh_readiness_svc.verify_remote_workdir",
+        _fail_workdir,
+    )
+
+    confirm = client_strict.post(
+        f"/infrastructure-deployments/{dep_id}/confirm",
+        headers=h,
+        json={"confirm": True, "confirmation_text": "APPLY"},
+    )
+    assert confirm.status_code == 200, confirm.text
+    body = confirm.json()
+    assert body["status"] == "configuration_failed"
+    assert "remote_workdir is not writable by ssh_user" in (body.get("error_message") or "")
+    assert body["runtime_targets_json"] == []
+    assert any(ev["type"] == "configure_failed" for ev in body["events_json"])
+
+
+def test_gcp_target_registered_with_writable_remote_workdir_after_checks(client_strict, monkeypatch, tmp_path):
+    _gcp_credentials(monkeypatch, tmp_path)
+    _install_runner(monkeypatch)
+    h = _register(client_strict, prefix="workdirok")
+    _, topo_id = _project_and_topology(client_strict, h)
+    dep_id = _create_gcp_deployment(client_strict, h, topo_id)
+    _plan_gcp(client_strict, h, dep_id)
+
+    verify_calls: list[str] = []
+
+    def _track_workdir(deployment):
+        verify_calls.append("workdir")
+        return "[workdir-verify] ok"
+
+    def _track_docker(deployment):
+        verify_calls.append("docker")
+        return "[docker-verify] ok"
+
+    monkeypatch.setattr(
+        "app.services.infrastructure_deployment_service.ssh_readiness_svc.verify_remote_workdir",
+        _track_workdir,
+    )
+    monkeypatch.setattr(
+        "app.services.infrastructure_deployment_service.ssh_readiness_svc.verify_remote_docker",
+        _track_docker,
+    )
+
+    confirm = client_strict.post(
+        f"/infrastructure-deployments/{dep_id}/confirm",
+        headers=h,
+        json={"confirm": True, "confirmation_text": "APPLY"},
+    )
+    assert confirm.status_code == 200, confirm.text
+    body = confirm.json()
+    assert body["status"] == "succeeded"
+    assert verify_calls == ["docker", "workdir"]
+    assert len(body["runtime_targets_json"]) >= 1
+    target = body["runtime_targets_json"][0]
+    assert target["config_json"]["remote_workdir"] == "/opt/cns-external-deployments"
+    assert target["config_json"]["ssh_user"] == "ubuntu"
+
+
 def test_retry_configuration_recovers(client_strict, monkeypatch, tmp_path):
     _gcp_credentials(monkeypatch, tmp_path)
     runner = _install_runner(monkeypatch)

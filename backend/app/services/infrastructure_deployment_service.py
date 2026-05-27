@@ -186,6 +186,17 @@ def _run_host_configuration(
             verify_exec.logs = verify_log
             verify_exec.finished_at = datetime.now(UTC)
 
+            workdir_exec = _new_execution(
+                db, deployment=deployment, execution_type="ansible", mode="workdir_verify"
+            )
+            workdir_exec.status = "running"
+            workdir_exec.started_at = datetime.now(UTC)
+            db.flush()
+            workdir_log = ssh_readiness_svc.verify_remote_workdir(deployment)
+            workdir_exec.status = "succeeded"
+            workdir_exec.logs = workdir_log
+            workdir_exec.finished_at = datetime.now(UTC)
+
         deployment.events_json = append_event(
             deployment.events_json,
             "configure_completed",
@@ -463,7 +474,7 @@ def _register_runtime_targets(
                     "host": public_ip,
                     "ssh_user": host.get("ssh_user") or "ubuntu",
                     "ssh_port": host.get("ssh_port") or 22,
-                    "remote_workdir": "/opt/cns-external-deployments",
+                    "remote_workdir": ssh_readiness_svc.REMOTE_DOCKER_EXTERNAL_WORKDIR,
                     "supports_compose": True,
                     **mock_overrides,
                     **real_overrides,

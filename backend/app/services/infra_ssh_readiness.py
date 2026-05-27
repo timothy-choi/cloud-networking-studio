@@ -19,6 +19,20 @@ DEFAULT_SSH_RETRY_INTERVAL_SECONDS = 5
 
 REMOTE_DOCKER_SSH_CREDENTIALS_REF = "env:CNS_REMOTE_DOCKER_SSH_KEY_PATH"
 
+REMOTE_DOCKER_EXTERNAL_WORKDIR = "/opt/cns-external-deployments"
+
+REMOTE_WORKDIR_NOT_WRITABLE_MESSAGE = (
+    "remote_workdir is not writable by ssh_user "
+    f"(expected writable directory: {REMOTE_DOCKER_EXTERNAL_WORKDIR})"
+)
+
+WORKDIR_VERIFY_COMMAND = (
+    f"test -d {REMOTE_DOCKER_EXTERNAL_WORKDIR} && "
+    f"test -w {REMOTE_DOCKER_EXTERNAL_WORKDIR} && "
+    f"mkdir -p {REMOTE_DOCKER_EXTERNAL_WORKDIR}/.cns-write-test && "
+    f"rm -rf {REMOTE_DOCKER_EXTERNAL_WORKDIR}/.cns-write-test"
+)
+
 COMPOSE_PLUGIN_PATH_CMD = (
     "sh -c 'for candidate in "
     "/usr/libexec/docker/cli-plugins/docker-compose "
@@ -250,4 +264,35 @@ def verify_remote_docker(deployment: InfrastructureDeployment) -> str:
         )
 
     lines.append("[docker-verify] Docker and Docker Compose verified")
+    return "\n".join(lines)
+
+
+def verify_remote_workdir(deployment: InfrastructureDeployment) -> str:
+    """Verify external deployment workdir exists and is writable by ssh_user."""
+    hosts = resolve_inventory_hosts(deployment)
+    if not hosts:
+        raise ValueError("No host outputs available to verify remote workdir.")
+
+    lines: list[str] = [
+        f"[workdir-verify] checking ssh_user write access to {REMOTE_DOCKER_EXTERNAL_WORKDIR}",
+    ]
+    ensure_ssh_client_installed()
+    runner = get_remote_command_runner()
+
+    for host in hosts:
+        conn = _remote_connection(deployment, host)
+        name = str(host.get("name") or host["public_ip"])
+        ssh_user = str(host.get("ssh_user") or "ubuntu")
+        lines.append(
+            f"[workdir-verify] {name}: ssh_user={ssh_user} path={REMOTE_DOCKER_EXTERNAL_WORKDIR}"
+        )
+
+        result = runner.run_ssh(conn, WORKDIR_VERIFY_COMMAND, timeout_seconds=60)
+        if not result.ok:
+            detail = _command_output(result) or f"exit {result.exit_code}"
+            lines.append(f"[workdir-verify] {name}: failed — {detail}")
+            raise ValueError(REMOTE_WORKDIR_NOT_WRITABLE_MESSAGE)
+        lines.append(f"[workdir-verify] {name}: directory exists, writable, write test passed")
+
+    lines.append("[workdir-verify] remote workdir verified")
     return "\n".join(lines)

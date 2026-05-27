@@ -48,6 +48,7 @@ def test_cns_runtime_dirs_playbook_owns_external_deployment_workdir_for_ssh_user
     assert "/opt/cns-external-deployments" in content
     assert 'owner: "{{ ansible_user }}"' in content
     assert 'group: "{{ ansible_user }}"' in content
+    assert 'mode: "0775"' in content
 
 
 def test_ansible_playbooks_do_not_use_command_module_with_shell_builtins():

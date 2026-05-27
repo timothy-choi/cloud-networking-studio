@@ -128,6 +128,10 @@ def _patch_gcp_ssh_gates(monkeypatch) -> None:
         "app.services.infrastructure_deployment_service.ssh_readiness_svc.verify_remote_docker",
         lambda deployment: "[docker-verify] test stub ok",
     )
+    monkeypatch.setattr(
+        "app.services.infrastructure_deployment_service.ssh_readiness_svc.verify_remote_workdir",
+        lambda deployment: "[workdir-verify] test stub ok",
+    )
 
 
 def _gcp_credentials(monkeypatch, tmp_path):

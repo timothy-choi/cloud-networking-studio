@@ -163,6 +163,33 @@ def test_verify_remote_docker_fails_when_compose_unavailable(monkeypatch):
         ssh_readiness.verify_remote_docker(dep)
 
 
+def test_verify_remote_workdir_passes_when_writable(monkeypatch):
+    dep = _gcp_deployment()
+    runner = MagicMock()
+    runner.run_ssh.return_value = RemoteCommandResult(0, "", "")
+    monkeypatch.setattr(ssh_readiness, "get_remote_command_runner", lambda: runner)
+    monkeypatch.setattr(ssh_readiness, "resolve_ssh_key_path", lambda _ref: "/tmp/fake-key")
+
+    log = ssh_readiness.verify_remote_workdir(dep)
+    assert "remote workdir verified" in log
+    assert ssh_readiness.WORKDIR_VERIFY_COMMAND in runner.run_ssh.call_args[0][1]
+
+
+def test_verify_remote_workdir_fails_when_not_writable(monkeypatch):
+    dep = _gcp_deployment()
+    runner = MagicMock()
+    runner.run_ssh.return_value = RemoteCommandResult(
+        1,
+        "",
+        "mkdir: cannot create directory '/opt/cns-external-deployments/.cns-write-test': Permission denied",
+    )
+    monkeypatch.setattr(ssh_readiness, "get_remote_command_runner", lambda: runner)
+    monkeypatch.setattr(ssh_readiness, "resolve_ssh_key_path", lambda _ref: "/tmp/fake-key")
+
+    with pytest.raises(ValueError, match="remote_workdir is not writable by ssh_user"):
+        ssh_readiness.verify_remote_workdir(dep)
+
+
 def test_remote_connection_uses_per_deployment_known_hosts(tmp_path, monkeypatch):
     key_file = tmp_path / "id_ed25519"
     key_file.write_text("fake-key\n", encoding="utf-8")

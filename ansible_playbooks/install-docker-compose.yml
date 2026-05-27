@@ -12,9 +12,10 @@
       when: ansible_os_family == "Debian"
 
     - name: Resolve docker binary path
-      ansible.builtin.command: command -v docker
+      ansible.builtin.command: which docker
       register: docker_bin
       changed_when: false
+      failed_when: false
 
     - name: Resolve docker compose plugin path
       ansible.builtin.shell: |
@@ -33,14 +34,14 @@
       failed_when: false
 
     - name: Verify docker compose as SSH user
-      ansible.builtin.command: docker compose version
+      ansible.builtin.shell: docker compose version
       register: compose_version_user
       become: false
       changed_when: false
       failed_when: false
 
     - name: Verify docker compose with sudo fallback
-      ansible.builtin.command: sudo docker compose version
+      ansible.builtin.shell: sudo docker compose version
       register: compose_version_sudo
       become: false
       changed_when: false

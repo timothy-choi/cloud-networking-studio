@@ -112,7 +112,7 @@ def test_verify_remote_docker_accepts_sudo_fallback(monkeypatch):
 
     def fake_run_ssh(conn, command, *, timeout_seconds=60):
         runner_calls.append(command)
-        if command == "command -v docker":
+        if command == "which docker":
             return RemoteCommandResult(0, "/usr/bin/docker", "")
         if "cli-plugins/docker-compose" in command:
             return RemoteCommandResult(0, "/usr/libexec/docker/cli-plugins/docker-compose", "")
@@ -145,7 +145,7 @@ def test_verify_remote_docker_fails_when_compose_unavailable(monkeypatch):
     runner = MagicMock()
 
     def fake_run_ssh(conn, command, *, timeout_seconds=60):
-        if command == "command -v docker":
+        if command == "which docker":
             return RemoteCommandResult(0, "/usr/bin/docker", "")
         if "cli-plugins/docker-compose" in command:
             return RemoteCommandResult(0, "compose-plugin-path-not-found", "")

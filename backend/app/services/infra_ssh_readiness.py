@@ -10,7 +10,7 @@ from uuid import UUID
 
 from app.models.infrastructure_deployment import InfrastructureDeployment
 from app.services.infra_apply_safety import is_gcp_docker_vm_apply_eligible
-from app.services.remote_command_runner import RemoteHostConnection, get_remote_command_runner
+from app.services.remote_command_runner import RemoteCommandResult, RemoteHostConnection, get_remote_command_runner
 from app.services.remote_credentials_service import resolve_ssh_key_path
 from app.services.remote_ssh_runtime import ensure_ssh_client_installed, raise_for_ssh_failure
 
@@ -18,6 +18,14 @@ DEFAULT_SSH_READY_TIMEOUT_SECONDS = 300
 DEFAULT_SSH_RETRY_INTERVAL_SECONDS = 5
 
 REMOTE_DOCKER_SSH_CREDENTIALS_REF = "env:CNS_REMOTE_DOCKER_SSH_KEY_PATH"
+
+COMPOSE_PLUGIN_PATH_CMD = (
+    "sh -c 'for candidate in "
+    "/usr/libexec/docker/cli-plugins/docker-compose "
+    "/usr/local/lib/docker/cli-plugins/docker-compose; do "
+    'if test -x "$candidate"; then readlink -f "$candidate"; exit 0; fi; done; '
+    "echo compose-plugin-path-not-found'"
+)
 
 
 def known_hosts_path(deployment_id: UUID | str) -> str:
@@ -154,6 +162,50 @@ def wait_for_ssh_ready(
     )
 
 
+def _command_output(result: RemoteCommandResult) -> str:
+    return (result.stdout or result.stderr or "").strip()
+
+
+def _should_try_sudo(result: RemoteCommandResult) -> bool:
+    if result.ok:
+        return False
+    text = _command_output(result).lower()
+    return (
+        "permission denied" in text
+        or "got permission denied" in text
+        or "cannot connect to the docker daemon" in text
+        or result.exit_code in {1, 126, 127}
+    )
+
+
+def _run_docker_command(
+    runner,
+    conn: RemoteHostConnection,
+    command: str,
+    *,
+    host_name: str,
+    timeout_seconds: int = 60,
+) -> tuple[str, bool]:
+    """Run a docker command as ssh_user, falling back to sudo on permission errors."""
+    result = runner.run_ssh(conn, command, timeout_seconds=timeout_seconds)
+    if result.ok:
+        output = _command_output(result)
+        if output:
+            return output, False
+        raise ValueError(f"{command} returned no output on {host_name}")
+
+    if not _should_try_sudo(result):
+        raise_for_ssh_failure(result, context=f"{command} on {host_name}")
+
+    sudo_result = runner.run_ssh(conn, f"sudo {command}", timeout_seconds=timeout_seconds)
+    if not sudo_result.ok:
+        raise_for_ssh_failure(sudo_result, context=f"sudo {command} on {host_name}")
+    output = _command_output(sudo_result)
+    if not output:
+        raise ValueError(f"sudo {command} returned no output on {host_name}")
+    return output, True
+
+
 def verify_remote_docker(deployment: InfrastructureDeployment) -> str:
     """Run docker --version and docker compose version over SSH. Returns combined log text."""
     hosts = resolve_inventory_hosts(deployment)
@@ -161,26 +213,41 @@ def verify_remote_docker(deployment: InfrastructureDeployment) -> str:
         raise ValueError("No host outputs available to verify Docker installation.")
 
     lines: list[str] = ["[docker-verify] checking Docker on provisioned host(s)"]
+    runner = get_remote_command_runner()
+
     for host in hosts:
         conn = _remote_connection(deployment, host)
         name = str(host.get("name") or host["public_ip"])
-        runner = get_remote_command_runner()
 
-        docker_result = runner.run_ssh(conn, "docker --version", timeout_seconds=60)
-        if not docker_result.ok:
-            raise_for_ssh_failure(docker_result, context=f"docker --version on {name}")
-        docker_out = (docker_result.stdout or docker_result.stderr or "").strip()
-        if not docker_out:
-            raise ValueError(f"docker --version returned no output on {name}")
-        lines.append(f"[docker-verify] {name}: {docker_out}")
+        docker_path_result = runner.run_ssh(conn, "command -v docker", timeout_seconds=30)
+        docker_path = _command_output(docker_path_result) if docker_path_result.ok else "unknown"
+        lines.append(f"[docker-verify] {name}: docker binary path={docker_path}")
 
-        compose_result = runner.run_ssh(conn, "docker compose version", timeout_seconds=60)
-        if not compose_result.ok:
-            raise_for_ssh_failure(compose_result, context=f"docker compose version on {name}")
-        compose_out = (compose_result.stdout or compose_result.stderr or "").strip()
-        if not compose_out:
-            raise ValueError(f"docker compose version returned no output on {name}")
-        lines.append(f"[docker-verify] {name}: {compose_out}")
+        compose_path_result = runner.run_ssh(conn, COMPOSE_PLUGIN_PATH_CMD, timeout_seconds=30)
+        compose_path = _command_output(compose_path_result) if compose_path_result.ok else "unknown"
+        lines.append(f"[docker-verify] {name}: docker compose plugin path={compose_path}")
+
+        docker_out, docker_sudo = _run_docker_command(
+            runner,
+            conn,
+            "docker --version",
+            host_name=name,
+        )
+        lines.append(
+            f"[docker-verify] {name}: docker version={docker_out}"
+            + (" (sudo fallback)" if docker_sudo else "")
+        )
+
+        compose_out, compose_sudo = _run_docker_command(
+            runner,
+            conn,
+            "docker compose version",
+            host_name=name,
+        )
+        lines.append(
+            f"[docker-verify] {name}: docker compose version={compose_out}"
+            + (" (sudo fallback)" if compose_sudo else "")
+        )
 
     lines.append("[docker-verify] Docker and Docker Compose verified")
     return "\n".join(lines)

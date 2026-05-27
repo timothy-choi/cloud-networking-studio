@@ -121,6 +121,7 @@ Destroy is **idempotent**: repeated destroy returns `destroyed` without 500.
 | `CNS remote Docker SSH public key is not configured` | Missing `.pub` file | Generate key pair; set `CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH` |
 | SSH permission denied on target | OS Login enabled on old VM, or key mismatch | Destroy and re-apply with current template; verify key pair |
 | `docker: command not found` / exit 127 | Configure failed or incomplete | Retry configuration; check Ansible logs |
+| `docker compose` / compose plugin missing | Ubuntu docker.io without Compose v2 plugin | Re-run **Retry configuration** (installs from Docker apt repo) |
 | Firewall permission denied | SA lacks Compute Admin | Grant role; re-plan |
 | `network ... not found` | Invalid `network_name` | Use `default` or existing VPC |
 | Plan stale | Variables changed after plan | Re-run Plan |

@@ -160,7 +160,8 @@ def test_validate_mocked_ssh_succeeds(client_strict, ssh_key_env, mock_runner):
     assert "ssh key_readable=true" in logs
     assert any("docker --version" in c for c in mock_runner.ssh_commands)
     assert any("docker compose version" in c for c in mock_runner.ssh_commands)
-    assert ssh_key_env not in logs
+    assert f"ssh key_path={ssh_key_env}" in logs
+    assert "-----BEGIN TEST KEY-----" not in logs
     assert mock_runner.ssh_connections
     conn = mock_runner.ssh_connections[0]
     assert conn.known_hosts_file == f"/tmp/cns_known_hosts_{target['id']}"

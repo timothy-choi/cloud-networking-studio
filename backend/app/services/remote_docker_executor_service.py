@@ -19,7 +19,11 @@ from app.models.external_deployment_job import ExternalDeploymentJob
 from app.models.topology import Topology
 from app.services import external_deployment_service as ext_dep_svc
 from app.services import topology_iac_export_service as iac_svc
-from app.services.remote_command_runner import RemoteHostConnection, get_remote_command_runner
+from app.services.remote_command_runner import (
+    RemoteHostConnection,
+    format_ssh_command_for_log,
+    get_remote_command_runner,
+)
 from app.services.remote_credentials_service import resolve_ssh_key_path
 from app.services.remote_ssh_runtime import ensure_ssh_client_installed, raise_for_ssh_failure
 
@@ -76,6 +80,13 @@ def parse_remote_docker_config(config_json: dict | None) -> RemoteDockerTargetCo
     )
 
 
+REMOTE_DOCKER_SSH_CREDENTIALS_REF = "env:CNS_REMOTE_DOCKER_SSH_KEY_PATH"
+
+
+def external_ssh_known_hosts_path(target_id: UUID) -> str:
+    return f"/tmp/cns_known_hosts_{target_id}"
+
+
 def _connection(target: DeploymentTarget, cfg: RemoteDockerTargetConfig) -> RemoteHostConnection:
     key_path = resolve_ssh_key_path(target.credentials_ref)
     return RemoteHostConnection(
@@ -83,6 +94,29 @@ def _connection(target: DeploymentTarget, cfg: RemoteDockerTargetConfig) -> Remo
         user=cfg.ssh_user,
         port=cfg.ssh_port,
         key_path=key_path,
+        known_hosts_file=external_ssh_known_hosts_path(target.id),
+    )
+
+
+def _log_ssh_connection_debug(
+    log: JobLogBuffer,
+    *,
+    target: DeploymentTarget,
+    cfg: RemoteDockerTargetConfig,
+    conn: RemoteHostConnection,
+) -> None:
+    key_readable = os.path.isfile(conn.key_path) and os.access(conn.key_path, os.R_OK)
+    log.append(f"[remote-docker] ssh host={cfg.host}")
+    log.append(f"[remote-docker] ssh user={cfg.ssh_user}")
+    log.append(f"[remote-docker] ssh port={cfg.ssh_port}")
+    log.append(f"[remote-docker] ssh credentials_ref={target.credentials_ref or ''}")
+    log.append(f"[remote-docker] ssh key_path={conn.key_path}")
+    log.append(f"[remote-docker] ssh key_readable={str(key_readable).lower()}")
+    log.append(f"[remote-docker] ssh known_hosts_file={conn.known_hosts_file}")
+    log.append("[remote-docker] ssh IdentitiesOnly=yes enabled")
+    log.append(
+        "[remote-docker] ssh command preview: "
+        f"{format_ssh_command_for_log(conn, 'docker --version')}"
     )
 
 
@@ -156,12 +190,8 @@ def execute_validate(
     log.append(f"[remote-docker] validate job={job.id}")
     ensure_ssh_client_installed()
     cfg = parse_remote_docker_config(target.config_json)
-    log.append(f"[remote-docker] host={cfg.host} user={cfg.ssh_user} port={cfg.ssh_port}")
-
-    key_path = resolve_ssh_key_path(target.credentials_ref)
-    log.append(f"[remote-docker] credentials_ref resolved (key path length={len(key_path)})")
-
     conn = _connection(target, cfg)
+    _log_ssh_connection_debug(log, target=target, cfg=cfg, conn=conn)
     runner = get_remote_command_runner()
 
     for cmd, label in (
@@ -248,6 +278,7 @@ def execute_apply(
     ensure_ssh_client_installed()
     cfg = parse_remote_docker_config(target.config_json)
     conn = _connection(target, cfg)
+    _log_ssh_connection_debug(log, target=target, cfg=cfg, conn=conn)
     runner = get_remote_command_runner()
 
     bundle = iac_svc.load_topology_export_bundle(db, topology.id)
@@ -339,6 +370,7 @@ def execute_destroy(
     ensure_ssh_client_installed()
     cfg = parse_remote_docker_config(target.config_json)
     conn = _connection(target, cfg)
+    _log_ssh_connection_debug(log, target=target, cfg=cfg, conn=conn)
     runner = get_remote_command_runner()
 
     active = ext_dep_svc.get_active_external_deployment(

@@ -30,9 +30,56 @@ class RemoteHostConnection:
     known_hosts_file: str | None = None
 
 
+def build_ssh_shared_options(conn: RemoteHostConnection, *, include_connect_timeout: bool = False) -> list[str]:
+    """Shared OpenSSH options for SSH and SCP (never rely on default ssh-agent identities)."""
+    opts = [
+        "-i",
+        conn.key_path,
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "IdentitiesOnly=yes",
+    ]
+    if include_connect_timeout:
+        opts.extend(["-o", "ConnectTimeout=15"])
+    if conn.known_hosts_file:
+        opts.extend(
+            [
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                f"UserKnownHostsFile={conn.known_hosts_file}",
+            ]
+        )
+    else:
+        opts.extend(["-o", "StrictHostKeyChecking=accept-new"])
+    return opts
+
+
+def ssh_options_summary(conn: RemoteHostConnection) -> str:
+    """Compact SSH/SCP option summary for job logs (key path only, never key contents)."""
+    parts = [f"-i {conn.key_path}", "-o IdentitiesOnly=yes"]
+    if conn.known_hosts_file:
+        parts.extend(["-o StrictHostKeyChecking=no", f"-o UserKnownHostsFile={conn.known_hosts_file}"])
+    else:
+        parts.append("-o StrictHostKeyChecking=accept-new")
+    return " ".join(parts)
+
+
 def build_ssh_argv(conn: RemoteHostConnection, remote_command: str) -> list[str]:
     """Build argv for an SSH invocation (used by runner and safe debug logging)."""
     return _ssh_connection_argv(conn) + [remote_command]
+
+
+def build_scp_upload_argv(
+    conn: RemoteHostConnection,
+    local_path: str,
+    remote_name: str,
+    remote_dir: str,
+) -> list[str]:
+    """Build argv for a single SCP file upload."""
+    remote_target = f"{conn.user}@{conn.host}:{remote_dir}/{remote_name}"
+    return _scp_connection_argv(conn) + [local_path, remote_target]
 
 
 def format_ssh_command_for_log(conn: RemoteHostConnection, remote_command: str) -> str:
@@ -40,59 +87,33 @@ def format_ssh_command_for_log(conn: RemoteHostConnection, remote_command: str) 
     return shlex.join(build_ssh_argv(conn, remote_command))
 
 
+def format_scp_command_for_log(
+    conn: RemoteHostConnection,
+    local_path: str,
+    remote_name: str,
+    remote_dir: str,
+) -> str:
+    """Human-readable SCP command for logs (no secret key material)."""
+    return shlex.join(build_scp_upload_argv(conn, local_path, remote_name, remote_dir))
+
+
 def _ssh_connection_argv(conn: RemoteHostConnection) -> list[str]:
-    opts = [
+    return [
         "ssh",
-        "-i",
-        conn.key_path,
+        *build_ssh_shared_options(conn, include_connect_timeout=True),
         "-p",
         str(conn.port),
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "IdentitiesOnly=yes",
-        "-o",
-        "ConnectTimeout=15",
+        f"{conn.user}@{conn.host}",
     ]
-    if conn.known_hosts_file:
-        opts.extend(
-            [
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                f"UserKnownHostsFile={conn.known_hosts_file}",
-            ]
-        )
-    else:
-        opts.extend(["-o", "StrictHostKeyChecking=accept-new"])
-    opts.append(f"{conn.user}@{conn.host}")
-    return opts
 
 
 def _scp_connection_argv(conn: RemoteHostConnection) -> list[str]:
-    opts = [
+    return [
         "scp",
-        "-i",
-        conn.key_path,
+        *build_ssh_shared_options(conn),
         "-P",
         str(conn.port),
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "IdentitiesOnly=yes",
     ]
-    if conn.known_hosts_file:
-        opts.extend(
-            [
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                f"UserKnownHostsFile={conn.known_hosts_file}",
-            ]
-        )
-    else:
-        opts.extend(["-o", "StrictHostKeyChecking=accept-new"])
-    return opts
 
 
 class RemoteCommandRunner(Protocol):
@@ -150,14 +171,12 @@ class SubprocessRemoteCommandRunner:
         mkdir = self._run_ssh_no_raise(conn, f"mkdir -p {remote_dir}", timeout_seconds=timeout_seconds)
         if not mkdir.ok:
             raise_for_ssh_failure(mkdir, context="SSH mkdir")
-        scp_base = _scp_connection_argv(conn)
         outputs: list[str] = []
         errors: list[str] = []
         for local_path, remote_name in local_paths:
-            remote_target = f"{conn.user}@{conn.host}:{remote_dir}/{remote_name}"
             try:
                 proc = subprocess.run(
-                    scp_base + [local_path, remote_target],
+                    build_scp_upload_argv(conn, local_path, remote_name, remote_dir),
                     capture_output=True,
                     text=True,
                     timeout=timeout_seconds,

@@ -43,6 +43,13 @@ def test_install_docker_compose_playbook_installs_compose_plugin():
     assert "sudo docker compose version" in content
 
 
+def test_cns_runtime_dirs_playbook_owns_external_deployment_workdir_for_ssh_user():
+    content = (PLAYBOOKS / "cns-runtime-dirs.yml").read_text(encoding="utf-8")
+    assert "/opt/cns-external-deployments" in content
+    assert 'owner: "{{ ansible_user }}"' in content
+    assert 'group: "{{ ansible_user }}"' in content
+
+
 def test_ansible_playbooks_do_not_use_command_module_with_shell_builtins():
     offenders: list[str] = []
     for filename in PLAYBOOK_FILES:

@@ -67,6 +67,14 @@ def test_raise_for_ssh_permission_denied():
         raise_for_ssh_failure(result, context="SSH")
 
 
+def test_raise_for_scp_write_permission_denied():
+    from app.services.remote_ssh_runtime import SCP_WRITE_PERMISSION_DENIED_MESSAGE
+
+    result = RemoteCommandResult(1, "", "scp: /opt/cns/file: Permission denied")
+    with pytest.raises(ValueError, match=SCP_WRITE_PERMISSION_DENIED_MESSAGE):
+        raise_for_ssh_failure(result, context="SCP upload")
+
+
 def test_subprocess_runner_invokes_ssh_and_scp(tmp_path, monkeypatch):
     key_file = tmp_path / "key.pem"
     key_file.write_text("k\n", encoding="utf-8")
@@ -92,6 +100,8 @@ def test_subprocess_runner_invokes_ssh_and_scp(tmp_path, monkeypatch):
     assert "IdentitiesOnly=yes" in ssh_cmd
     assert "IdentitiesOnly=yes" in scp_cmd
     assert str(key_file) in ssh_cmd
+    assert str(key_file) in scp_cmd
+    assert "StrictHostKeyChecking=accept-new" in ssh_cmd
 
 
 def test_compose_backend_contains_env_and_secrets_mount():

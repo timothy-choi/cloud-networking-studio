@@ -21,3 +21,5 @@
         path: /opt/cns-external-deployments
         state: directory
         mode: "0755"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"

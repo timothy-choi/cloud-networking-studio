@@ -1,21 +1,66 @@
 ---
-# Whitelisted playbook: install Docker Compose plugin (Step 57C).
-- name: Install Docker Compose
+# Verify Docker Compose v2 plugin after install-docker.yml (idempotent on retry).
+- name: Verify Docker Compose plugin
   hosts: cns_runtime
   become: true
   tasks:
-    - name: Install docker-compose-plugin package (placeholder)
-      ansible.builtin.package:
+    - name: Ensure docker compose plugin package is installed
+      ansible.builtin.apt:
         name: docker-compose-plugin
         state: present
-      ignore_errors: true
+        update_cache: true
+      when: ansible_os_family == "Debian"
 
-    - name: Verify docker compose availability
-      ansible.builtin.command: docker compose version
-      register: compose_version
+    - name: Resolve docker binary path
+      ansible.builtin.command: command -v docker
+      register: docker_bin
+      changed_when: false
+
+    - name: Resolve docker compose plugin path
+      ansible.builtin.shell: |
+        set -e
+        for candidate in \
+          /usr/libexec/docker/cli-plugins/docker-compose \
+          /usr/local/lib/docker/cli-plugins/docker-compose; do
+          if test -x "$candidate"; then
+            readlink -f "$candidate"
+            exit 0
+          fi
+        done
+        exit 1
+      register: compose_plugin_bin
       changed_when: false
       failed_when: false
 
-    - name: Report compose version
+    - name: Verify docker compose as SSH user
+      ansible.builtin.command: docker compose version
+      register: compose_version_user
+      become: false
+      changed_when: false
+      failed_when: false
+
+    - name: Verify docker compose with sudo fallback
+      ansible.builtin.command: sudo docker compose version
+      register: compose_version_sudo
+      become: false
+      changed_when: false
+      failed_when: false
+      when: compose_version_user.rc != 0
+
+    - name: Log compose plugin verification
       ansible.builtin.debug:
-        msg: "{{ compose_version.stdout | default('docker compose not available') }}"
+        msg:
+          - "docker binary: {{ docker_bin.stdout | default('unknown') }}"
+          - "compose plugin: {{ compose_plugin_bin.stdout | default('not found') }}"
+          - "docker compose version (user): {{ compose_version_user.stdout | default('failed') }}"
+          - "docker compose version (sudo): {{ compose_version_sudo.stdout | default('not needed') }}"
+
+    - name: Fail when docker compose plugin is unavailable
+      ansible.builtin.fail:
+        msg: >-
+          docker compose plugin not available
+          (user rc={{ compose_version_user.rc }},
+          sudo rc={{ compose_version_sudo.rc | default('skipped') }})
+      when:
+        - compose_version_user.rc != 0
+        - compose_version_sudo.rc | default(1) != 0

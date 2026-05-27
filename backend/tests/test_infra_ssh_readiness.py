@@ -106,13 +106,56 @@ def test_wait_for_ssh_ready_times_out(monkeypatch):
         ssh_readiness.wait_for_ssh_ready(dep, timeout_seconds=15, interval_seconds=1)
 
 
-def test_verify_remote_docker_requires_compose(monkeypatch):
+def test_verify_remote_docker_accepts_sudo_fallback(monkeypatch):
+    dep = _gcp_deployment()
+    runner_calls: list[str] = []
+
+    def fake_run_ssh(conn, command, *, timeout_seconds=60):
+        runner_calls.append(command)
+        if command == "command -v docker":
+            return RemoteCommandResult(0, "/usr/bin/docker", "")
+        if "cli-plugins/docker-compose" in command:
+            return RemoteCommandResult(0, "/usr/libexec/docker/cli-plugins/docker-compose", "")
+        if command == "docker --version":
+            return RemoteCommandResult(0, "Docker version 26.0.0", "")
+        if command == "docker compose version":
+            return RemoteCommandResult(
+                1,
+                "",
+                "permission denied while trying to connect to the Docker daemon socket",
+            )
+        if command == "sudo docker compose version":
+            return RemoteCommandResult(0, "Docker Compose version v2.27.0", "")
+        return RemoteCommandResult(1, "", f"unexpected command: {command}")
+
+    runner = MagicMock()
+    runner.run_ssh.side_effect = fake_run_ssh
+    monkeypatch.setattr(ssh_readiness, "get_remote_command_runner", lambda: runner)
+    monkeypatch.setattr(ssh_readiness, "resolve_ssh_key_path", lambda _ref: "/tmp/fake-key")
+
+    log = ssh_readiness.verify_remote_docker(dep)
+    assert "sudo fallback" in log
+    assert "Docker Compose version v2.27.0" in log
+    assert "docker compose plugin path=" in log
+    assert "sudo docker compose version" in runner_calls
+
+
+def test_verify_remote_docker_fails_when_compose_unavailable(monkeypatch):
     dep = _gcp_deployment()
     runner = MagicMock()
-    runner.run_ssh.side_effect = [
-        RemoteCommandResult(0, "Docker version 24.0.0", ""),
-        RemoteCommandResult(127, "", "docker: 'compose' is not a docker command"),
-    ]
+
+    def fake_run_ssh(conn, command, *, timeout_seconds=60):
+        if command == "command -v docker":
+            return RemoteCommandResult(0, "/usr/bin/docker", "")
+        if "cli-plugins/docker-compose" in command:
+            return RemoteCommandResult(0, "compose-plugin-path-not-found", "")
+        if command == "docker --version":
+            return RemoteCommandResult(0, "Docker version 26.0.0", "")
+        if command in {"docker compose version", "sudo docker compose version"}:
+            return RemoteCommandResult(1, "", "docker: 'compose' is not a docker command")
+        return RemoteCommandResult(0, "ok", "")
+
+    runner.run_ssh.side_effect = fake_run_ssh
     monkeypatch.setattr(ssh_readiness, "get_remote_command_runner", lambda: runner)
     monkeypatch.setattr(ssh_readiness, "resolve_ssh_key_path", lambda _ref: "/tmp/fake-key")
 

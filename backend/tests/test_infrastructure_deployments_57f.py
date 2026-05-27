@@ -80,7 +80,7 @@ def test_configuration_failed_when_ansible_fails(client_strict, monkeypatch, tmp
 
 def test_retry_configuration_recovers(client_strict, monkeypatch, tmp_path):
     _gcp_credentials(monkeypatch, tmp_path)
-    _install_runner(monkeypatch)
+    runner = _install_runner(monkeypatch)
     h = _register(client_strict, prefix="cfgretry")
     _, topo_id = _project_and_topology(client_strict, h)
     dep_id = _create_gcp_deployment(client_strict, h, topo_id)
@@ -96,10 +96,25 @@ def test_retry_configuration_recovers(client_strict, monkeypatch, tmp_path):
             json={"confirm": True, "confirmation_text": "APPLY"},
         )
 
+    apply_calls_before_retry = sum(
+        1
+        for c in runner.calls
+        if c.get("execution_type") == "terraform" and c.get("mode") == "apply"
+    )
+    assert apply_calls_before_retry == 1
+
     retry = client_strict.post(f"/infrastructure-deployments/{dep_id}/retry-configure", headers=h)
     assert retry.status_code == 200, retry.text
     assert retry.json()["status"] == "succeeded"
     assert len(retry.json()["runtime_targets_json"]) >= 1
+
+    apply_calls_after_retry = sum(
+        1
+        for c in runner.calls
+        if c.get("execution_type") == "terraform" and c.get("mode") == "apply"
+    )
+    assert apply_calls_after_retry == apply_calls_before_retry
+    assert any(ev["type"] == "configure_retry_started" for ev in retry.json()["events_json"])
 
 
 def test_destroy_from_configuration_failed(client_strict, monkeypatch, tmp_path):

@@ -269,6 +269,7 @@ def retry_configuration(
     deployment: InfrastructureDeployment,
     actor: User,
 ) -> InfrastructureDeployment:
+    """Retry host configuration only (SSH wait, Ansible, Docker verify). Does not re-run Terraform."""
     if deployment.status not in RETRY_CONFIGURATION_STATUSES:
         raise InfraInvalidStateError(
             f"Retry configuration requires configuration_failed or registration_failed (current: {deployment.status})"

@@ -144,9 +144,15 @@ def test_gcp_target_registered_with_writable_remote_workdir_after_checks(client_
     assert body["status"] == "succeeded"
     assert verify_calls == ["docker", "workdir"]
     assert len(body["runtime_targets_json"]) >= 1
-    target = body["runtime_targets_json"][0]
-    assert target["config_json"]["remote_workdir"] == "/opt/cns-external-deployments"
-    assert target["config_json"]["ssh_user"] == "ubuntu"
+    snapshot = body["runtime_targets_json"][0]
+    assert snapshot["host"] == "203.0.113.55"
+    assert snapshot["target_type"] == "remote_docker"
+
+    target_resp = client_strict.get(f"/deployment-targets/{snapshot['target_id']}", headers=h)
+    assert target_resp.status_code == 200, target_resp.text
+    target_body = target_resp.json()
+    assert target_body["config_json"]["remote_workdir"] == "/opt/cns-external-deployments"
+    assert target_body["config_json"]["ssh_user"] == "ubuntu"
 
 
 def test_retry_configuration_recovers(client_strict, monkeypatch, tmp_path):

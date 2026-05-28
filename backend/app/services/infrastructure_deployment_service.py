@@ -108,7 +108,44 @@ RETRY_CONFIGURATION_STATUSES = frozenset({"configuration_failed", "registration_
 
 def _has_been_applied(deployment: InfrastructureDeployment) -> bool:
     meta = deployment.state_metadata_json or {}
-    return bool(meta.get("applied_at") or meta.get("apply_execution_id"))
+    return bool(
+        meta.get("terraform_apply_completed")
+        or meta.get("applied_at")
+        or meta.get("apply_execution_id")
+    )
+
+
+def _can_retry_configuration(deployment: InfrastructureDeployment) -> bool:
+    if not _has_been_applied(deployment):
+        return False
+    if deployment.status in RETRY_CONFIGURATION_STATUSES:
+        return True
+    return deployment.status in {"applying", "configuring"}
+
+
+def _persist_terraform_apply_completion(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+    apply_execution_id: UUID,
+    outputs: dict,
+    started: float,
+) -> None:
+    """Persist Terraform outputs and apply marker before host configuration begins."""
+    deployment.outputs_json = {**(deployment.outputs_json or {}), **outputs}
+    deployment.state_metadata_json = {
+        **(deployment.state_metadata_json or {}),
+        "applied_at": datetime.now(UTC).isoformat(),
+        "apply_execution_id": str(apply_execution_id),
+        "terraform_apply_completed": True,
+    }
+    deployment.events_json = append_event(deployment.events_json, "apply_completed")
+    deployment.metrics_json = record_metric(
+        deployment.metrics_json,
+        "terraform_apply_duration_ms",
+        int((time.monotonic() - started) * 1000),
+    )
+    db.flush()
 
 
 def _can_destroy_deployment(deployment: InfrastructureDeployment) -> bool:
@@ -239,7 +276,7 @@ def _finalize_after_configuration(
         deployment.events_json = append_event(
             deployment.events_json,
             "recovery_hint",
-            message="Retry configuration or destroy infrastructure to cleanup cloud resources.",
+            message="Use Retry configuration to finish host setup, or destroy infrastructure to cleanup cloud resources.",
         )
         db.flush()
         return
@@ -281,12 +318,11 @@ def retry_configuration(
     actor: User,
 ) -> InfrastructureDeployment:
     """Retry host configuration only (SSH wait, Ansible, Docker verify). Does not re-run Terraform."""
-    if deployment.status not in RETRY_CONFIGURATION_STATUSES:
+    if not _can_retry_configuration(deployment):
         raise InfraInvalidStateError(
-            f"Retry configuration requires configuration_failed or registration_failed (current: {deployment.status})"
+            "Retry configuration requires a completed Terraform apply and a host configuration "
+            f"failure or in-progress configuration (current: {deployment.status})"
         )
-    if not _has_been_applied(deployment):
-        raise ValueError("Cannot retry configuration before Terraform apply completed.")
 
     _require_real_cloud_ready(deployment)
     deployment.events_json = append_event(
@@ -670,11 +706,18 @@ def _confirm_and_apply_mock(
         ],
     }
     deployment.events_json = append_event(deployment.events_json, "apply_completed")
+    deployment.state_metadata_json = {
+        **(deployment.state_metadata_json or {}),
+        "applied_at": datetime.now(UTC).isoformat(),
+        "apply_execution_id": str(tf_apply.id),
+        "terraform_apply_completed": True,
+    }
     deployment.metrics_json = record_metric(
         deployment.metrics_json,
         "terraform_apply_duration_ms",
         int((time.monotonic() - started) * 1000),
     )
+    db.flush()
 
     inv_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="inventory")
     inventory = ansible_svc.generate_inventory(deployment)
@@ -749,6 +792,12 @@ def confirm_and_apply(
             f"Deployment must be awaiting_confirmation (current: {deployment.status})"
         )
 
+    if _has_been_applied(deployment):
+        raise InfraInvalidStateError(
+            "Terraform apply already completed for this deployment. "
+            "Use Retry configuration to finish host setup."
+        )
+
     if is_real_cloud_provider(deployment.provider) and not is_mock_infrastructure_deployment(deployment):
         if not is_gcp_docker_vm_apply_eligible(deployment):
             raise RealCloudApplyDisabledError()
@@ -806,17 +855,12 @@ def _confirm_and_apply_real(
 ) -> None:
     tf_apply = _new_execution(db, deployment=deployment, execution_type="terraform", mode="apply")
     _, _, outputs = tf_svc.execute_apply(db, execution=tf_apply, deployment=deployment)
-    deployment.outputs_json = {**(deployment.outputs_json or {}), **outputs}
-    deployment.state_metadata_json = {
-        **(deployment.state_metadata_json or {}),
-        "applied_at": datetime.now(UTC).isoformat(),
-        "apply_execution_id": str(tf_apply.id),
-    }
-    deployment.events_json = append_event(deployment.events_json, "apply_completed")
-    deployment.metrics_json = record_metric(
-        deployment.metrics_json,
-        "terraform_apply_duration_ms",
-        int((time.monotonic() - started) * 1000),
+    _persist_terraform_apply_completion(
+        db,
+        deployment=deployment,
+        apply_execution_id=tf_apply.id,
+        outputs=outputs,
+        started=started,
     )
 
     configuration_status, configuration_error = _run_host_configuration(db, deployment=deployment)

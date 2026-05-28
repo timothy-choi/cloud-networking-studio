@@ -56,7 +56,7 @@ def test_configuration_failed_when_ssh_not_ready(client_strict, monkeypatch, tmp
 
 def test_configuration_failed_when_ansible_fails(client_strict, monkeypatch, tmp_path):
     _gcp_credentials(monkeypatch, tmp_path)
-    _install_runner(monkeypatch)
+    runner = _install_runner(monkeypatch)
     h = _register(client_strict, prefix="cfgfail")
     _, topo_id = _project_and_topology(client_strict, h)
     dep_id = _create_gcp_deployment(client_strict, h, topo_id)
@@ -75,7 +75,24 @@ def test_configuration_failed_when_ansible_fails(client_strict, monkeypatch, tmp
     body = confirm.json()
     assert body["status"] == "configuration_failed"
     assert "SSH connection timed out" in (body.get("error_message") or "")
+    assert body["state_metadata_json"]["terraform_apply_completed"] is True
+    assert body["outputs_json"]["public_ip"] == "203.0.113.55"
     assert any(ev["type"] == "configure_failed" for ev in body["events_json"])
+    apply_calls = sum(
+        1 for c in runner.calls if c.get("execution_type") == "terraform" and c.get("mode") == "apply"
+    )
+    assert apply_calls == 1
+
+    confirm_again = client_strict.post(
+        f"/infrastructure-deployments/{dep_id}/confirm",
+        headers=h,
+        json={"confirm": True, "confirmation_text": "APPLY"},
+    )
+    assert confirm_again.status_code == 409, confirm_again.text
+    apply_calls_after = sum(
+        1 for c in runner.calls if c.get("execution_type") == "terraform" and c.get("mode") == "apply"
+    )
+    assert apply_calls_after == 1
 
 
 def test_configuration_failed_when_remote_workdir_not_writable(client_strict, monkeypatch, tmp_path):
@@ -192,6 +209,55 @@ def test_retry_configuration_recovers(client_strict, monkeypatch, tmp_path):
     )
     assert apply_calls_after_retry == apply_calls_before_retry
     assert any(ev["type"] == "configure_retry_started" for ev in retry.json()["events_json"])
+
+
+def test_retry_configuration_from_stuck_applying_skips_terraform(client_strict, engine_db, monkeypatch, tmp_path):
+    from uuid import UUID
+
+    from app.db.session import SessionLocal
+    from app.models.infrastructure_deployment import InfrastructureDeployment
+
+    _gcp_credentials(monkeypatch, tmp_path)
+    runner = _install_runner(monkeypatch)
+    h = _register(client_strict, prefix="stuckapply")
+    _, topo_id = _project_and_topology(client_strict, h)
+    dep_id = _create_gcp_deployment(client_strict, h, topo_id)
+    _plan_gcp(client_strict, h, dep_id)
+
+    with patch(
+        "app.services.infrastructure_deployment_service.ansible_svc.execute_configure",
+        side_effect=ValueError("temporary configure failure"),
+    ):
+        client_strict.post(
+            f"/infrastructure-deployments/{dep_id}/confirm",
+            headers=h,
+            json={"confirm": True, "confirmation_text": "APPLY"},
+        )
+
+    with SessionLocal() as db:
+        deployment = db.get(InfrastructureDeployment, UUID(dep_id))
+        assert deployment is not None
+        assert deployment.state_metadata_json.get("terraform_apply_completed") is True
+        deployment.status = "applying"
+        db.commit()
+
+    apply_calls_before_retry = sum(
+        1
+        for c in runner.calls
+        if c.get("execution_type") == "terraform" and c.get("mode") == "apply"
+    )
+    assert apply_calls_before_retry == 1
+
+    retry = client_strict.post(f"/infrastructure-deployments/{dep_id}/retry-configure", headers=h)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["status"] == "succeeded"
+
+    apply_calls_after_retry = sum(
+        1
+        for c in runner.calls
+        if c.get("execution_type") == "terraform" and c.get("mode") == "apply"
+    )
+    assert apply_calls_after_retry == apply_calls_before_retry
 
 
 def test_destroy_from_configuration_failed(client_strict, monkeypatch, tmp_path):

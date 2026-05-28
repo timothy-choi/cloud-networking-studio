@@ -173,12 +173,23 @@ export function extractApplySafetyChecklist(
   return checklist as ApplySafetyChecklist;
 }
 
+export function hasTerraformApplyCompleted(
+  stateMetadata: Record<string, unknown> | null | undefined,
+): boolean {
+  const meta = stateMetadata ?? {};
+  return Boolean(meta.terraform_apply_completed || meta.applied_at || meta.apply_execution_id);
+}
+
 export function canShowApplyAction(
   status: string,
   templateId: string,
   provider: string,
   planSummary: Record<string, unknown> | null | undefined,
+  stateMetadata?: Record<string, unknown> | null,
 ): boolean {
+  if (hasTerraformApplyCompleted(stateMetadata)) {
+    return false;
+  }
   if (status !== 'awaiting_confirmation') {
     return false;
   }
@@ -244,11 +255,20 @@ export function canDestroyInfrastructureDeployment(
     return false;
   }
   const meta = stateMetadata ?? {};
-  return Boolean(meta.applied_at || meta.apply_execution_id);
+  return Boolean(meta.terraform_apply_completed || meta.applied_at || meta.apply_execution_id);
 }
 
-export function canShowRetryConfigurationAction(status: string): boolean {
-  return status === 'configuration_failed' || status === 'registration_failed';
+export function canShowRetryConfigurationAction(
+  status: string,
+  stateMetadata?: Record<string, unknown> | null,
+): boolean {
+  if (status === 'configuration_failed' || status === 'registration_failed') {
+    return true;
+  }
+  if (hasTerraformApplyCompleted(stateMetadata)) {
+    return status === 'applying' || status === 'configuring';
+  }
+  return false;
 }
 
 export function canShowDestroyAction(

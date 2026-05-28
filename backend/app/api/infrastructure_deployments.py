@@ -239,6 +239,17 @@ def confirm_infrastructure_deployment(
                 "expected_status": "awaiting_confirmation",
             },
         )
+    if infra_svc._has_been_applied(deployment):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Terraform apply already completed for this deployment. "
+                    "Use Retry configuration to finish host setup."
+                ),
+                "status": deployment.status,
+            },
+        )
     try:
         deployment = infra_svc.confirm_and_apply(
             db,

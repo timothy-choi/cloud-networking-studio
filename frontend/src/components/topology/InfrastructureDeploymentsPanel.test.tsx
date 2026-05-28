@@ -16,6 +16,7 @@ import {
   deriveTerraformStatus,
   extractApplySafetyChecklist,
   hasOpenInternetCidr,
+  hasTerraformApplyCompleted,
   validateInfrastructureCreateForm,
 } from './infrastructureDeploymentForm';
 import { InfrastructureDeploymentsPanel, submitInfrastructureCreate } from './InfrastructureDeploymentsPanel';
@@ -137,6 +138,9 @@ describe('infrastructureDeploymentForm', () => {
     expect(canShowApplyAction('awaiting_confirmation', 'docker-vm', 'gcp', { safety_checklist: { passed: false } })).toBe(
       false,
     );
+    const appliedMeta = { terraform_apply_completed: true, applied_at: '2026-01-01T00:00:00Z' };
+    expect(canShowApplyAction('awaiting_confirmation', 'docker-vm', 'gcp', gcpPlanSummary, appliedMeta)).toBe(false);
+    expect(hasTerraformApplyCompleted(appliedMeta)).toBe(true);
     expect(canShowValidateAction('pending')).toBe(true);
     expect(canShowPlanAction('validated')).toBe(true);
     expect(canShowPlanAction('awaiting_confirmation')).toBe(false);
@@ -151,12 +155,15 @@ describe('infrastructureDeploymentForm', () => {
   });
 
   it('shows destroy from partial failure states when apply metadata exists', () => {
-    const appliedMeta = { applied_at: '2026-01-01T00:00:00Z', apply_execution_id: 'x' };
+    const appliedMeta = { applied_at: '2026-01-01T00:00:00Z', apply_execution_id: 'x', terraform_apply_completed: true };
     expect(canShowDestroyAction('configuration_failed', 'docker-vm', 'gcp', appliedMeta)).toBe(true);
     expect(canShowDestroyAction('registration_failed', 'docker-vm', 'gcp', appliedMeta)).toBe(true);
-    expect(canShowRetryConfigurationAction('configuration_failed')).toBe(true);
-    expect(canShowRetryConfigurationAction('registration_failed')).toBe(true);
-    expect(canShowRetryConfigurationAction('succeeded')).toBe(false);
+    expect(canShowRetryConfigurationAction('configuration_failed', appliedMeta)).toBe(true);
+    expect(canShowRetryConfigurationAction('registration_failed', appliedMeta)).toBe(true);
+    expect(canShowRetryConfigurationAction('applying', appliedMeta)).toBe(true);
+    expect(canShowRetryConfigurationAction('configuring', appliedMeta)).toBe(true);
+    expect(canShowRetryConfigurationAction('succeeded', appliedMeta)).toBe(false);
+    expect(canShowRetryConfigurationAction('awaiting_confirmation', appliedMeta)).toBe(false);
     expect(destroyDisabledReason('configuration_failed', 'docker-vm', 'gcp', appliedMeta)).toBeNull();
   });
 
@@ -254,6 +261,11 @@ describe('InfrastructureDeploymentsPanel', () => {
     expect(
       canShowApplyAction('awaiting_confirmation', 'docker-vm', 'gcp', gcpPlanSummary),
     ).toBe(true);
+    expect(
+      canShowApplyAction('awaiting_confirmation', 'docker-vm', 'gcp', gcpPlanSummary, {
+        terraform_apply_completed: true,
+      }),
+    ).toBe(false);
     expect(
       hasOpenInternetCidr({ allowed_ssh_cidr: '0.0.0.0/0', allowed_app_cidr: '203.0.113.0/24' }),
     ).toBe(true);

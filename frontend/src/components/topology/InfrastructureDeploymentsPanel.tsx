@@ -316,7 +316,13 @@ export function InfrastructureDeploymentsPanel({
       )
     : null;
   const showApplyButton = selected
-    ? canShowApplyAction(selected.status, selected.template_id, selected.provider, plan)
+    ? canShowApplyAction(
+        selected.status,
+        selected.template_id,
+        selected.provider,
+        plan,
+        selected.state_metadata_json,
+      )
     : false;
   const showDestroyButton = selected
     ? canShowDestroyAction(
@@ -326,7 +332,9 @@ export function InfrastructureDeploymentsPanel({
         selected.state_metadata_json,
       )
     : false;
-  const showRetryConfigureButton = selected ? canShowRetryConfigurationAction(selected.status) : false;
+  const showRetryConfigureButton = selected
+    ? canShowRetryConfigurationAction(selected.status, selected.state_metadata_json)
+    : false;
   const openCidrWarning =
     isGcpDeployment && hasOpenInternetCidr(selected?.variables_json as Record<string, unknown> | undefined);
   const showGcpFields = isGcpDockerVmForm(templateId, provider);

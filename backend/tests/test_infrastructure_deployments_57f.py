@@ -214,8 +214,7 @@ def test_retry_configuration_recovers(client_strict, monkeypatch, tmp_path):
 def test_retry_configuration_from_stuck_applying_skips_terraform(client_strict, engine_db, monkeypatch, tmp_path):
     from uuid import UUID
 
-    from sqlalchemy.orm import Session
-
+    from app.db.session import SessionLocal
     from app.models.infrastructure_deployment import InfrastructureDeployment
 
     _gcp_credentials(monkeypatch, tmp_path)
@@ -235,7 +234,7 @@ def test_retry_configuration_from_stuck_applying_skips_terraform(client_strict, 
             json={"confirm": True, "confirmation_text": "APPLY"},
         )
 
-    with Session(engine_db) as db:
+    with SessionLocal() as db:
         deployment = db.get(InfrastructureDeployment, UUID(dep_id))
         assert deployment is not None
         assert deployment.state_metadata_json.get("terraform_apply_completed") is True

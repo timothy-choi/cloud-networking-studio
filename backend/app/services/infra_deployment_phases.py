@@ -279,7 +279,7 @@ def build_phase_checklist(deployment: InfrastructureDeployment) -> list[dict[str
 def enrich_state_metadata(deployment: InfrastructureDeployment) -> dict[str, Any]:
     meta = dict(deployment.state_metadata_json or {})
     meta["phase_checklist"] = build_phase_checklist(deployment)
-    if has_terraform_resources(deployment) and deployment.status in {
+    if has_terraform_apply_completed(deployment) and deployment.status in {
         "configuration_failed",
         "configuration_timeout",
         "apply_partial",

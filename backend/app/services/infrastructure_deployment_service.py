@@ -304,7 +304,7 @@ def _run_host_configuration(
             "configure_failed",
             message=message,
         )
-        return "failed", message
+        return "timeout", message
     except ValueError as exc:
         deployment.events_json = append_event(
             deployment.events_json,
@@ -331,14 +331,15 @@ def _finalize_after_configuration(
     configuration_error: str | None,
 ) -> None:
     if configuration_status != "completed":
-        timed_out = bool(configuration_error and "timed out" in configuration_error.lower())
+        timed_out = configuration_status == "timeout"
         deployment.status = infra_phases.configuration_failure_status(timed_out=timed_out)
         deployment.error_message = configuration_error or "Host configuration failed."
-        deployment.events_json = append_event(
-            deployment.events_json,
-            "recovery_hint",
-            message=infra_phases.RECOVERY_MESSAGE,
-        )
+        if _has_been_applied(deployment):
+            deployment.events_json = append_event(
+                deployment.events_json,
+                "recovery_hint",
+                message=infra_phases.RECOVERY_MESSAGE,
+            )
         db.flush()
         return
 
@@ -410,15 +411,15 @@ def retry_configuration(
             configuration_error=configuration_error,
         )
     except ValueError as exc:
-        timed_out = "timed out" in str(exc).lower()
-        deployment.status = infra_phases.configuration_failure_status(timed_out=timed_out)
+        deployment.status = "configuration_failed"
         deployment.error_message = str(exc)
         deployment.events_json = append_event(deployment.events_json, "configure_failed", message=str(exc))
-        deployment.events_json = append_event(
-            deployment.events_json,
-            "recovery_hint",
-            message=infra_phases.RECOVERY_MESSAGE,
-        )
+        if _has_been_applied(deployment):
+            deployment.events_json = append_event(
+                deployment.events_json,
+                "recovery_hint",
+                message=infra_phases.RECOVERY_MESSAGE,
+            )
 
     db.flush()
     record_audit(
@@ -908,25 +909,16 @@ def confirm_and_apply(
     except ValueError as exc:
         if _has_been_applied(deployment):
             raise InfraInvalidStateError(infra_phases.STALE_PLAN_AFTER_APPLY_MESSAGE) from exc
-        if "stale" in str(exc).lower():
-            deployment.status = "apply_partial" if infra_phases.has_terraform_apply_started(deployment) else "failed"
-            deployment.error_message = infra_phases.STALE_PLAN_AFTER_APPLY_MESSAGE
-        else:
-            deployment.status = "apply_partial" if infra_phases.has_terraform_apply_started(deployment) else "failed"
-            deployment.error_message = str(exc)
+        deployment.status = "failed"
+        deployment.error_message = (
+            infra_phases.STALE_PLAN_AFTER_APPLY_MESSAGE if "stale" in str(exc).lower() else str(exc)
+        )
         deployment.events_json = append_event(
             deployment.events_json,
             "apply_failed",
             message=deployment.error_message,
         )
-        if infra_phases.has_terraform_resources(deployment):
-            deployment.events_json = append_event(
-                deployment.events_json,
-                "recovery_hint",
-                message=infra_phases.RECOVERY_MESSAGE,
-            )
-        else:
-            deployment.events_json = append_event(deployment.events_json, "failed", message=deployment.error_message)
+        deployment.events_json = append_event(deployment.events_json, "failed", message=deployment.error_message)
         deployment.metrics_json = increment_counter(deployment.metrics_json, "failure_count")
 
     db.flush()

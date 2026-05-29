@@ -178,6 +178,31 @@ def _can_destroy_deployment(deployment: InfrastructureDeployment) -> bool:
     )
 
 
+def _queue_host_configuration(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+    actor: User,
+) -> None:
+    """Persist queue marker and start post-apply configuration in the background."""
+    from app.services.infra_configuration_runner import enqueue_host_configuration
+
+    deployment.events_json = append_event(
+        deployment.events_json,
+        "configuration_queued",
+        message="Post-apply configuration queued",
+    )
+    deployment.state_metadata_json = {
+        **(deployment.state_metadata_json or {}),
+        "configuration_job_status": "queued",
+        "configuration_queued_at": datetime.now(UTC).isoformat(),
+    }
+    deployment.status = "configuring"
+    db.flush()
+    _commit_deployment_state(db, deployment)
+    enqueue_host_configuration(deployment_id=deployment.id, actor_user_id=actor.id)
+
+
 def _append_configuration_progress(
     deployment: InfrastructureDeployment,
     *,
@@ -211,7 +236,13 @@ def _run_host_configuration(
                 flush=True,
                 **{infra_phases.PHASE_SSH_READINESS_STARTED: True},
             )
+            deployment.events_json = append_event(
+                deployment.events_json,
+                "ssh_readiness_started",
+                message="SSH readiness check started",
+            )
             _append_configuration_progress(deployment, message="SSH readiness: waiting for port 22 and authentication")
+            _commit_deployment_state(db, deployment)
             readiness_exec = _new_execution(
                 db, deployment=deployment, execution_type="ansible", mode="ssh_readiness"
             )
@@ -235,6 +266,7 @@ def _run_host_configuration(
                     message="SSH port and authentication ready",
                     metadata={"log_preview": readiness_log[-2000:]},
                 )
+                _commit_deployment_state(db, deployment)
             except ValueError as exc:
                 readiness_exec.status = "failed"
                 readiness_exec.logs = str(exc)
@@ -261,6 +293,7 @@ def _run_host_configuration(
         )
         _append_configuration_progress(deployment, message="Host configuration: running Ansible playbooks")
         db.flush()
+        _commit_deployment_state(db, deployment)
 
         ansible_started = time.monotonic()
         ansible_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="playbook")
@@ -398,11 +431,20 @@ def retry_configuration(
     actor: User,
 ) -> InfrastructureDeployment:
     """Retry host configuration only (SSH wait, Ansible, Docker verify). Does not re-run Terraform."""
+    from app.services.infra_configuration_runner import is_configuration_job_running
+
     if not _can_retry_configuration(deployment):
         raise InfraInvalidStateError(
             "Retry configuration requires a completed Terraform apply and incomplete host configuration "
             f"(current: {deployment.status})"
         )
+
+    if is_configuration_job_running(deployment.id):
+        raise InfraInvalidStateError("Configuration is already running.")
+
+    meta = deployment.state_metadata_json or {}
+    if meta.get("configuration_job_status") == "running":
+        raise InfraInvalidStateError("Configuration is already running.")
 
     _require_real_cloud_ready(deployment)
     deployment.events_json = append_event(
@@ -411,28 +453,8 @@ def retry_configuration(
         message="Retrying host configuration",
     )
     db.flush()
+    _queue_host_configuration(db, deployment=deployment, actor=actor)
 
-    try:
-        configuration_status, configuration_error = _run_host_configuration(db, deployment=deployment)
-        _finalize_after_configuration(
-            db,
-            deployment=deployment,
-            actor=actor,
-            configuration_status=configuration_status,
-            configuration_error=configuration_error,
-        )
-    except ValueError as exc:
-        deployment.status = "configuration_failed"
-        deployment.error_message = str(exc)
-        deployment.events_json = append_event(deployment.events_json, "configure_failed", message=str(exc))
-        if _has_been_applied(deployment):
-            deployment.events_json = append_event(
-                deployment.events_json,
-                "recovery_hint",
-                message=infra_phases.RECOVERY_MESSAGE,
-            )
-
-    db.flush()
     record_audit(
         db,
         action="infrastructure_deployment.retry_configure",
@@ -963,15 +985,7 @@ def _confirm_and_apply_real(
         outputs=outputs,
         started=started,
     )
-
-    configuration_status, configuration_error = _run_host_configuration(db, deployment=deployment)
-    _finalize_after_configuration(
-        db,
-        deployment=deployment,
-        actor=actor,
-        configuration_status=configuration_status,
-        configuration_error=configuration_error,
-    )
+    _queue_host_configuration(db, deployment=deployment, actor=actor)
 
 
 def destroy_deployment(

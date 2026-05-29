@@ -200,6 +200,16 @@ def configuration_failure_status(*, timed_out: bool = False) -> str:
     return "configuration_timeout" if timed_out else "configuration_failed"
 
 
+def configuration_job_status(deployment: InfrastructureDeployment) -> str | None:
+    meta = deployment.state_metadata_json or {}
+    value = meta.get("configuration_job_status")
+    return str(value) if value else None
+
+
+def is_configuration_job_active(deployment: InfrastructureDeployment) -> bool:
+    return configuration_job_status(deployment) in {"queued", "running"}
+
+
 def build_phase_checklist(deployment: InfrastructureDeployment) -> list[dict[str, Any]]:
     phases = get_phases(deployment)
     status = deployment.status
@@ -224,6 +234,8 @@ def build_phase_checklist(deployment: InfrastructureDeployment) -> list[dict[str
     config_failed = status in {"configuration_failed", "configuration_timeout", "registration_failed"} or (
         "configure_failed" in event_types
     )
+
+    config_job_active = is_configuration_job_active(deployment)
 
     return [
         {
@@ -251,7 +263,15 @@ def build_phase_checklist(deployment: InfrastructureDeployment) -> list[dict[str
                 PHASE_SSH_READINESS_COMPLETED,
                 started_flag=PHASE_SSH_READINESS_STARTED,
                 failed="ssh_readiness_failed" in event_types,
-                running=phases.get(PHASE_SSH_READINESS_STARTED) and not phases.get(PHASE_SSH_READINESS_COMPLETED),
+                running=(
+                    (phases.get(PHASE_SSH_READINESS_STARTED) and not phases.get(PHASE_SSH_READINESS_COMPLETED))
+                    or (
+                        status == "configuring"
+                        and has_terraform_apply_completed(deployment)
+                        and config_job_active
+                        and not phases.get(PHASE_SSH_READINESS_COMPLETED)
+                    )
+                ),
             ),
         },
         {
@@ -261,7 +281,18 @@ def build_phase_checklist(deployment: InfrastructureDeployment) -> list[dict[str
                 PHASE_CONFIGURATION_COMPLETED,
                 started_flag=PHASE_CONFIGURATION_STARTED,
                 failed=config_failed,
-                running=status in {"configuring", "applying"} and phases.get(PHASE_CONFIGURATION_STARTED) and not phases.get(PHASE_CONFIGURATION_COMPLETED),
+                running=(
+                    status in {"configuring", "applying"}
+                    and phases.get(PHASE_CONFIGURATION_STARTED)
+                    and not phases.get(PHASE_CONFIGURATION_COMPLETED)
+                )
+                or (
+                    status == "configuring"
+                    and has_terraform_apply_completed(deployment)
+                    and config_job_active
+                    and phases.get(PHASE_SSH_READINESS_COMPLETED)
+                    and not phases.get(PHASE_CONFIGURATION_COMPLETED)
+                ),
             ),
         },
         {
@@ -279,6 +310,12 @@ def build_phase_checklist(deployment: InfrastructureDeployment) -> list[dict[str
 def enrich_state_metadata(deployment: InfrastructureDeployment) -> dict[str, Any]:
     meta = dict(deployment.state_metadata_json or {})
     meta["phase_checklist"] = build_phase_checklist(deployment)
+    job_status = configuration_job_status(deployment)
+    if job_status:
+        meta["configuration_job_status"] = job_status
+    queued_at = meta.get("configuration_queued_at")
+    if queued_at:
+        meta["configuration_queued_at"] = queued_at
     if has_terraform_apply_completed(deployment) and deployment.status in {
         "configuration_failed",
         "configuration_timeout",

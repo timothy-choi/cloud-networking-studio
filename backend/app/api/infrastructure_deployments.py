@@ -14,6 +14,7 @@ from app.schemas.infrastructure_deployment import (
     InfrastructureDeploymentConfirmRequest,
     InfrastructureDeploymentCreate,
     InfrastructureDeploymentDestroyRequest,
+    InfrastructureDeploymentForceCleanupRequest,
     InfrastructureDeploymentListResponse,
     InfrastructureDeploymentResponse,
     InfrastructureExecutionListResponse,
@@ -21,6 +22,7 @@ from app.schemas.infrastructure_deployment import (
     InfrastructureTemplateInfo,
     InfrastructureTemplateListResponse,
 )
+from app.services import infra_deployment_phases as infra_phases
 from app.services.access_control import get_topology_for_user, require_topology_editor
 from app.services import infrastructure_deployment_service as infra_svc
 from app.services.infra_apply_safety import InfraApplySafetyError, InfraInvalidStateError
@@ -44,7 +46,7 @@ def _to_deployment(row) -> InfrastructureDeploymentResponse:
         plan_summary_json=row.plan_summary_json,
         outputs_json=row.outputs_json or {},
         inventory_json=row.inventory_json or {},
-        state_metadata_json=row.state_metadata_json or {},
+        state_metadata_json=infra_phases.enrich_state_metadata(row),
         events_json=row.events_json or [],
         metrics_json=row.metrics_json or {},
         runtime_targets_json=row.runtime_targets_json or [],
@@ -227,6 +229,16 @@ def confirm_infrastructure_deployment(
     require_topology_editor(db, user, deployment.topology_id)
     if not body.confirm:
         raise HTTPException(status_code=400, detail="Confirmation required")
+    if infra_phases.has_terraform_apply_completed(deployment) or infra_phases.has_terraform_apply_started(
+        deployment
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": infra_phases.APPLY_ALREADY_COMPLETED_MESSAGE,
+                "status": deployment.status,
+            },
+        )
     if deployment.status != "awaiting_confirmation":
         raise HTTPException(
             status_code=409,
@@ -237,17 +249,6 @@ def confirm_infrastructure_deployment(
                 ),
                 "status": deployment.status,
                 "expected_status": "awaiting_confirmation",
-            },
-        )
-    if infra_svc._has_been_applied(deployment):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": (
-                    "Terraform apply already completed for this deployment. "
-                    "Use Retry configuration to finish host setup."
-                ),
-                "status": deployment.status,
             },
         )
     try:
@@ -332,6 +333,32 @@ def destroy_infrastructure_deployment(
         )
     except infra_svc.PlanOnlyDestroyDisabledError as exc:
         raise HTTPException(status_code=409, detail=exc.message) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(deployment)
+    return _to_deployment(deployment)
+
+
+@router.post(
+    "/infrastructure-deployments/{deployment_id}/force-metadata-cleanup",
+    response_model=InfrastructureDeploymentResponse,
+)
+def force_infrastructure_metadata_cleanup(
+    deployment_id: UUID,
+    body: InfrastructureDeploymentForceCleanupRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> InfrastructureDeploymentResponse:
+    deployment = _get_deployment_for_user(db, user, deployment_id)
+    require_topology_editor(db, user, deployment.topology_id)
+    try:
+        deployment = infra_svc.force_metadata_cleanup(
+            db,
+            deployment=deployment,
+            actor=user,
+            confirmation_text=body.confirmation_text,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()

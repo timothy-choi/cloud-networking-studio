@@ -36,7 +36,9 @@ from app.services.infra_apply_safety import (
     variables_hash,
 )
 from app.services import infra_ssh_readiness as ssh_readiness_svc
+from app.services import infra_deployment_phases as infra_phases
 from app.services.remote_ssh_public_key_service import resolve_remote_docker_ssh_public_key
+from app.runtime.infra_runner_client import InfraRunnerClientError
 
 
 from app.services.terraform_credentials_service import resolve_terraform_credentials_env
@@ -99,28 +101,27 @@ def _require_real_cloud_ready(deployment: InfrastructureDeployment) -> None:
         resolve_remote_docker_ssh_public_key()
 
 
-POST_APPLY_DESTROYABLE_STATUSES = frozenset(
-    {"succeeded", "configuration_failed", "registration_failed", "failed"}
-)
+POST_APPLY_DESTROYABLE_STATUSES = infra_phases.DESTROYABLE_STATUSES
 
-RETRY_CONFIGURATION_STATUSES = frozenset({"configuration_failed", "registration_failed"})
+RETRY_CONFIGURATION_STATUSES = infra_phases.RETRY_CONFIGURATION_STATUSES
 
 
 def _has_been_applied(deployment: InfrastructureDeployment) -> bool:
-    meta = deployment.state_metadata_json or {}
-    return bool(
-        meta.get("terraform_apply_completed")
-        or meta.get("applied_at")
-        or meta.get("apply_execution_id")
-    )
+    return infra_phases.has_terraform_apply_completed(deployment)
 
 
 def _can_retry_configuration(deployment: InfrastructureDeployment) -> bool:
-    if not _has_been_applied(deployment):
-        return False
-    if deployment.status in RETRY_CONFIGURATION_STATUSES:
-        return True
-    return deployment.status in {"applying", "configuring"}
+    return infra_phases.can_retry_configuration(deployment)
+
+
+def _mark_terraform_apply_started(db: Session, *, deployment: InfrastructureDeployment) -> None:
+    infra_phases.persist_workspace_metadata(deployment)
+    infra_phases.mark_phases(
+        deployment,
+        db=db,
+        flush=True,
+        **{infra_phases.PHASE_TERRAFORM_APPLY_STARTED: True},
+    )
 
 
 def _persist_terraform_apply_completion(
@@ -135,10 +136,21 @@ def _persist_terraform_apply_completion(
     deployment.outputs_json = {**(deployment.outputs_json or {}), **outputs}
     deployment.state_metadata_json = {
         **(deployment.state_metadata_json or {}),
+        **infra_phases.workspace_metadata(deployment),
         "applied_at": datetime.now(UTC).isoformat(),
         "apply_execution_id": str(apply_execution_id),
         "terraform_apply_completed": True,
+        "terraform_apply_started": True,
     }
+    deployment.status = "configuring"
+    infra_phases.mark_phases(
+        deployment,
+        **{
+            infra_phases.PHASE_TERRAFORM_APPLY_STARTED: True,
+            infra_phases.PHASE_TERRAFORM_APPLY_COMPLETED: True,
+            infra_phases.PHASE_TERRAFORM_OUTPUTS_CAPTURED: True,
+        },
+    )
     deployment.events_json = append_event(deployment.events_json, "apply_completed")
     deployment.metrics_json = record_metric(
         deployment.metrics_json,
@@ -149,13 +161,24 @@ def _persist_terraform_apply_completion(
 
 
 def _can_destroy_deployment(deployment: InfrastructureDeployment) -> bool:
-    if deployment.status in {"destroyed", "destroying"}:
-        return True
-    if is_mock_infrastructure_deployment(deployment):
-        return deployment.status == "succeeded"
-    if deployment.status in POST_APPLY_DESTROYABLE_STATUSES:
-        return _has_been_applied(deployment)
-    return False
+    return infra_phases.can_destroy_deployment(
+        deployment,
+        is_mock=is_mock_infrastructure_deployment(deployment),
+    )
+
+
+def _append_configuration_progress(
+    deployment: InfrastructureDeployment,
+    *,
+    message: str,
+    metadata: dict | None = None,
+) -> None:
+    deployment.events_json = append_event(
+        deployment.events_json,
+        "configuration_progress",
+        message=message,
+        metadata=metadata or {},
+    )
 
 
 def _run_host_configuration(
@@ -165,11 +188,19 @@ def _run_host_configuration(
 ) -> tuple[str, str | None]:
     """Run SSH readiness, Ansible inventory/configure, and Docker verification."""
     try:
+        _append_configuration_progress(deployment, message="Generating Ansible inventory")
         inv_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="inventory")
         _, _, inv_outputs = ansible_svc.execute_inventory(db, execution=inv_exec, deployment=deployment)
         deployment.inventory_json = inv_outputs.get("inventory") or ansible_svc.generate_inventory(deployment)
 
         if is_gcp_docker_vm_apply_eligible(deployment):
+            infra_phases.mark_phases(
+                deployment,
+                db=db,
+                flush=True,
+                **{infra_phases.PHASE_SSH_READINESS_STARTED: True},
+            )
+            _append_configuration_progress(deployment, message="SSH readiness: waiting for port 22 and authentication")
             readiness_exec = _new_execution(
                 db, deployment=deployment, execution_type="ansible", mode="ssh_readiness"
             )
@@ -181,6 +212,12 @@ def _run_host_configuration(
                 readiness_exec.status = "succeeded"
                 readiness_exec.logs = readiness_log
                 readiness_exec.finished_at = datetime.now(UTC)
+                infra_phases.mark_phases(
+                    deployment,
+                    db=db,
+                    flush=True,
+                    **{infra_phases.PHASE_SSH_READINESS_COMPLETED: True},
+                )
                 deployment.events_json = append_event(
                     deployment.events_json,
                     "ssh_readiness_completed",
@@ -200,11 +237,18 @@ def _run_host_configuration(
                 raise
 
         deployment.status = "configuring"
+        infra_phases.mark_phases(
+            deployment,
+            db=db,
+            flush=True,
+            **{infra_phases.PHASE_CONFIGURATION_STARTED: True},
+        )
         deployment.events_json = append_event(
             deployment.events_json,
             "configure_started",
             message="Ansible configuration started",
         )
+        _append_configuration_progress(deployment, message="Host configuration: running Ansible playbooks")
         db.flush()
 
         ansible_started = time.monotonic()
@@ -212,6 +256,7 @@ def _run_host_configuration(
         ansible_svc.execute_configure(db, execution=ansible_exec, deployment=deployment)
 
         if is_gcp_docker_vm_apply_eligible(deployment):
+            _append_configuration_progress(deployment, message="Host configuration: verifying Docker and Compose")
             verify_exec = _new_execution(
                 db, deployment=deployment, execution_type="ansible", mode="docker_verify"
             )
@@ -223,6 +268,7 @@ def _run_host_configuration(
             verify_exec.logs = verify_log
             verify_exec.finished_at = datetime.now(UTC)
 
+            _append_configuration_progress(deployment, message="Host configuration: verifying remote workdir permissions")
             workdir_exec = _new_execution(
                 db, deployment=deployment, execution_type="ansible", mode="workdir_verify"
             )
@@ -234,6 +280,12 @@ def _run_host_configuration(
             workdir_exec.logs = workdir_log
             workdir_exec.finished_at = datetime.now(UTC)
 
+        infra_phases.mark_phases(
+            deployment,
+            db=db,
+            flush=True,
+            **{infra_phases.PHASE_CONFIGURATION_COMPLETED: True},
+        )
         deployment.events_json = append_event(
             deployment.events_json,
             "configure_completed",
@@ -245,6 +297,14 @@ def _run_host_configuration(
             int((time.monotonic() - ansible_started) * 1000),
         )
         return "completed", None
+    except InfraRunnerClientError as exc:
+        message = f"Configuration runner unavailable or timed out: {exc.message}"
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "configure_failed",
+            message=message,
+        )
+        return "failed", message
     except ValueError as exc:
         deployment.events_json = append_event(
             deployment.events_json,
@@ -271,17 +331,25 @@ def _finalize_after_configuration(
     configuration_error: str | None,
 ) -> None:
     if configuration_status != "completed":
-        deployment.status = "configuration_failed"
+        timed_out = bool(configuration_error and "timed out" in configuration_error.lower())
+        deployment.status = infra_phases.configuration_failure_status(timed_out=timed_out)
         deployment.error_message = configuration_error or "Host configuration failed."
         deployment.events_json = append_event(
             deployment.events_json,
             "recovery_hint",
-            message="Use Retry configuration to finish host setup, or destroy infrastructure to cleanup cloud resources.",
+            message=infra_phases.RECOVERY_MESSAGE,
         )
         db.flush()
         return
 
     targets = _register_runtime_targets(db, deployment=deployment, actor=actor)
+    if targets:
+        infra_phases.mark_phases(
+            deployment,
+            db=db,
+            flush=False,
+            **{infra_phases.PHASE_RUNTIME_TARGET_REGISTERED: True},
+        )
     if not targets and not is_mock_infrastructure_deployment(deployment):
         reason = _registration_failure_reason(deployment)
         deployment.status = "registration_failed"
@@ -320,8 +388,8 @@ def retry_configuration(
     """Retry host configuration only (SSH wait, Ansible, Docker verify). Does not re-run Terraform."""
     if not _can_retry_configuration(deployment):
         raise InfraInvalidStateError(
-            "Retry configuration requires a completed Terraform apply and a host configuration "
-            f"failure or in-progress configuration (current: {deployment.status})"
+            "Retry configuration requires a completed Terraform apply and incomplete host configuration "
+            f"(current: {deployment.status})"
         )
 
     _require_real_cloud_ready(deployment)
@@ -342,9 +410,15 @@ def retry_configuration(
             configuration_error=configuration_error,
         )
     except ValueError as exc:
-        deployment.status = "configuration_failed"
+        timed_out = "timed out" in str(exc).lower()
+        deployment.status = infra_phases.configuration_failure_status(timed_out=timed_out)
         deployment.error_message = str(exc)
         deployment.events_json = append_event(deployment.events_json, "configure_failed", message=str(exc))
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "recovery_hint",
+            message=infra_phases.RECOVERY_MESSAGE,
+        )
 
     db.flush()
     record_audit(
@@ -787,16 +861,9 @@ def confirm_and_apply(
     confirmation_text: str | None = None,
     unsafe_testing_override: bool = False,
 ) -> InfrastructureDeployment:
-    if deployment.status != "awaiting_confirmation":
-        raise InfraInvalidStateError(
-            f"Deployment must be awaiting_confirmation (current: {deployment.status})"
-        )
-
-    if _has_been_applied(deployment):
-        raise InfraInvalidStateError(
-            "Terraform apply already completed for this deployment. "
-            "Use Retry configuration to finish host setup."
-        )
+    can_apply, apply_block_reason = infra_phases.can_confirm_apply(deployment)
+    if not can_apply:
+        raise InfraInvalidStateError(apply_block_reason or infra_phases.APPLY_ALREADY_COMPLETED_MESSAGE)
 
     if is_real_cloud_provider(deployment.provider) and not is_mock_infrastructure_deployment(deployment):
         if not is_gcp_docker_vm_apply_eligible(deployment):
@@ -811,7 +878,7 @@ def confirm_and_apply(
     deployment.confirmed_by_user_id = actor.id
     deployment.status = "applying"
     deployment.events_json = append_event(deployment.events_json, "apply_started")
-    db.flush()
+    _mark_terraform_apply_started(db, deployment=deployment)
 
     try:
         if is_mock_infrastructure_deployment(deployment):
@@ -822,15 +889,44 @@ def confirm_and_apply(
         raise
     except InfraInvalidStateError:
         raise
-    except ValueError as exc:
-        deployment.status = "failed"
-        deployment.error_message = str(exc)
+    except InfraRunnerClientError as exc:
+        if _has_been_applied(deployment):
+            raise InfraInvalidStateError(infra_phases.STALE_PLAN_AFTER_APPLY_MESSAGE) from exc
+        deployment.status = "apply_partial"
+        deployment.error_message = f"Terraform apply request failed or timed out: {exc.message}"
         deployment.events_json = append_event(
             deployment.events_json,
             "apply_failed",
-            message=str(exc),
+            message=deployment.error_message,
         )
-        deployment.events_json = append_event(deployment.events_json, "failed", message=str(exc))
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "recovery_hint",
+            message=infra_phases.RECOVERY_MESSAGE,
+        )
+        deployment.metrics_json = increment_counter(deployment.metrics_json, "failure_count")
+    except ValueError as exc:
+        if _has_been_applied(deployment):
+            raise InfraInvalidStateError(infra_phases.STALE_PLAN_AFTER_APPLY_MESSAGE) from exc
+        if "stale" in str(exc).lower():
+            deployment.status = "apply_partial" if infra_phases.has_terraform_apply_started(deployment) else "failed"
+            deployment.error_message = infra_phases.STALE_PLAN_AFTER_APPLY_MESSAGE
+        else:
+            deployment.status = "apply_partial" if infra_phases.has_terraform_apply_started(deployment) else "failed"
+            deployment.error_message = str(exc)
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "apply_failed",
+            message=deployment.error_message,
+        )
+        if infra_phases.has_terraform_resources(deployment):
+            deployment.events_json = append_event(
+                deployment.events_json,
+                "recovery_hint",
+                message=infra_phases.RECOVERY_MESSAGE,
+            )
+        else:
+            deployment.events_json = append_event(deployment.events_json, "failed", message=deployment.error_message)
         deployment.metrics_json = increment_counter(deployment.metrics_json, "failure_count")
 
     db.flush()
@@ -854,7 +950,12 @@ def _confirm_and_apply_real(
     started: float,
 ) -> None:
     tf_apply = _new_execution(db, deployment=deployment, execution_type="terraform", mode="apply")
-    _, _, outputs = tf_svc.execute_apply(db, execution=tf_apply, deployment=deployment)
+    try:
+        _, _, outputs = tf_svc.execute_apply(db, execution=tf_apply, deployment=deployment)
+    except (ValueError, InfraRunnerClientError) as exc:
+        if _has_been_applied(deployment):
+            raise InfraInvalidStateError(infra_phases.STALE_PLAN_AFTER_APPLY_MESSAGE) from exc
+        raise
     _persist_terraform_apply_completion(
         db,
         deployment=deployment,
@@ -890,12 +991,21 @@ def destroy_deployment(
         if (confirmation_text or "").strip() != "DESTROY":
             raise ValueError("Typed confirmation required: enter DESTROY to confirm destroy.")
         _require_real_cloud_ready(deployment)
+        if infra_phases.has_terraform_resources(deployment) and not infra_phases.has_terraform_workspace(deployment):
+            raise ValueError(
+                "Terraform workspace/state is missing. Use force metadata cleanup if cloud resources cannot be reached."
+            )
     elif is_real_cloud_provider(deployment.provider):
         raise PlanOnlyDestroyDisabledError()
 
     deployment.status = "destroying"
+    infra_phases.mark_phases(
+        deployment,
+        db=db,
+        flush=True,
+        **{infra_phases.PHASE_DESTROY_STARTED: True},
+    )
     deployment.events_json = append_event(deployment.events_json, "destroy_started")
-    db.flush()
 
     try:
         _deactivate_linked_runtime_targets(db, deployment=deployment, actor=actor)
@@ -908,13 +1018,25 @@ def destroy_deployment(
         deployment.status = "destroyed"
         deployment.destroyed_at = datetime.now(UTC)
         deployment.runtime_targets_json = []
+        infra_phases.mark_phases(
+            deployment,
+            db=db,
+            flush=False,
+            **{infra_phases.PHASE_DESTROY_COMPLETED: True},
+        )
         deployment.events_json = append_event(deployment.events_json, "destroyed")
         deployment.metrics_json = increment_counter(deployment.metrics_json, "destroy_count")
         deployment.error_message = None
-    except ValueError as exc:
+    except (ValueError, InfraRunnerClientError) as exc:
         if deployment.status == "destroying" and "nothing to destroy" in str(exc).lower():
             deployment.status = "destroyed"
             deployment.destroyed_at = datetime.now(UTC)
+            infra_phases.mark_phases(
+                deployment,
+                db=db,
+                flush=False,
+                **{infra_phases.PHASE_DESTROY_COMPLETED: True},
+            )
             deployment.events_json = append_event(
                 deployment.events_json,
                 "destroyed",
@@ -922,9 +1044,9 @@ def destroy_deployment(
             )
             deployment.error_message = None
         else:
-            deployment.status = "failed"
-            deployment.error_message = str(exc)
-            deployment.events_json = append_event(deployment.events_json, "failed", message=str(exc))
+            deployment.status = "destroy_failed"
+            deployment.error_message = str(getattr(exc, "message", exc))
+            deployment.events_json = append_event(deployment.events_json, "destroy_failed", message=deployment.error_message)
             deployment.metrics_json = increment_counter(deployment.metrics_json, "failure_count")
 
     db.flush()
@@ -962,3 +1084,51 @@ def get_apply_safety_preview(deployment: InfrastructureDeployment) -> dict:
     if not is_gcp_docker_vm_apply_eligible(deployment):
         return {"passed": False, "items": [], "apply_eligible": False}
     return {**build_apply_safety_checklist(deployment), "apply_eligible": True}
+
+
+def force_metadata_cleanup(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+    actor: User,
+    confirmation_text: str | None = None,
+) -> InfrastructureDeployment:
+    """Mark deployment destroyed in metadata only when Terraform workspace/state is unavailable."""
+    if deployment.status in {"destroyed", "destroying"}:
+        return deployment
+    if (confirmation_text or "").strip() != "CLEANUP":
+        raise ValueError("Typed confirmation required: enter CLEANUP to confirm metadata-only cleanup.")
+    if infra_phases.has_terraform_workspace(deployment):
+        raise ValueError(
+            "Terraform workspace/state still exists. Use Destroy infrastructure instead of metadata-only cleanup."
+        )
+    if not infra_phases.has_terraform_resources(deployment):
+        raise ValueError("Nothing to cleanup: Terraform apply has not started for this deployment.")
+
+    _deactivate_linked_runtime_targets(db, deployment=deployment, actor=actor)
+    deployment.status = "destroyed"
+    deployment.destroyed_at = datetime.now(UTC)
+    deployment.runtime_targets_json = []
+    deployment.error_message = None
+    deployment.events_json = append_event(
+        deployment.events_json,
+        "metadata_cleanup_completed",
+        message="Metadata-only cleanup completed. Cloud resources may still exist.",
+    )
+    infra_phases.mark_phases(
+        deployment,
+        db=db,
+        flush=False,
+        **{infra_phases.PHASE_DESTROY_COMPLETED: True},
+    )
+    db.flush()
+    record_audit(
+        db,
+        action="infrastructure_deployment.force_metadata_cleanup",
+        resource_type="infrastructure_deployment",
+        resource_id=deployment.id,
+        project_id=deployment.project_id,
+        actor_user_id=actor.id,
+        status=deployment.status,
+    )
+    return deployment

@@ -10,7 +10,10 @@ export type InfrastructureDeploymentStatus =
   | 'configuring'
   | 'succeeded'
   | 'configuration_failed'
+  | 'configuration_timeout'
+  | 'apply_partial'
   | 'registration_failed'
+  | 'destroy_failed'
   | 'failed'
   | 'destroying'
   | 'destroyed';
@@ -145,4 +148,17 @@ export async function destroyInfrastructureDeployment(
     method: 'POST',
     body: JSON.stringify(body),
   });
+}
+
+export async function forceInfrastructureMetadataCleanup(
+  deploymentId: string,
+  confirmationText: string,
+): Promise<InfrastructureDeployment> {
+  return apiFetch<InfrastructureDeployment>(
+    `/infrastructure-deployments/${deploymentId}/force-metadata-cleanup`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ confirmation_text: confirmationText }),
+    },
+  );
 }

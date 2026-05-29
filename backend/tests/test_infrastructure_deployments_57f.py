@@ -260,6 +260,80 @@ def test_retry_configuration_from_stuck_applying_skips_terraform(client_strict, 
     assert apply_calls_after_retry == apply_calls_before_retry
 
 
+def test_destroy_from_configuring(client_strict, engine_db, monkeypatch, tmp_path):
+    from uuid import UUID
+
+    from app.db.session import SessionLocal
+    from app.models.infrastructure_deployment import InfrastructureDeployment
+
+    _gcp_credentials(monkeypatch, tmp_path)
+    runner = _CapturingInfraRunner()
+    from app.runtime.infra_runner_client import set_infra_runner_client
+
+    set_infra_runner_client(runner)
+    h = _register(client_strict, prefix="destroycfg")
+    _, topo_id = _project_and_topology(client_strict, h)
+    dep_id = _create_gcp_deployment(client_strict, h, topo_id)
+    _plan_gcp(client_strict, h, dep_id)
+
+    with patch(
+        "app.services.infrastructure_deployment_service.ansible_svc.execute_configure",
+        side_effect=ValueError("configure failed"),
+    ):
+        client_strict.post(
+            f"/infrastructure-deployments/{dep_id}/confirm",
+            headers=h,
+            json={"confirm": True, "confirmation_text": "APPLY"},
+        )
+
+    with SessionLocal() as db:
+        deployment = db.get(InfrastructureDeployment, UUID(dep_id))
+        assert deployment is not None
+        deployment.status = "configuring"
+        db.commit()
+
+    destroy = client_strict.post(
+        f"/infrastructure-deployments/{dep_id}/destroy",
+        headers=h,
+        json={"confirmation_text": "DESTROY"},
+    )
+    assert destroy.status_code == 200, destroy.text
+    assert destroy.json()["status"] == "destroyed"
+
+
+def test_reload_after_config_failure_hides_apply_and_shows_recovery(client_strict, monkeypatch, tmp_path):
+    _gcp_credentials(monkeypatch, tmp_path)
+    _install_runner(monkeypatch)
+    h = _register(client_strict, prefix="reloadcfg")
+    _, topo_id = _project_and_topology(client_strict, h)
+    dep_id = _create_gcp_deployment(client_strict, h, topo_id)
+    _plan_gcp(client_strict, h, dep_id)
+
+    with patch(
+        "app.services.infrastructure_deployment_service.ansible_svc.execute_configure",
+        side_effect=ValueError("SSH connection timed out"),
+    ):
+        client_strict.post(
+            f"/infrastructure-deployments/{dep_id}/confirm",
+            headers=h,
+            json={"confirm": True, "confirmation_text": "APPLY"},
+        )
+
+    fetched = client_strict.get(f"/infrastructure-deployments/{dep_id}", headers=h)
+    assert fetched.status_code == 200, fetched.text
+    body = fetched.json()
+    assert body["state_metadata_json"]["terraform_apply_completed"] is True
+    assert body["state_metadata_json"]["recovery_message"]
+    assert body["state_metadata_json"]["phase_checklist"]
+
+    confirm_again = client_strict.post(
+        f"/infrastructure-deployments/{dep_id}/confirm",
+        headers=h,
+        json={"confirm": True, "confirmation_text": "APPLY"},
+    )
+    assert confirm_again.status_code == 409
+
+
 def test_destroy_from_configuration_failed(client_strict, monkeypatch, tmp_path):
     _gcp_credentials(monkeypatch, tmp_path)
     runner = _CapturingInfraRunner()

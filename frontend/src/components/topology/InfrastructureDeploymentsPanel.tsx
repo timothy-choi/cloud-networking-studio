@@ -30,6 +30,8 @@ import {
   deriveTerraformStatus,
   destroyDisabledReason,
   extractApplySafetyChecklist,
+  extractPhaseChecklist,
+  extractRecoveryMessage,
   hasOpenInternetCidr,
   isGcpDockerVmDeployment,
   isGcpDockerVmForm,
@@ -296,6 +298,8 @@ export function InfrastructureDeploymentsPanel({
   const eventTypes = (selected?.events_json ?? []).map((ev) => ev.type);
   const terraformStatus = selected ? deriveTerraformStatus(selected.status, eventTypes) : null;
   const configurationStatus = selected ? deriveConfigurationStatus(selected.status, eventTypes) : null;
+  const phaseChecklist = selected ? extractPhaseChecklist(selected.state_metadata_json) : [];
+  const recoveryMessage = selected ? extractRecoveryMessage(selected.state_metadata_json) : null;
   const runtimeTargets = selected?.runtime_targets_json ?? [];
   const isMockDeployment = selected
     ? isMockInfrastructureDeployment(selected.template_id, selected.provider)
@@ -580,10 +584,10 @@ export function InfrastructureDeploymentsPanel({
                 {selected.error_message ? (
                   <p className="mt-2 text-xs text-red-600">{selected.error_message}</p>
                 ) : null}
-                {showRetryConfigureButton ? (
+                {showRetryConfigureButton || recoveryMessage ? (
                   <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
-                    Host configuration or runtime target registration did not complete. Retry configuration or
-                    destroy infrastructure to cleanup cloud resources.
+                    {recoveryMessage ??
+                      'Host configuration or runtime target registration did not complete. Retry configuration or destroy infrastructure to cleanup cloud resources.'}
                   </p>
                 ) : null}
                 {plan ? (
@@ -674,28 +678,56 @@ export function InfrastructureDeploymentsPanel({
                 ) : null}
 
                 <div className="mt-3 grid gap-2 rounded border border-zinc-200 p-2 text-xs dark:border-zinc-700">
-                  <div>
-                    <span className="font-medium">Terraform:</span>{' '}
-                    <span className={statusTone(terraformStatus === 'failed' ? 'failed' : 'succeeded')}>
-                      {terraformStatus}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="font-medium">Ansible / configuration:</span>{' '}
-                    <span
-                      className={statusTone(
-                        configurationStatus === 'failed'
-                          ? 'failed'
-                          : configurationStatus === 'completed'
-                            ? 'succeeded'
-                            : configurationStatus === 'running'
-                              ? 'awaiting_confirmation'
-                              : 'pending',
-                      )}
-                    >
-                      {configurationStatus}
-                    </span>
-                  </div>
+                  {phaseChecklist.length > 0 ? (
+                    <div className="space-y-1">
+                      <div className="font-medium">Deployment phases</div>
+                      <ul className="space-y-1">
+                        {phaseChecklist.map((phase) => (
+                          <li key={phase.name} className="flex items-center justify-between gap-2">
+                            <span>{phase.label}</span>
+                            <span
+                              className={statusTone(
+                                phase.status === 'failed'
+                                  ? 'failed'
+                                  : phase.status === 'completed'
+                                    ? 'succeeded'
+                                    : phase.status === 'running'
+                                      ? 'awaiting_confirmation'
+                                      : 'pending',
+                              )}
+                            >
+                              {phase.status}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <span className="font-medium">Terraform:</span>{' '}
+                        <span className={statusTone(terraformStatus === 'failed' ? 'failed' : 'succeeded')}>
+                          {terraformStatus}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="font-medium">Ansible / configuration:</span>{' '}
+                        <span
+                          className={statusTone(
+                            configurationStatus === 'failed'
+                              ? 'failed'
+                              : configurationStatus === 'completed'
+                                ? 'succeeded'
+                                : configurationStatus === 'running'
+                                  ? 'awaiting_confirmation'
+                                  : 'pending',
+                          )}
+                        >
+                          {configurationStatus}
+                        </span>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-2">

@@ -173,11 +173,65 @@ export function extractApplySafetyChecklist(
   return checklist as ApplySafetyChecklist;
 }
 
+export function hasTerraformApplyStarted(
+  stateMetadata: Record<string, unknown> | null | undefined,
+): boolean {
+  const meta = stateMetadata ?? {};
+  const phases = (meta.phases as Record<string, unknown> | undefined) ?? {};
+  return Boolean(meta.terraform_apply_started || phases.terraform_apply_started);
+}
+
 export function hasTerraformApplyCompleted(
   stateMetadata: Record<string, unknown> | null | undefined,
 ): boolean {
   const meta = stateMetadata ?? {};
-  return Boolean(meta.terraform_apply_completed || meta.applied_at || meta.apply_execution_id);
+  const phases = (meta.phases as Record<string, unknown> | undefined) ?? {};
+  return Boolean(
+    meta.terraform_apply_completed ||
+      phases.terraform_apply_completed ||
+      meta.applied_at ||
+      meta.apply_execution_id,
+  );
+}
+
+export function hasTerraformResources(
+  stateMetadata: Record<string, unknown> | null | undefined,
+): boolean {
+  return hasTerraformApplyStarted(stateMetadata) || hasTerraformApplyCompleted(stateMetadata);
+}
+
+export const RECOVERY_MESSAGE =
+  'Terraform created cloud resources, but configuration did not finish. Retry configuration or destroy infrastructure.';
+
+export type InfraPhaseChecklistItem = {
+  name: string;
+  label: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+};
+
+export function extractPhaseChecklist(
+  stateMetadata: Record<string, unknown> | null | undefined,
+): InfraPhaseChecklistItem[] {
+  const raw = stateMetadata?.phase_checklist;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .filter((item): item is InfraPhaseChecklistItem => typeof item === 'object' && item !== null)
+    .map((item) => ({
+      name: String(item.name ?? ''),
+      label: String(item.label ?? ''),
+      status: (['pending', 'running', 'completed', 'failed'].includes(String(item.status))
+        ? item.status
+        : 'pending') as InfraPhaseChecklistItem['status'],
+    }));
+}
+
+export function extractRecoveryMessage(
+  stateMetadata: Record<string, unknown> | null | undefined,
+): string | null {
+  const message = stateMetadata?.recovery_message;
+  return typeof message === 'string' && message.trim() ? message : null;
 }
 
 export function canShowApplyAction(
@@ -187,7 +241,7 @@ export function canShowApplyAction(
   planSummary: Record<string, unknown> | null | undefined,
   stateMetadata?: Record<string, unknown> | null,
 ): boolean {
-  if (hasTerraformApplyCompleted(stateMetadata)) {
+  if (hasTerraformResources(stateMetadata)) {
     return false;
   }
   if (status !== 'awaiting_confirmation') {
@@ -236,7 +290,12 @@ export const POST_APPLY_DESTROYABLE_STATUSES = new Set([
   'succeeded',
   'configuration_failed',
   'registration_failed',
+  'apply_partial',
+  'configuration_timeout',
+  'destroy_failed',
   'failed',
+  'applying',
+  'configuring',
 ]);
 
 export function canDestroyInfrastructureDeployment(
@@ -251,24 +310,39 @@ export function canDestroyInfrastructureDeployment(
   if (isMockInfrastructureDeployment(templateId, provider)) {
     return status === 'succeeded';
   }
-  if (!POST_APPLY_DESTROYABLE_STATUSES.has(status)) {
+  if (!hasTerraformResources(stateMetadata)) {
     return false;
   }
-  const meta = stateMetadata ?? {};
-  return Boolean(meta.terraform_apply_completed || meta.applied_at || meta.apply_execution_id);
+  return POST_APPLY_DESTROYABLE_STATUSES.has(status) || hasTerraformApplyCompleted(stateMetadata);
 }
 
 export function canShowRetryConfigurationAction(
   status: string,
   stateMetadata?: Record<string, unknown> | null,
 ): boolean {
-  if (status === 'configuration_failed' || status === 'registration_failed') {
-    return true;
+  if (!hasTerraformApplyCompleted(stateMetadata)) {
+    return false;
   }
-  if (hasTerraformApplyCompleted(stateMetadata)) {
-    return status === 'applying' || status === 'configuring';
+  return (
+    status === 'configuration_failed' ||
+    status === 'registration_failed' ||
+    status === 'apply_partial' ||
+    status === 'configuration_timeout' ||
+    status === 'applying' ||
+    status === 'configuring'
+  );
+}
+
+export function canShowForceMetadataCleanupAction(
+  status: string,
+  stateMetadata?: Record<string, unknown> | null,
+): boolean {
+  if (!hasTerraformResources(stateMetadata)) {
+    return false;
   }
-  return false;
+  const meta = stateMetadata ?? {};
+  const hasWorkspace = Boolean(meta.workspace_id || meta.plan_file || meta.terraform_workspace_path);
+  return !hasWorkspace && status !== 'destroyed' && status !== 'destroying';
 }
 
 export function canShowDestroyAction(
@@ -315,6 +389,8 @@ export function deriveTerraformStatus(
     status === 'configuring' ||
     status === 'succeeded' ||
     status === 'configuration_failed' ||
+    status === 'configuration_timeout' ||
+    status === 'apply_partial' ||
     status === 'registration_failed'
   ) {
     return 'applied';
@@ -338,7 +414,7 @@ export function deriveConfigurationStatus(
   status: string,
   eventTypes: string[],
 ): string {
-  if (status === 'configuration_failed' || eventTypes.includes('configure_failed')) {
+  if (status === 'configuration_failed' || status === 'configuration_timeout' || eventTypes.includes('configure_failed')) {
     return 'failed';
   }
   if (status === 'registration_failed' || eventTypes.includes('registration_failed')) {

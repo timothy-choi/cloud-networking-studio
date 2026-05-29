@@ -19,6 +19,9 @@ INFRA_DEPLOYMENT_STATUSES = frozenset(
         "succeeded",
         "configuration_failed",
         "registration_failed",
+        "apply_partial",
+        "configuration_timeout",
+        "destroy_failed",
         "failed",
         "destroying",
         "destroyed",
@@ -112,5 +115,11 @@ class InfrastructureDeploymentConfirmRequest(BaseModel):
 
 class InfrastructureDeploymentDestroyRequest(BaseModel):
     """Typed confirmation gate before terraform destroy."""
+
+    confirmation_text: str | None = Field(default=None, max_length=32)
+
+
+class InfrastructureDeploymentForceCleanupRequest(BaseModel):
+    """Typed confirmation gate before metadata-only cleanup."""
 
     confirmation_text: str | None = Field(default=None, max_length=32)

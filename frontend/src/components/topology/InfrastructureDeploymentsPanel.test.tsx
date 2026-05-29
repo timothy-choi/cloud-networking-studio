@@ -15,8 +15,12 @@ import {
   deriveConfigurationStatus,
   deriveTerraformStatus,
   extractApplySafetyChecklist,
+  extractPhaseChecklist,
+  extractRecoveryMessage,
   hasOpenInternetCidr,
   hasTerraformApplyCompleted,
+  hasTerraformApplyStarted,
+  hasTerraformResources,
   validateInfrastructureCreateForm,
 } from './infrastructureDeploymentForm';
 import { InfrastructureDeploymentsPanel, submitInfrastructureCreate } from './InfrastructureDeploymentsPanel';
@@ -141,6 +145,8 @@ describe('infrastructureDeploymentForm', () => {
     const appliedMeta = { terraform_apply_completed: true, applied_at: '2026-01-01T00:00:00Z' };
     expect(canShowApplyAction('awaiting_confirmation', 'docker-vm', 'gcp', gcpPlanSummary, appliedMeta)).toBe(false);
     expect(hasTerraformApplyCompleted(appliedMeta)).toBe(true);
+    expect(hasTerraformApplyStarted({ terraform_apply_started: true })).toBe(true);
+    expect(hasTerraformResources({ terraform_apply_started: true })).toBe(true);
     expect(canShowValidateAction('pending')).toBe(true);
     expect(canShowPlanAction('validated')).toBe(true);
     expect(canShowPlanAction('awaiting_confirmation')).toBe(false);
@@ -162,6 +168,10 @@ describe('infrastructureDeploymentForm', () => {
     expect(canShowRetryConfigurationAction('registration_failed', appliedMeta)).toBe(true);
     expect(canShowRetryConfigurationAction('applying', appliedMeta)).toBe(true);
     expect(canShowRetryConfigurationAction('configuring', appliedMeta)).toBe(true);
+    expect(canShowRetryConfigurationAction('apply_partial', appliedMeta)).toBe(true);
+    expect(canShowRetryConfigurationAction('configuration_timeout', appliedMeta)).toBe(true);
+    expect(canShowDestroyAction('configuring', 'docker-vm', 'gcp', appliedMeta)).toBe(true);
+    expect(canShowDestroyAction('apply_partial', 'docker-vm', 'gcp', appliedMeta)).toBe(true);
     expect(canShowRetryConfigurationAction('succeeded', appliedMeta)).toBe(false);
     expect(canShowRetryConfigurationAction('awaiting_confirmation', appliedMeta)).toBe(false);
     expect(destroyDisabledReason('configuration_failed', 'docker-vm', 'gcp', appliedMeta)).toBeNull();
@@ -174,10 +184,26 @@ describe('infrastructureDeploymentForm', () => {
 
   it('derives configuration_failed and registration_failed display status', () => {
     expect(deriveConfigurationStatus('configuration_failed', ['configure_failed'])).toBe('failed');
+    expect(deriveConfigurationStatus('configuration_timeout', ['configure_failed'])).toBe('failed');
     expect(deriveConfigurationStatus('registration_failed', ['registration_failed'])).toBe('registration_failed');
     expect(
       deriveTerraformStatus('configuration_failed', ['apply_completed', 'configure_failed']),
     ).toBe('applied');
+    expect(deriveTerraformStatus('apply_partial', ['apply_started'])).toBe('applied');
+  });
+
+  it('extracts phase checklist and recovery message from state metadata', () => {
+    const meta = {
+      recovery_message:
+        'Terraform created cloud resources, but configuration did not finish. Retry configuration or destroy infrastructure.',
+      phase_checklist: [
+        { name: 'terraform_apply', label: 'Terraform apply', status: 'completed' },
+        { name: 'host_configuration', label: 'Host configuration', status: 'failed' },
+      ],
+    };
+    expect(extractRecoveryMessage(meta)).toContain('Retry configuration');
+    expect(extractPhaseChecklist(meta)).toHaveLength(2);
+    expect(extractPhaseChecklist(meta)[1]?.status).toBe('failed');
   });
 
   it('extracts safety checklist and open CIDR warning', () => {

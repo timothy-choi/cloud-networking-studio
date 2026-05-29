@@ -316,21 +316,76 @@ export function canDestroyInfrastructureDeployment(
   return POST_APPLY_DESTROYABLE_STATUSES.has(status) || hasTerraformApplyCompleted(stateMetadata);
 }
 
-export function canShowRetryConfigurationAction(
+export const CONFIGURATION_START_TIMEOUT_MS = 15_000;
+
+export function hasConfigurationProgressStarted(
+  stateMetadata: Record<string, unknown> | null | undefined,
+  eventTypes: string[],
+): boolean {
+  const meta = stateMetadata ?? {};
+  const phases = (meta.phases as Record<string, unknown> | undefined) ?? {};
+  return (
+    eventTypes.includes('ssh_readiness_started') ||
+    eventTypes.includes('configure_started') ||
+    Boolean(phases.ssh_readiness_started || phases.configuration_started)
+  );
+}
+
+export function isConfigurationJobStuck(
   status: string,
-  stateMetadata?: Record<string, unknown> | null,
+  stateMetadata: Record<string, unknown> | null | undefined,
+  eventTypes: string[],
+  nowMs: number = Date.now(),
 ): boolean {
   if (!hasTerraformApplyCompleted(stateMetadata)) {
     return false;
   }
-  return (
+  if (status !== 'configuring' && status !== 'applying') {
+    return false;
+  }
+  if (hasConfigurationProgressStarted(stateMetadata, eventTypes)) {
+    return false;
+  }
+  const meta = stateMetadata ?? {};
+  const queuedAt = meta.configuration_queued_at;
+  if (!queuedAt && !eventTypes.includes('configuration_queued')) {
+    return true;
+  }
+  if (!queuedAt) {
+    return true;
+  }
+  const queuedMs = Date.parse(String(queuedAt));
+  if (Number.isNaN(queuedMs)) {
+    return true;
+  }
+  return nowMs - queuedMs >= CONFIGURATION_START_TIMEOUT_MS;
+}
+
+export function shouldPollInfrastructureDeployment(status: string): boolean {
+  return status === 'configuring' || status === 'applying';
+}
+
+export function canShowRetryConfigurationAction(
+  status: string,
+  stateMetadata?: Record<string, unknown> | null,
+  eventTypes: string[] = [],
+  nowMs?: number,
+): boolean {
+  if (!hasTerraformApplyCompleted(stateMetadata)) {
+    return false;
+  }
+  if (
     status === 'configuration_failed' ||
     status === 'registration_failed' ||
     status === 'apply_partial' ||
-    status === 'configuration_timeout' ||
-    status === 'applying' ||
-    status === 'configuring'
-  );
+    status === 'configuration_timeout'
+  ) {
+    return true;
+  }
+  if (status === 'applying' || status === 'configuring') {
+    return isConfigurationJobStuck(status, stateMetadata, eventTypes, nowMs);
+  }
+  return false;
 }
 
 export function canShowForceMetadataCleanupAction(

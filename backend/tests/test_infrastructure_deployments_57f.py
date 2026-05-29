@@ -337,6 +337,145 @@ def test_reload_after_config_failure_hides_apply_and_shows_recovery(client_stric
     assert "Terraform already applied" in confirm_again.text
 
 
+def test_apply_success_enqueues_configuration(client_strict, monkeypatch, tmp_path):
+    import threading
+    import time
+
+    from app.services import infrastructure_deployment_service as infra_svc
+
+    monkeypatch.delenv("CNS_SYNC_INFRA_CONFIGURATION", raising=False)
+    _gcp_credentials(monkeypatch, tmp_path)
+    _install_runner(monkeypatch)
+    h = _register(client_strict, prefix="enqueuecfg")
+    _, topo_id = _project_and_topology(client_strict, h)
+    dep_id = _create_gcp_deployment(client_strict, h, topo_id)
+    _plan_gcp(client_strict, h, dep_id)
+
+    config_started = threading.Event()
+    release_config = threading.Event()
+
+    def slow_configuration(db, *, deployment):
+        config_started.set()
+        assert release_config.wait(timeout=10)
+        return "failed", "simulated configuration failure"
+
+    monkeypatch.setattr(infra_svc, "_run_host_configuration", slow_configuration)
+
+    confirm = client_strict.post(
+        f"/infrastructure-deployments/{dep_id}/confirm",
+        headers=h,
+        json={"confirm": True, "confirmation_text": "APPLY"},
+    )
+    assert confirm.status_code == 200, confirm.text
+    body = confirm.json()
+    assert body["status"] == "configuring"
+    assert body["state_metadata_json"]["terraform_apply_completed"] is True
+    assert body["state_metadata_json"]["configuration_job_status"] == "queued"
+    assert any(ev["type"] == "configuration_queued" for ev in body["events_json"])
+
+    assert config_started.wait(timeout=10)
+
+    polled = client_strict.get(f"/infrastructure-deployments/{dep_id}", headers=h)
+    assert polled.status_code == 200, polled.text
+    polled_body = polled.json()
+    assert polled_body["status"] == "configuring"
+    assert polled_body["state_metadata_json"]["terraform_apply_completed"] is True
+
+    release_config.set()
+    deadline = time.monotonic() + 10
+    final = polled_body
+    while time.monotonic() < deadline:
+        final = client_strict.get(f"/infrastructure-deployments/{dep_id}", headers=h).json()
+        if final["status"] in {"configuration_failed", "configuration_timeout"}:
+            break
+        time.sleep(0.1)
+    assert final["status"] in {"configuration_failed", "configuration_timeout"}
+
+
+def test_retry_configuration_starts_pending_configuration(client_strict, engine_db, monkeypatch, tmp_path):
+    import time
+    from uuid import UUID
+
+    from app.db.session import SessionLocal
+    from app.models.infrastructure_deployment import InfrastructureDeployment
+    from app.services import infra_deployment_phases as infra_phases
+    from app.services import infrastructure_deployment_service as infra_svc
+    from app.services.infra_observability import append_event
+
+    monkeypatch.delenv("CNS_SYNC_INFRA_CONFIGURATION", raising=False)
+    _gcp_credentials(monkeypatch, tmp_path)
+    runner = _install_runner(monkeypatch)
+    h = _register(client_strict, prefix="retrypending")
+    _, topo_id = _project_and_topology(client_strict, h)
+    dep_id = _create_gcp_deployment(client_strict, h, topo_id)
+    _plan_gcp(client_strict, h, dep_id)
+
+    config_calls: list[str] = []
+
+    def track_configuration(db, *, deployment):
+        config_calls.append("run")
+        infra_phases.mark_phases(
+            deployment,
+            db=db,
+            flush=True,
+            **{
+                infra_phases.PHASE_SSH_READINESS_STARTED: True,
+                infra_phases.PHASE_SSH_READINESS_COMPLETED: True,
+                infra_phases.PHASE_CONFIGURATION_STARTED: True,
+                infra_phases.PHASE_CONFIGURATION_COMPLETED: True,
+            },
+        )
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "configure_completed",
+            message="Tracked configuration completed",
+        )
+        return "completed", None
+
+    monkeypatch.setattr(infra_svc, "_run_host_configuration", track_configuration)
+
+    with SessionLocal() as db:
+        deployment = db.get(InfrastructureDeployment, UUID(dep_id))
+        assert deployment is not None
+        deployment.status = "configuring"
+        deployment.outputs_json = {
+            **(deployment.outputs_json or {}),
+            "public_ip": "203.0.113.55",
+            "private_ip": "10.128.0.5",
+            "instance_name": "cns-docker-vm",
+            "ssh_user": "ubuntu",
+        }
+        deployment.state_metadata_json = {
+            **(deployment.state_metadata_json or {}),
+            "terraform_apply_completed": True,
+            "applied_at": "2026-01-01T00:00:00Z",
+            "workspace_id": dep_id,
+            "plan_file": "tfplan",
+        }
+        deployment.events_json = [
+            *(deployment.events_json or []),
+            {"type": "apply_completed", "message": "Terraform apply completed"},
+        ]
+        db.commit()
+
+    retry = client_strict.post(f"/infrastructure-deployments/{dep_id}/retry-configure", headers=h)
+    assert retry.status_code == 200, retry.text
+    retry_body = retry.json()
+    assert retry_body["status"] == "configuring"
+    assert any(ev["type"] == "configure_retry_started" for ev in retry_body["events_json"])
+    assert any(ev["type"] == "configuration_queued" for ev in retry_body["events_json"])
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not config_calls:
+        time.sleep(0.1)
+    assert config_calls
+
+    apply_calls = sum(
+        1 for c in runner.calls if c.get("execution_type") == "terraform" and c.get("mode") == "apply"
+    )
+    assert apply_calls == 0
+
+
 def test_apply_state_committed_before_configuration_and_visible_on_reload_during_hang(
     client_strict, monkeypatch, tmp_path
 ):

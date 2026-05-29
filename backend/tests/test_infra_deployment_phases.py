@@ -37,6 +37,25 @@ def test_can_confirm_apply_blocks_after_apply_started():
     assert "Terraform already applied" in (reason or "")
 
 
+def test_build_phase_checklist_marks_ssh_running_when_configuration_job_active():
+    dep = _deployment(
+        status="configuring",
+        state_metadata_json={
+            "terraform_apply_completed": True,
+            "configuration_job_status": "queued",
+            "configuration_queued_at": "2026-01-01T00:00:00Z",
+            "phases": {
+                phases.PHASE_TERRAFORM_APPLY_COMPLETED: True,
+                phases.PHASE_TERRAFORM_OUTPUTS_CAPTURED: True,
+            },
+        },
+        events_json=[{"type": "configuration_queued"}],
+    )
+    checklist = phases.build_phase_checklist(dep)
+    ssh = next(item for item in checklist if item["name"] == "ssh_readiness")
+    assert ssh["status"] == "running"
+
+
 def test_can_destroy_from_configuring_when_apply_completed():
     dep = _deployment(
         status="configuring",

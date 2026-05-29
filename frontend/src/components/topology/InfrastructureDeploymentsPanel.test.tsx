@@ -11,6 +11,7 @@ import {
   canShowRetryConfigurationAction,
   canShowValidateAction,
   credentialsRefHelpText,
+  CONFIGURATION_START_TIMEOUT_MS,
   destroyDisabledReason,
   deriveConfigurationStatus,
   deriveTerraformStatus,
@@ -21,6 +22,8 @@ import {
   hasTerraformApplyCompleted,
   hasTerraformApplyStarted,
   hasTerraformResources,
+  isConfigurationJobStuck,
+  shouldPollInfrastructureDeployment,
   validateInfrastructureCreateForm,
 } from './infrastructureDeploymentForm';
 import { InfrastructureDeploymentsPanel, submitInfrastructureCreate } from './InfrastructureDeploymentsPanel';
@@ -162,14 +165,28 @@ describe('infrastructureDeploymentForm', () => {
 
   it('shows destroy from partial failure states when apply metadata exists', () => {
     const appliedMeta = { applied_at: '2026-01-01T00:00:00Z', apply_execution_id: 'x', terraform_apply_completed: true };
+    const queuedMeta = {
+      ...appliedMeta,
+      configuration_queued_at: new Date(Date.now() - CONFIGURATION_START_TIMEOUT_MS - 1_000).toISOString(),
+      configuration_job_status: 'queued',
+    };
     expect(canShowDestroyAction('configuration_failed', 'docker-vm', 'gcp', appliedMeta)).toBe(true);
     expect(canShowDestroyAction('registration_failed', 'docker-vm', 'gcp', appliedMeta)).toBe(true);
     expect(canShowRetryConfigurationAction('configuration_failed', appliedMeta)).toBe(true);
     expect(canShowRetryConfigurationAction('registration_failed', appliedMeta)).toBe(true);
-    expect(canShowRetryConfigurationAction('applying', appliedMeta)).toBe(true);
-    expect(canShowRetryConfigurationAction('configuring', appliedMeta)).toBe(true);
     expect(canShowRetryConfigurationAction('apply_partial', appliedMeta)).toBe(true);
     expect(canShowRetryConfigurationAction('configuration_timeout', appliedMeta)).toBe(true);
+    expect(
+      canShowRetryConfigurationAction('configuring', {
+        ...appliedMeta,
+        configuration_queued_at: new Date().toISOString(),
+      }, ['configuration_queued']),
+    ).toBe(false);
+    expect(canShowRetryConfigurationAction('configuring', appliedMeta, [])).toBe(true);
+    expect(canShowRetryConfigurationAction('configuring', queuedMeta, ['configuration_queued'])).toBe(true);
+    expect(isConfigurationJobStuck('configuring', queuedMeta, ['configuration_queued'])).toBe(true);
+    expect(shouldPollInfrastructureDeployment('configuring')).toBe(true);
+    expect(shouldPollInfrastructureDeployment('awaiting_confirmation')).toBe(false);
     expect(canShowDestroyAction('configuring', 'docker-vm', 'gcp', appliedMeta)).toBe(true);
     expect(canShowDestroyAction('apply_partial', 'docker-vm', 'gcp', appliedMeta)).toBe(true);
     expect(canShowRetryConfigurationAction('succeeded', appliedMeta)).toBe(false);

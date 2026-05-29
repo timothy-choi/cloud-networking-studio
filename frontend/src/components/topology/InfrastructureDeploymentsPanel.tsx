@@ -14,6 +14,7 @@ import {
   type InfrastructureExecution,
   type InfrastructureTemplate,
 } from '../../api/infrastructureDeployments';
+import { usePolling } from '../../hooks/usePolling';
 import { ApiErrorDisplay } from '../errors/ApiErrorDisplay';
 import { Spinner } from '../Spinner';
 import {
@@ -37,6 +38,7 @@ import {
   isGcpDockerVmForm,
   isMockInfrastructureDeployment,
   isRealCloudProvider,
+  shouldPollInfrastructureDeployment,
   validateInfrastructureCreateForm,
   type InfrastructureCreateFormErrors,
   type InfrastructureCreateFormValues,
@@ -148,6 +150,22 @@ export function InfrastructureDeploymentsPanel({
     void refreshExecutions(selectedId).catch(setError);
   }, [selectedId, deployments, refreshExecutions]);
 
+  const pollInfrastructureDeployment = useCallback(async () => {
+    if (!selectedId) return;
+    try {
+      await refreshDeployments(selectedId);
+      await refreshExecutions(selectedId);
+    } catch (err) {
+      setError(err);
+    }
+  }, [refreshDeployments, refreshExecutions, selectedId]);
+
+  usePolling(
+    pollInfrastructureDeployment,
+    3000,
+    selected != null && shouldPollInfrastructureDeployment(selected.status),
+  );
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     const values: InfrastructureCreateFormValues = {
@@ -234,6 +252,7 @@ export function InfrastructureDeploymentsPanel({
         unsafe_testing_override: needsTypedConfirm ? unsafeTestingOverride : undefined,
       });
       setDeployments((current) => current.map((d) => (d.id === updated.id ? updated : d)));
+      setSelectedId(updated.id);
       await refreshExecutions(updated.id);
       setShowApplyDialog(false);
       setApplyConfirmText('');
@@ -337,8 +356,10 @@ export function InfrastructureDeploymentsPanel({
       )
     : false;
   const showRetryConfigureButton = selected
-    ? canShowRetryConfigurationAction(selected.status, selected.state_metadata_json)
+    ? canShowRetryConfigurationAction(selected.status, selected.state_metadata_json, eventTypes)
     : false;
+  const isPollingConfiguration =
+    selected != null && shouldPollInfrastructureDeployment(selected.status);
   const openCidrWarning =
     isGcpDeployment && hasOpenInternetCidr(selected?.variables_json as Record<string, unknown> | undefined);
   const showGcpFields = isGcpDockerVmForm(templateId, provider);
@@ -580,6 +601,7 @@ export function InfrastructureDeploymentsPanel({
                 <p className="text-xs text-cns-muted">
                   {selected.template_id} · {selected.provider} ·{' '}
                   <span className={statusTone(selected.status)}>{selected.status}</span>
+                  {isPollingConfiguration ? ' · live updates' : ''}
                 </p>
                 {selected.error_message ? (
                   <p className="mt-2 text-xs text-red-600">{selected.error_message}</p>

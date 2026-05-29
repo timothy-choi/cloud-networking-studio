@@ -114,14 +114,24 @@ def _can_retry_configuration(deployment: InfrastructureDeployment) -> bool:
     return infra_phases.can_retry_configuration(deployment)
 
 
+def _commit_deployment_state(db: Session, deployment: InfrastructureDeployment) -> None:
+    """Commit durable deployment state so reload/recovery works during long operations."""
+    db.commit()
+    db.refresh(deployment)
+
+
 def _mark_terraform_apply_started(db: Session, *, deployment: InfrastructureDeployment) -> None:
     infra_phases.persist_workspace_metadata(deployment)
     infra_phases.mark_phases(
         deployment,
-        db=db,
-        flush=True,
         **{infra_phases.PHASE_TERRAFORM_APPLY_STARTED: True},
     )
+    deployment.state_metadata_json = {
+        **(deployment.state_metadata_json or {}),
+        "terraform_apply_started": True,
+    }
+    db.flush()
+    _commit_deployment_state(db, deployment)
 
 
 def _persist_terraform_apply_completion(
@@ -158,6 +168,7 @@ def _persist_terraform_apply_completion(
         int((time.monotonic() - started) * 1000),
     )
     db.flush()
+    _commit_deployment_state(db, deployment)
 
 
 def _can_destroy_deployment(deployment: InfrastructureDeployment) -> bool:
@@ -765,7 +776,7 @@ def _confirm_and_apply_mock(
         logs="[mock] terraform apply completed\n",
         artifacts=[{"type": "apply_summary", "uri": f"mock://infra/{deployment.id}/apply"}],
     )
-    deployment.outputs_json = {
+    mock_outputs = {
         **(deployment.outputs_json or {}),
         "vm_count": deployment.outputs_json.get("vm_count") or deployment.variables_json.get("vm_count") or 1,
         "region": deployment.outputs_json.get("region") or deployment.variables_json.get("region") or "local",
@@ -780,19 +791,13 @@ def _confirm_and_apply_mock(
             }
         ],
     }
-    deployment.events_json = append_event(deployment.events_json, "apply_completed")
-    deployment.state_metadata_json = {
-        **(deployment.state_metadata_json or {}),
-        "applied_at": datetime.now(UTC).isoformat(),
-        "apply_execution_id": str(tf_apply.id),
-        "terraform_apply_completed": True,
-    }
-    deployment.metrics_json = record_metric(
-        deployment.metrics_json,
-        "terraform_apply_duration_ms",
-        int((time.monotonic() - started) * 1000),
+    _persist_terraform_apply_completion(
+        db,
+        deployment=deployment,
+        apply_execution_id=tf_apply.id,
+        outputs=mock_outputs,
+        started=started,
     )
-    db.flush()
 
     inv_exec = _new_execution(db, deployment=deployment, execution_type="ansible", mode="inventory")
     inventory = ansible_svc.generate_inventory(deployment)
@@ -804,7 +809,10 @@ def _confirm_and_apply_mock(
     )
     deployment.inventory_json = inventory
 
-    deployment.status = "configuring"
+    infra_phases.mark_phases(
+        deployment,
+        **{infra_phases.PHASE_CONFIGURATION_STARTED: True},
+    )
     deployment.events_json = append_event(
         deployment.events_json,
         "configure_started",

@@ -229,9 +229,7 @@ def confirm_infrastructure_deployment(
     require_topology_editor(db, user, deployment.topology_id)
     if not body.confirm:
         raise HTTPException(status_code=400, detail="Confirmation required")
-    if infra_phases.has_terraform_apply_completed(deployment) or infra_phases.has_terraform_apply_started(
-        deployment
-    ):
+    if infra_phases.has_terraform_apply_completed(deployment):
         raise HTTPException(
             status_code=409,
             detail={

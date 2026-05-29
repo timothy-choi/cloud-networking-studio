@@ -322,6 +322,8 @@ def test_reload_after_config_failure_hides_apply_and_shows_recovery(client_stric
     fetched = client_strict.get(f"/infrastructure-deployments/{dep_id}", headers=h)
     assert fetched.status_code == 200, fetched.text
     body = fetched.json()
+    assert body["status"] in {"configuration_failed", "configuration_timeout"}
+    assert body["status"] != "awaiting_confirmation"
     assert body["state_metadata_json"]["terraform_apply_completed"] is True
     assert body["state_metadata_json"]["recovery_message"]
     assert body["state_metadata_json"]["phase_checklist"]
@@ -332,6 +334,100 @@ def test_reload_after_config_failure_hides_apply_and_shows_recovery(client_stric
         json={"confirm": True, "confirmation_text": "APPLY"},
     )
     assert confirm_again.status_code == 409
+    assert "Terraform already applied" in confirm_again.text
+
+
+def test_apply_state_committed_before_configuration_and_visible_on_reload_during_hang(
+    client_strict, monkeypatch, tmp_path
+):
+    import threading
+    from uuid import UUID
+
+    from app.db.session import SessionLocal
+    from app.models.infrastructure_deployment import InfrastructureDeployment
+    from app.services import infrastructure_deployment_service as infra_svc
+
+    _gcp_credentials(monkeypatch, tmp_path)
+    runner = _install_runner(monkeypatch)
+    h = _register(client_strict, prefix="applypersist")
+    _, topo_id = _project_and_topology(client_strict, h)
+    dep_id = _create_gcp_deployment(client_strict, h, topo_id)
+    _plan_gcp(client_strict, h, dep_id)
+
+    config_entered = threading.Event()
+    release_config = threading.Event()
+    committed_snapshot: dict[str, object] = {}
+
+    def hanging_configuration(db, *, deployment):
+        with SessionLocal() as fresh_db:
+            row = fresh_db.get(InfrastructureDeployment, UUID(dep_id))
+            assert row is not None
+            committed_snapshot["status"] = row.status
+            committed_snapshot["terraform_apply_completed"] = row.state_metadata_json.get(
+                "terraform_apply_completed"
+            )
+            committed_snapshot["public_ip"] = row.outputs_json.get("public_ip")
+            committed_snapshot["workspace_id"] = row.state_metadata_json.get("workspace_id")
+            committed_snapshot["apply_completed_event"] = any(
+                ev.get("type") == "apply_completed" for ev in (row.events_json or [])
+            )
+        config_entered.set()
+        assert release_config.wait(timeout=10)
+        return "timeout", "Configuration runner unavailable or timed out: simulated hang"
+
+    monkeypatch.setattr(infra_svc, "_run_host_configuration", hanging_configuration)
+
+    confirm_result: dict[str, object] = {}
+
+    def run_confirm():
+        confirm_result["response"] = client_strict.post(
+            f"/infrastructure-deployments/{dep_id}/confirm",
+            headers=h,
+            json={"confirm": True, "confirmation_text": "APPLY"},
+        )
+
+    confirm_thread = threading.Thread(target=run_confirm)
+    confirm_thread.start()
+    assert config_entered.wait(timeout=10)
+
+    assert committed_snapshot["terraform_apply_completed"] is True
+    assert committed_snapshot["status"] == "configuring"
+    assert committed_snapshot["public_ip"] == "203.0.113.55"
+    assert committed_snapshot["workspace_id"]
+    assert committed_snapshot["apply_completed_event"] is True
+
+    reload = client_strict.get(f"/infrastructure-deployments/{dep_id}", headers=h)
+    assert reload.status_code == 200, reload.text
+    reload_body = reload.json()
+    assert reload_body["state_metadata_json"]["terraform_apply_completed"] is True
+    assert reload_body["status"] == "configuring"
+    assert reload_body["status"] != "awaiting_confirmation"
+
+    confirm_while_hanging = client_strict.post(
+        f"/infrastructure-deployments/{dep_id}/confirm",
+        headers=h,
+        json={"confirm": True, "confirmation_text": "APPLY"},
+    )
+    assert confirm_while_hanging.status_code == 409
+
+    release_config.set()
+    confirm_thread.join(timeout=15)
+    assert confirm_result["response"] is not None
+    final = confirm_result["response"].json()
+    assert final["status"] == "configuration_timeout"
+    assert final["state_metadata_json"]["terraform_apply_completed"] is True
+
+    apply_calls = sum(
+        1 for c in runner.calls if c.get("execution_type") == "terraform" and c.get("mode") == "apply"
+    )
+    assert apply_calls == 1
+
+    retry = client_strict.post(f"/infrastructure-deployments/{dep_id}/retry-configure", headers=h)
+    assert retry.status_code == 200, retry.text
+    apply_calls_after_retry = sum(
+        1 for c in runner.calls if c.get("execution_type") == "terraform" and c.get("mode") == "apply"
+    )
+    assert apply_calls_after_retry == apply_calls
 
 
 def test_destroy_from_configuration_failed(client_strict, monkeypatch, tmp_path):

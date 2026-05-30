@@ -18,9 +18,11 @@ from app.services.infra_security import is_real_cloud_provider, redact_logs
 from app.services.infra_template_registry import assert_template_on_disk, get_template, resolve_terraform_dir
 from app.services.remote_ssh_public_key_service import resolve_remote_docker_ssh_public_key
 from app.services.terraform_credentials_service import (
+    is_credential_profile_ref,
     redact_credentials_env,
-    resolve_terraform_credentials_env,
+    validate_terraform_credentials_ref,
 )
+from app.services.credential_profile_service import materialize_from_ref
 
 
 def _uses_persistent_workspace(deployment: InfrastructureDeployment, mode: str) -> bool:
@@ -40,6 +42,7 @@ def _base_payload(
     execution: InfrastructureExecution,
     deployment: InfrastructureDeployment,
     mode: str,
+    credentials_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     template = get_template(deployment.template_id)
     template_dir = resolve_terraform_dir(deployment.template_id, deployment.provider)
@@ -71,7 +74,9 @@ def _base_payload(
         payload["apply_from_plan"] = True
 
     if is_real_cloud_provider(deployment.provider):
-        cred_env = resolve_terraform_credentials_env(deployment.provider, deployment.credentials_ref)
+        cred_env = credentials_env
+        if cred_env is None:
+            raise ValueError("Terraform credentials were not materialized for this execution.")
         payload["credentials_env"] = cred_env
         payload["credentials_ref"] = (deployment.credentials_ref or "").strip()
 
@@ -105,28 +110,40 @@ def _run(
     execution.started_at = datetime.now(UTC)
     db.flush()
 
-    payload = _base_payload(execution=execution, deployment=deployment, mode=mode)
-    payload["mode"] = mode
-    if payload.get("credentials_env"):
-        payload_for_log = {
-            **payload,
-            "credentials_env": redact_credentials_env(payload["credentials_env"]),
-            "variables": {
-                **payload.get("variables", {}),
-                "ssh_public_key": "[redacted]",
-            },
-        }
-    elif "ssh_public_key" in payload.get("variables", {}):
-        payload_for_log = {
-            **payload,
-            "variables": {**payload["variables"], "ssh_public_key": "[redacted]"},
-        }
-    else:
-        payload_for_log = payload
-
     started = time.monotonic()
+    cred_ref = (deployment.credentials_ref or "").strip()
     try:
-        result = get_infra_runner_client().run_execution(payload)
+        if is_real_cloud_provider(deployment.provider) and is_credential_profile_ref(cred_ref):
+            with materialize_from_ref(
+                db,
+                credentials_ref=cred_ref,
+                provider=deployment.provider,
+                project_id=deployment.project_id,
+            ) as materialized:
+                if materialized is None:
+                    raise ValueError("Credential profile materialization failed.")
+                payload = _base_payload(
+                    execution=execution,
+                    deployment=deployment,
+                    mode=mode,
+                    credentials_env=materialized.env,
+                )
+                payload["mode"] = mode
+                result = get_infra_runner_client().run_execution(payload)
+        else:
+            from app.services.terraform_credentials_service import resolve_terraform_credentials_env
+
+            cred_env = None
+            if is_real_cloud_provider(deployment.provider):
+                cred_env = resolve_terraform_credentials_env(deployment.provider, cred_ref)
+            payload = _base_payload(
+                execution=execution,
+                deployment=deployment,
+                mode=mode,
+                credentials_env=cred_env,
+            )
+            payload["mode"] = mode
+            result = get_infra_runner_client().run_execution(payload)
     except InfraRunnerClientError as exc:
         execution.finished_at = datetime.now(UTC)
         execution.status = "failed"
@@ -151,6 +168,22 @@ def _run(
             err = redact_logs(err)
         raise ValueError(err)
 
+    if payload.get("credentials_env"):
+        payload_for_log = {
+            **payload,
+            "credentials_env": redact_credentials_env(payload["credentials_env"]),
+            "variables": {
+                **payload.get("variables", {}),
+                "ssh_public_key": "[redacted]",
+            },
+        }
+    elif "ssh_public_key" in payload.get("variables", {}):
+        payload_for_log = {
+            **payload,
+            "variables": {**payload["variables"], "ssh_public_key": "[redacted]"},
+        }
+    else:
+        payload_for_log = payload
     _ = payload_for_log
     return execution.logs or "", execution.artifact_refs, dict(result.outputs or {})
 

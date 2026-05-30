@@ -58,10 +58,13 @@ Apply is **rejected** when:
 
 ### Credentials
 
+**Preferred (end users):** store secrets in a [credential profile](CREDENTIAL_PROFILES.md) and reference `credential:<profile_id>`.
+
 | credentials_ref | Server env var | Notes |
 |-----------------|----------------|-------|
-| `env:GOOGLE_APPLICATION_CREDENTIALS` | path to service account JSON | mount read-only in backend/runner |
-| `env:GOOGLE_CREDENTIALS_JSON` | inline JSON | validated but never logged |
+| `credential:<profile_id>` | *(decrypted at runtime)* | Encrypted profile; provider must match deployment |
+| `env:GOOGLE_APPLICATION_CREDENTIALS` | path to service account JSON | Platform-admin; mount read-only in backend/runner |
+| `env:GOOGLE_CREDENTIALS_JSON` | inline JSON | Platform-admin; validated but never logged |
 
 SSH for post-apply configuration and runtime targets uses:
 

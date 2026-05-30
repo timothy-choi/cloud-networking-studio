@@ -45,6 +45,11 @@ class Settings(BaseSettings):
         default="local-dev-only-change-AUTH_SECRET_KEY-in-production-min-32-chars",
         validation_alias="AUTH_SECRET_KEY",
     )
+    credential_encryption_key: str | None = Field(
+        default=None,
+        validation_alias="CNS_CREDENTIAL_ENCRYPTION_KEY",
+        description="Optional dedicated key for credential profile encryption (defaults to AUTH_SECRET_KEY).",
+    )
     auth_token_expire_minutes: int = Field(
         default=60 * 24 * 7,
         ge=5,

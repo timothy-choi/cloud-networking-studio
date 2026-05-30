@@ -83,6 +83,8 @@ volumes:
 
 See `docker-compose.prod.yml` and `docker-compose.staging.yml`.
 
+**Production redeploys:** `scripts/prod_deploy_remote.sh` (invoked from `.github/workflows/deploy-production.yml`) writes all three variables into **`~/cloud-networking-studio/.env`** on every deploy, preserving existing non-empty values from the previous **`.env`**. Deploy fails if host files are missing or containers cannot read them.
+
 ## UI test flow (staging smoke)
 
 Run `./scripts/staging_gcp_external_infra_smoke.sh` for a printable checklist, or follow manually:

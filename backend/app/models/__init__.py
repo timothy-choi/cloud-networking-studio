@@ -38,6 +38,7 @@ from app.models.deployment_profile import DeploymentProfile
 from app.models.deployment_target import DeploymentTarget
 from app.models.external_deployment import ExternalDeployment
 from app.models.external_deployment_job import ExternalDeploymentJob
+from app.models.credential_profile import CredentialProfile
 from app.models.infrastructure_deployment import InfrastructureDeployment
 from app.models.infrastructure_execution import InfrastructureExecution
 from app.models.topology_version import TopologyVersion
@@ -64,6 +65,7 @@ __all__ = [
     "DeploymentTarget",
     "ExternalDeployment",
     "ExternalDeploymentJob",
+    "CredentialProfile",
     "InfrastructureDeployment",
     "InfrastructureExecution",
     "TopologyVersion",

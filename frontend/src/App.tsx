@@ -4,6 +4,7 @@ import { RequireSession } from './auth/RequireSession';
 import { Layout } from './components/Layout';
 import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
 import { ApiTokensPage } from './pages/ApiTokensPage';
+import { CredentialProfilesPage } from './pages/CredentialProfilesPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { NotificationsPage } from './pages/NotificationsPage';
@@ -30,6 +31,7 @@ export default function App() {
               <Route path="platform-security" element={<PlatformSecurityPage />} />
               <Route path="notifications" element={<NotificationsPage />} />
               <Route path="api-tokens" element={<ApiTokensPage />} />
+              <Route path="credential-profiles" element={<CredentialProfilesPage />} />
               <Route path="templates" element={<TemplatesPage />} />
               <Route path="topologies/:topologyId" element={<TopologyDetailPage />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />

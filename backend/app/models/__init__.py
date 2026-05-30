@@ -35,6 +35,11 @@ from app.models.deployment_runtime_exec_result import DeploymentRuntimeExecResul
 from app.models.deployment_runtime_terminal_session import DeploymentRuntimeTerminalSession
 from app.models.deployment_service_exposure import DeploymentServiceExposure
 from app.models.deployment_profile import DeploymentProfile
+from app.models.deployment_target import DeploymentTarget
+from app.models.external_deployment import ExternalDeployment
+from app.models.external_deployment_job import ExternalDeploymentJob
+from app.models.infrastructure_deployment import InfrastructureDeployment
+from app.models.infrastructure_execution import InfrastructureExecution
 from app.models.topology_version import TopologyVersion
 from app.models.traffic_test import TrafficTest, TrafficTestResult, TrafficTestStatus, TrafficTestType
 from app.models.failure_injection import (
@@ -56,6 +61,11 @@ __all__ = [
     "DeploymentRuntimeResource",
     "DeploymentServiceExposure",
     "DeploymentProfile",
+    "DeploymentTarget",
+    "ExternalDeployment",
+    "ExternalDeploymentJob",
+    "InfrastructureDeployment",
+    "InfrastructureExecution",
     "TopologyVersion",
     "DeploymentEvent",
     "DeploymentEventLevel",

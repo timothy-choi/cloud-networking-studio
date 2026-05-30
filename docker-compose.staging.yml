@@ -18,6 +18,15 @@ services:
     environment:
       CNS_ENVIRONMENT: ${CNS_ENVIRONMENT:-staging}
       CNS_FRONTEND_APP_URL: ${CNS_FRONTEND_APP_URL:-https://app-staging.cloudnetstudio.com}
+      CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key}
+      CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key.pub}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/opt/cns/secrets/gcp-terraform-sa.json}
+
+  runner:
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/opt/cns/secrets/gcp-terraform-sa.json}
+      CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key}
+      CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key.pub}
 
   caddy:
     ports:

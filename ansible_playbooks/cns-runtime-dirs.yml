@@ -1,0 +1,25 @@
+---
+# Whitelisted playbook: create CNS runtime directories (Step 57C).
+- name: CNS runtime directories
+  hosts: cns_runtime
+  become: true
+  tasks:
+    - name: Create CNS runtime base directory
+      ansible.builtin.file:
+        path: /opt/cns/runtime
+        state: directory
+        mode: "0750"
+
+    - name: Create CNS secrets directory
+      ansible.builtin.file:
+        path: /opt/cns/secrets
+        state: directory
+        mode: "0750"
+
+    - name: Create external deployment workdir
+      ansible.builtin.file:
+        path: /opt/cns-external-deployments
+        state: directory
+        mode: "0775"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"

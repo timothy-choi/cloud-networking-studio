@@ -1,0 +1,437 @@
+"""Remote Docker Compose executor for external deployment jobs (Step 57B)."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import tempfile
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy.orm import Session
+
+from app.core.secret_masking import mask_secrets_in_text, scrub_sensitive_dict
+from app.models.deployment_target import DeploymentTarget
+from app.models.external_deployment_job import ExternalDeploymentJob
+from app.models.topology import Topology
+from app.services import external_deployment_service as ext_dep_svc
+from app.services import topology_iac_export_service as iac_svc
+from app.services.remote_command_runner import (
+    RemoteHostConnection,
+    format_scp_command_for_log,
+    format_ssh_command_for_log,
+    get_remote_command_runner,
+    ssh_options_summary,
+)
+from app.services.remote_credentials_service import resolve_ssh_key_path
+from app.services.remote_ssh_runtime import ensure_ssh_client_installed, raise_for_ssh_failure
+
+DOCKER_COMPOSE_FILENAME = iac_svc.DOCKER_COMPOSE_FILENAME
+ENV_FILENAME = ".env.cns"
+METADATA_FILENAME = "metadata.json"
+
+REMOTE_DOCKER_REQUIRED_FIELDS = ("host", "ssh_user", "remote_workdir")
+
+
+@dataclass(frozen=True)
+class RemoteDockerTargetConfig:
+    host: str
+    ssh_user: str
+    ssh_port: int
+    remote_workdir: str
+    supports_compose: bool
+
+
+class JobLogBuffer:
+    """Append job logs progressively with secret masking."""
+
+    def __init__(self) -> None:
+        self._lines: list[str] = []
+
+    def append(self, line: str) -> None:
+        self._lines.append(line)
+
+    def extend(self, lines: list[str]) -> None:
+        self._lines.extend(lines)
+
+    def text(self) -> str:
+        return mask_secrets_in_text("\n".join(self._lines)) or ""
+
+
+def parse_remote_docker_config(config_json: dict | None) -> RemoteDockerTargetConfig:
+    cfg = config_json or {}
+    missing = [f for f in REMOTE_DOCKER_REQUIRED_FIELDS if not str(cfg.get(f) or "").strip()]
+    if missing:
+        raise ValueError(f"Missing required remote_docker config fields: {', '.join(missing)}")
+    host = str(cfg["host"]).strip()
+    ssh_user = str(cfg["ssh_user"]).strip()
+    remote_workdir = str(cfg["remote_workdir"]).strip().rstrip("/")
+    ssh_port = int(cfg.get("ssh_port") or 22)
+    supports_compose = bool(cfg.get("supports_compose", True))
+    if not supports_compose:
+        raise ValueError("remote_docker target must have supports_compose=true")
+    return RemoteDockerTargetConfig(
+        host=host,
+        ssh_user=ssh_user,
+        ssh_port=ssh_port,
+        remote_workdir=remote_workdir,
+        supports_compose=supports_compose,
+    )
+
+
+REMOTE_DOCKER_SSH_CREDENTIALS_REF = "env:CNS_REMOTE_DOCKER_SSH_KEY_PATH"
+
+
+def external_ssh_known_hosts_path(target_id: UUID) -> str:
+    return f"/tmp/cns_known_hosts_{target_id}"
+
+
+def _connection(target: DeploymentTarget, cfg: RemoteDockerTargetConfig) -> RemoteHostConnection:
+    key_path = resolve_ssh_key_path(target.credentials_ref)
+    return RemoteHostConnection(
+        host=cfg.host,
+        user=cfg.ssh_user,
+        port=cfg.ssh_port,
+        key_path=key_path,
+        known_hosts_file=external_ssh_known_hosts_path(target.id),
+    )
+
+
+def _log_ssh_connection_debug(
+    log: JobLogBuffer,
+    *,
+    operation: str,
+    target: DeploymentTarget,
+    cfg: RemoteDockerTargetConfig,
+    conn: RemoteHostConnection,
+    remote_workdir: str | None = None,
+    upload_command_type: str | None = None,
+    scp_preview: str | None = None,
+) -> None:
+    key_readable = os.path.isfile(conn.key_path) and os.access(conn.key_path, os.R_OK)
+    log.append(f"[remote-docker] operation={operation}")
+    log.append(f"[remote-docker] target_id={target.id}")
+    log.append(f"[remote-docker] target_name={target.name or ''}")
+    log.append(f"[remote-docker] host={cfg.host}")
+    log.append(f"[remote-docker] ssh_user={cfg.ssh_user}")
+    log.append(f"[remote-docker] ssh port={cfg.ssh_port}")
+    log.append(f"[remote-docker] credentials_ref={target.credentials_ref or ''}")
+    log.append(f"[remote-docker] resolved_key_path={conn.key_path}")
+    log.append(f"[remote-docker] key_readable={str(key_readable).lower()}")
+    if remote_workdir is not None:
+        log.append(f"[remote-docker] remote_workdir={remote_workdir}")
+    log.append(f"[remote-docker] ssh_options={ssh_options_summary(conn)}")
+    if upload_command_type:
+        log.append(f"[remote-docker] upload_command_type={upload_command_type}")
+    if scp_preview:
+        log.append(f"[remote-docker] scp command preview: {scp_preview}")
+    log.append(
+        "[remote-docker] ssh command preview: "
+        f"{format_ssh_command_for_log(conn, 'docker --version')}"
+    )
+
+
+def _remote_job_dir(cfg: RemoteDockerTargetConfig, topology_id: UUID, job_id: UUID) -> str:
+    return f"{cfg.remote_workdir}/cns-{str(topology_id)[:8]}/{str(job_id)[:8]}"
+
+
+def _compose_project_name(job_id: UUID) -> str:
+    return f"cns-ext-{str(job_id)[:8]}"
+
+
+def generate_compose_env_content(bundle: iac_svc.TopologyExportBundle) -> str:
+    lines: list[str] = ["# Generated by Cloud Networking Studio — external deployment"]
+    for node in bundle.nodes:
+        if not node.runtime.env:
+            continue
+        for key, value in node.runtime.env.items():
+            lines.append(f"{node.service_name}_{key}={value}")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def build_plan_summary(
+    *,
+    bundle: iac_svc.TopologyExportBundle,
+    cfg: RemoteDockerTargetConfig,
+    job_id: UUID,
+    compose_yaml: str,
+    env_content: str,
+) -> dict[str, Any]:
+    services: list[dict[str, Any]] = []
+    env_keys_masked: dict[str, list[str]] = {}
+    for node in bundle.nodes:
+        svc: dict[str, Any] = {
+            "name": node.service_name,
+            "cns_node": node.name,
+            "image": node.image or "alpine:latest",
+            "ports": [
+                {"port": p.port, "target_port": p.target_port or p.port, "protocol": p.protocol}
+                for p in (node.runtime.ports or ())
+            ],
+        }
+        services.append(svc)
+        if node.runtime.env:
+            env_keys_masked[node.service_name] = sorted(node.runtime.env.keys())
+
+    return scrub_sensitive_dict(
+        {
+            "type": "plan_summary",
+            "topology_id": str(bundle.topology_id),
+            "topology_name": bundle.topology_name,
+            "services": services,
+            "networks": list(bundle.networks),
+            "env_keys_masked": env_keys_masked,
+            "remote_workdir": _remote_job_dir(cfg, bundle.topology_id, job_id),
+            "compose_project_name": _compose_project_name(job_id),
+            "compose_filename": DOCKER_COMPOSE_FILENAME,
+            "env_filename": ENV_FILENAME if env_content.strip() else None,
+            "compose_sha256": hashlib.sha256(compose_yaml.encode()).hexdigest(),
+        }
+    ) or {}
+
+
+def execute_validate(
+    db: Session,
+    *,
+    job: ExternalDeploymentJob,
+    target: DeploymentTarget,
+    topology: Topology,
+) -> tuple[str, list[dict[str, Any]]]:
+    log = JobLogBuffer()
+    log.append(f"[remote-docker] validate job={job.id}")
+    ensure_ssh_client_installed()
+    cfg = parse_remote_docker_config(target.config_json)
+    conn = _connection(target, cfg)
+    _log_ssh_connection_debug(log, operation="validate", target=target, cfg=cfg, conn=conn)
+    runner = get_remote_command_runner()
+
+    for cmd, label in (
+        ("docker --version", "docker --version"),
+        ("docker compose version", "docker compose version"),
+    ):
+        log.append(f"[remote-docker] running: {label}")
+        result = runner.run_ssh(conn, cmd)
+        if result.stdout.strip():
+            log.append(result.stdout.strip())
+        if result.stderr.strip():
+            log.append(result.stderr.strip())
+        if not result.ok:
+            raise_for_ssh_failure(result, context=label)
+
+    bundle = iac_svc.load_topology_export_bundle(db, topology.id)
+    warnings, unsupported, todos = iac_svc.validate_topology_export(bundle)
+    for w in warnings[:10]:
+        log.append(f"[remote-docker] export warning: {w.get('code')}: {w.get('message')}")
+    if unsupported:
+        log.append(f"[remote-docker] unsupported export features: {len(unsupported)}")
+
+    log.append("[remote-docker] Validation succeeded.")
+    artifact = [{"type": "validate_summary", "host": cfg.host, "status": "ok"}]
+    return log.text(), artifact
+
+
+def execute_plan(
+    db: Session,
+    *,
+    job: ExternalDeploymentJob,
+    target: DeploymentTarget,
+    topology: Topology,
+) -> tuple[str, list[dict[str, Any]]]:
+    log = JobLogBuffer()
+    log.append(f"[remote-docker] plan job={job.id}")
+    cfg = parse_remote_docker_config(target.config_json)
+    bundle = iac_svc.load_topology_export_bundle(db, topology.id)
+    compose_yaml = iac_svc.generate_docker_compose(bundle)
+    env_content = generate_compose_env_content(bundle)
+    summary = build_plan_summary(
+        bundle=bundle,
+        cfg=cfg,
+        job_id=job.id,
+        compose_yaml=compose_yaml,
+        env_content=env_content,
+    )
+
+    log.append(f"[remote-docker] services to create: {len(summary.get('services', []))}")
+    for svc in summary.get("services", []):
+        log.append(
+            f"  - {svc.get('name')}: image={svc.get('image')} ports={len(svc.get('ports') or [])}"
+        )
+    env_masked = summary.get("env_keys_masked") or {}
+    if env_masked:
+        log.append(f"[remote-docker] env keys (masked in summary): {json.dumps(env_masked)}")
+    log.append(f"[remote-docker] networks: {', '.join(summary.get('networks') or [])}")
+    log.append(f"[remote-docker] remote workdir: {summary.get('remote_workdir')}")
+    log.append(f"[remote-docker] compose project: {summary.get('compose_project_name')}")
+    log.append("[remote-docker] Plan complete (no remote changes applied).")
+
+    artifacts: list[dict[str, Any]] = [
+        summary,
+        {
+            "type": "docker_compose",
+            "filename": DOCKER_COMPOSE_FILENAME,
+            "sha256": summary.get("compose_sha256"),
+        },
+    ]
+    if env_content.strip():
+        artifacts.append({"type": "env_file", "filename": ENV_FILENAME})
+    return log.text(), artifacts
+
+
+def execute_apply(
+    db: Session,
+    *,
+    job: ExternalDeploymentJob,
+    target: DeploymentTarget,
+    topology: Topology,
+) -> tuple[str, list[dict[str, Any]]]:
+    log = JobLogBuffer()
+    log.append(f"[remote-docker] apply job={job.id}")
+    ensure_ssh_client_installed()
+    cfg = parse_remote_docker_config(target.config_json)
+    conn = _connection(target, cfg)
+    runner = get_remote_command_runner()
+
+    bundle = iac_svc.load_topology_export_bundle(db, topology.id)
+    compose_yaml = iac_svc.generate_docker_compose(bundle)
+    env_content = generate_compose_env_content(bundle)
+    remote_dir = _remote_job_dir(cfg, topology.id, job.id)
+    project_name = _compose_project_name(job.id)
+
+    metadata = {
+        "topology_id": str(topology.id),
+        "job_id": str(job.id),
+        "target_id": str(target.id),
+        "compose_project_name": project_name,
+        "remote_workdir": remote_dir,
+    }
+
+    with tempfile.TemporaryDirectory(prefix="cns-ext-") as tmp:
+        compose_path = os.path.join(tmp, DOCKER_COMPOSE_FILENAME)
+        with open(compose_path, "w", encoding="utf-8") as fh:
+            fh.write(compose_yaml)
+        uploads: list[tuple[str, str]] = [(compose_path, DOCKER_COMPOSE_FILENAME)]
+        if env_content.strip():
+            env_path = os.path.join(tmp, ENV_FILENAME)
+            with open(env_path, "w", encoding="utf-8") as fh:
+                fh.write(env_content)
+            uploads.append((env_path, ENV_FILENAME))
+        meta_path = os.path.join(tmp, METADATA_FILENAME)
+        with open(meta_path, "w", encoding="utf-8") as fh:
+            json.dump(metadata, fh, indent=2)
+        uploads.append((meta_path, METADATA_FILENAME))
+
+        scp_preview = format_scp_command_for_log(
+            conn,
+            uploads[0][0],
+            uploads[0][1],
+            remote_dir,
+        )
+        _log_ssh_connection_debug(
+            log,
+            operation="apply",
+            target=target,
+            cfg=cfg,
+            conn=conn,
+            remote_workdir=remote_dir,
+            upload_command_type="scp",
+            scp_preview=scp_preview,
+        )
+        log.append(f"[remote-docker] uploading {len(uploads)} file(s) to {remote_dir}")
+        upload_result = runner.upload_files(conn, uploads, remote_dir)
+        if upload_result.stdout.strip():
+            log.append(upload_result.stdout.strip())
+
+    compose_cmd = (
+        f"cd {remote_dir} && docker compose -f {DOCKER_COMPOSE_FILENAME} "
+        f"--project-name {project_name} up -d"
+    )
+    if env_content.strip():
+        compose_cmd = (
+            f"cd {remote_dir} && docker compose -f {DOCKER_COMPOSE_FILENAME} --env-file {ENV_FILENAME} "
+            f"--project-name {project_name} up -d"
+        )
+    log.append(f"[remote-docker] running: docker compose up -d (project={project_name})")
+    up_result = runner.run_ssh(conn, compose_cmd, timeout_seconds=600)
+    if up_result.stdout.strip():
+        log.append(up_result.stdout.strip())
+    if up_result.stderr.strip():
+        log.append(up_result.stderr.strip())
+    if not up_result.ok:
+        raise ValueError(f"docker compose up failed: exit {up_result.exit_code}")
+
+    services_json = [
+        {
+            "name": n.service_name,
+            "cns_node": n.name,
+            "image": n.image or "alpine:latest",
+        }
+        for n in bundle.nodes
+    ]
+    ext_dep_svc.create_external_deployment(
+        db,
+        project_id=topology.project_id,
+        topology_id=topology.id,
+        target_id=target.id,
+        job_id=job.id,
+        compose_project_name=project_name,
+        remote_workdir=remote_dir,
+        services_json=services_json,
+        metadata_json=scrub_sensitive_dict(metadata) or {},
+    )
+    log.append("[remote-docker] External deployment recorded as active.")
+    log.append("[remote-docker] Apply succeeded.")
+    artifacts = [{"type": "external_deployment", "compose_project_name": project_name, "remote_workdir": remote_dir}]
+    return log.text(), artifacts
+
+
+def execute_destroy(
+    db: Session,
+    *,
+    job: ExternalDeploymentJob,
+    target: DeploymentTarget,
+    topology: Topology,
+) -> tuple[str, list[dict[str, Any]]]:
+    log = JobLogBuffer()
+    log.append(f"[remote-docker] destroy job={job.id}")
+    ensure_ssh_client_installed()
+    cfg = parse_remote_docker_config(target.config_json)
+    conn = _connection(target, cfg)
+    runner = get_remote_command_runner()
+
+    active = ext_dep_svc.get_active_external_deployment(
+        db, topology_id=topology.id, target_id=target.id
+    )
+    if active is None:
+        raise ValueError("No active external deployment found for this topology and target")
+
+    remote_dir = active.remote_workdir
+    project_name = active.compose_project_name
+    _log_ssh_connection_debug(
+        log,
+        operation="destroy",
+        target=target,
+        cfg=cfg,
+        conn=conn,
+        remote_workdir=remote_dir,
+    )
+    log.append(f"[remote-docker] destroying project={project_name} at {remote_dir}")
+
+    down_cmd = (
+        f"cd {remote_dir} && docker compose -f {DOCKER_COMPOSE_FILENAME} "
+        f"--project-name {project_name} down --remove-orphans"
+    )
+    result = runner.run_ssh(conn, down_cmd, timeout_seconds=600)
+    if result.stdout.strip():
+        log.append(result.stdout.strip())
+    if result.stderr.strip():
+        log.append(result.stderr.strip())
+    if not result.ok:
+        raise ValueError(f"docker compose down failed: exit {result.exit_code}")
+
+    ext_dep_svc.mark_external_deployment_destroyed(db, active)
+    log.append("[remote-docker] External deployment marked destroyed.")
+    log.append("[remote-docker] Destroy succeeded.")
+    return log.text(), [{"type": "destroy_summary", "external_deployment_id": str(active.id)}]

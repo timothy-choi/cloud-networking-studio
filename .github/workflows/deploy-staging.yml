@@ -67,7 +67,28 @@ jobs:
             SSLIP_HOST=api-staging.cloudnetstudio.com \
             CNS_SSLIP_HOST=api-staging.cloudnetstudio.com \
             CADDYFILE_CADDY=./deploy/Caddyfile.staging-https \
+            GOOGLE_APPLICATION_CREDENTIALS=/opt/cns/secrets/gcp-terraform-sa.json \
             docker compose -f docker-compose.prod.yml -f docker-compose.caddy-https.yml -f docker-compose.staging.yml config --quiet
+          python3 - <<'PY'
+          from pathlib import Path
+
+          prod = Path("docker-compose.prod.yml").read_text()
+          staging = Path("docker-compose.staging.yml").read_text()
+          assert prod.count("/opt/cns/secrets:/opt/cns/secrets:ro") >= 2
+          backend_idx = prod.index("  backend:")
+          runner_idx = prod.index("  runner:")
+          frontend_idx = prod.index("  frontend:")
+          runner_block = prod[runner_idx:backend_idx]
+          backend_block = prod[backend_idx:frontend_idx]
+          for block, name in ((backend_block, "backend"), (runner_block, "runner")):
+              assert "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}" in block, name
+              assert "/opt/cns/secrets:/opt/cns/secrets:ro" in block, name
+          assert (
+              "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/opt/cns/secrets/gcp-terraform-sa.json}"
+              in staging
+          )
+          print("staging compose: GCP credentials env + secrets mount OK for backend and runner")
+          PY
 
       - name: Require staging deploy secrets
         env:
@@ -143,6 +164,7 @@ jobs:
           TF_VAR_staging_cors_origins: ${{ steps.staging_cors.outputs.origins }}
           TF_VAR_staging_api_host: ${{ steps.staging_api.outputs.api_host }}
           TF_VAR_staging_app_url: ${{ steps.staging_api.outputs.app_url }}
+          TF_VAR_staging_remote_docker_ssh_key_path: ${{ vars.CNS_REMOTE_DOCKER_SSH_KEY_PATH || vars.CNS_STAGING_REMOTE_DOCKER_SSH_KEY_PATH || '/opt/cns/secrets/gcp-remote-docker-key' }}
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_DYNAMODB_TABLE: ${{ secrets.TF_STATE_DYNAMODB_TABLE }}
           TF_CLI_ARGS_init: "-backend-config=backend.ci.hcl"
@@ -220,20 +242,27 @@ jobs:
           CNS_STAGING_CADDY_HTTP_PORT: ${{ vars.CNS_STAGING_CADDY_HTTP_PORT }}
           CNS_STAGING_CADDY_HTTPS_PORT: ${{ vars.CNS_STAGING_CADDY_HTTPS_PORT }}
           CNS_STAGING_POSTGRES_HOST_PORT: ${{ vars.CNS_STAGING_POSTGRES_HOST_PORT }}
+          CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${{ vars.CNS_REMOTE_DOCKER_SSH_KEY_PATH || secrets.CNS_REMOTE_DOCKER_SSH_KEY_PATH || '/opt/cns/secrets/gcp-remote-docker-key' }}
+          STAGING_REMOTE_DOCKER_SSH_KEY_PATH: ${{ vars.CNS_STAGING_REMOTE_DOCKER_SSH_KEY_PATH }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ vars.CNS_STAGING_GCP_TERRAFORM_CREDS_PATH || '/opt/cns/secrets/gcp-terraform-sa.json' }}
         with:
           host: ${{ steps.host.outputs.ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: CHECKOUT_REF,GITHUB_REPOSITORY,GITHUB_TOKEN,CNS_STAGING_API_HOST,CNS_STAGING_APP_URL,STAGING_AUTH_SECRET_KEY,STAGING_POSTGRES_PASSWORD,STAGING_DATABASE_URL,CNS_STAGING_CORS_ORIGINS,CNS_STAGING_CADDY_HTTP_PORT,CNS_STAGING_CADDY_HTTPS_PORT,CNS_STAGING_POSTGRES_HOST_PORT
+          envs: CHECKOUT_REF,GITHUB_REPOSITORY,GITHUB_TOKEN,CNS_STAGING_API_HOST,CNS_STAGING_APP_URL,STAGING_AUTH_SECRET_KEY,STAGING_POSTGRES_PASSWORD,STAGING_DATABASE_URL,CNS_STAGING_CORS_ORIGINS,CNS_STAGING_CADDY_HTTP_PORT,CNS_STAGING_CADDY_HTTPS_PORT,CNS_STAGING_POSTGRES_HOST_PORT,CNS_REMOTE_DOCKER_SSH_KEY_PATH,STAGING_REMOTE_DOCKER_SSH_KEY_PATH,GOOGLE_APPLICATION_CREDENTIALS
           script_stop: true
           script: |
             set -euo pipefail
             APP_DIR="${HOME}/cloud-networking-studio-staging"
-            if [[ ! -f "${APP_DIR}/scripts/staging_deploy_remote.sh" ]]; then
-              CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            if [[ ! -d "${APP_DIR}/.git" ]]; then
               git clone "${CLONE_URL}" "${APP_DIR}"
             fi
-            bash "${APP_DIR}/scripts/staging_deploy_remote.sh"
+            # Run the deploy script from CHECKOUT_REF so redeploys pick up script fixes immediately.
+            curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${CHECKOUT_REF}/scripts/staging_deploy_remote.sh" \
+              -o /tmp/staging_deploy_remote.sh
+            bash /tmp/staging_deploy_remote.sh
 
       - name: Staging smoke (HTTPS API, environment=staging)
         env:

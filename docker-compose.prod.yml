@@ -48,8 +48,18 @@ services:
     environment:
       # docker (default) or kubernetes — use docker-compose.k8s-runtime.yml overlay for Kubernetes.
       RUNTIME_PROVIDER: ${RUNTIME_PROVIDER:-docker}
+      CNS_INFRA_TEMPLATES_ROOT: /opt/cns/infra_templates
+      CNS_ANSIBLE_PLAYBOOKS_ROOT: /opt/cns/ansible_playbooks
+      CNS_INFRA_WORKSPACES_ROOT: /opt/cns/infra-workspaces
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key}
+      CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key.pub}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/cns/secrets:/opt/cns/secrets:ro
+      - /opt/cns/infra-workspaces:/opt/cns/infra-workspaces
+      - ./infra_templates:/opt/cns/infra_templates:ro
+      - ./ansible_playbooks:/opt/cns/ansible_playbooks:ro
     expose:
       - "8090"
     networks: [cns]
@@ -71,17 +81,25 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/cns/secrets:/opt/cns/secrets:ro
+      - ./infra_templates:/opt/cns/infra_templates:ro
+      - ./ansible_playbooks:/opt/cns/ansible_playbooks:ro
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://cns_user:cns_password@postgres:5432/cloud_networking_studio}
       CNS_ENVIRONMENT: ${CNS_ENVIRONMENT:-production}
       CNS_CONTROLLER_MODE: ${CNS_CONTROLLER_MODE:-manual}
       CNS_CORS_ORIGINS: ${CNS_CORS_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:80,http://127.0.0.1:80}
       CNS_CORS_ORIGIN_REGEX: ${CNS_CORS_ORIGIN_REGEX:-}
+      CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key}
+      CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key.pub}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
       # Step 34 auth: smoke tests expect AUTH_REQUIRE_LOGIN=true (set in CI / .env for production-like runs).
       AUTH_REQUIRE_LOGIN: ${AUTH_REQUIRE_LOGIN:-false}
       AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-local-dev-only-change-AUTH_SECRET_KEY-in-production-min-32-chars}
       RUNTIME_EXECUTOR: ${RUNTIME_EXECUTOR:-go}
       GO_RUNNER_URL: ${GO_RUNNER_URL:-http://runner:8090}
+      CNS_INFRA_TEMPLATES_ROOT: /opt/cns/infra_templates
+      CNS_ANSIBLE_PLAYBOOKS_ROOT: /opt/cns/ansible_playbooks
     networks: [cns]
     depends_on:
       postgres:

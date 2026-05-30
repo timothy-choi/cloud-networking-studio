@@ -34,6 +34,8 @@ import { Spinner } from '../components/Spinner';
 import { TopologyWorkspace } from '../components/topology/TopologyWorkspace';
 import { TopologyVersionsPanel } from '../components/topology/TopologyVersionsPanel';
 import { DeploymentProfilesPanel } from '../components/topology/DeploymentProfilesPanel';
+import { ExternalDeploymentsPanel } from '../components/topology/ExternalDeploymentsPanel';
+import { InfrastructureDeploymentsPanel } from '../components/topology/InfrastructureDeploymentsPanel';
 import { DeployModal } from '../components/topology/DeployModal';
 import { IaCExportPanel } from '../components/topology/IaCExportPanel';
 import { TrafficValidationSection } from '../components/traffic/TrafficValidationSection';
@@ -132,6 +134,14 @@ export function TopologyDetailPage() {
   const [networkAllocationMode, setNetworkAllocationMode] =
     useState<NetworkAllocationMode>('managed');
   const [allocationModeSaving, setAllocationModeSaving] = useState(false);
+  const [externalDeploymentsOpen, setExternalDeploymentsOpen] = useState(false);
+  const [externalTargetSelection, setExternalTargetSelection] = useState<{
+    targetId: string;
+    highlight: boolean;
+    fromInfra: boolean;
+    tab: 'targets' | 'jobs' | 'deployments';
+  } | null>(null);
+  const [targetsRefreshToken, setTargetsRefreshToken] = useState(0);
 
   useEffect(() => {
     if (topology) {
@@ -513,6 +523,61 @@ export function TopologyDetailPage() {
           <DeploymentProfilesPanel topologyId={id} readOnly={viewerMode} isOwner={isOwner} />
         </CollapsibleSection>
       )}
+
+      {topology?.project_id ? (
+        <CollapsibleSection title="Infrastructure Deployments" defaultOpen={false}>
+          <InfrastructureDeploymentsPanel
+            topologyId={id}
+            onUseRuntimeTarget={(targetId) => {
+              setExternalDeploymentsOpen(true);
+              setExternalTargetSelection({
+                targetId,
+                highlight: true,
+                fromInfra: true,
+                tab: 'targets',
+              });
+              setTargetsRefreshToken((current) => current + 1);
+              window.requestAnimationFrame(() => {
+                document.getElementById('external-deployments')?.scrollIntoView({ behavior: 'smooth' });
+              });
+            }}
+            onRuntimeTargetsChanged={() => setTargetsRefreshToken((current) => current + 1)}
+          />
+        </CollapsibleSection>
+      ) : null}
+
+      {topology?.project_id ? (
+        <CollapsibleSection
+          title="External Deployments"
+          defaultOpen={false}
+          id="external-deployments"
+          open={externalDeploymentsOpen}
+          onOpenChange={setExternalDeploymentsOpen}
+        >
+          <ExternalDeploymentsPanel
+            topologyId={id}
+            projectId={topology.project_id}
+            readOnly={viewerMode}
+            preferredTab={externalTargetSelection?.tab ?? null}
+            preselectedTargetId={externalTargetSelection?.targetId ?? null}
+            highlightTargetId={
+              externalTargetSelection?.highlight ? externalTargetSelection.targetId : null
+            }
+            selectedFromInfra={externalTargetSelection?.fromInfra ?? false}
+            onSelectedFromInfraAck={() =>
+              setExternalTargetSelection((current) =>
+                current ? { ...current, fromInfra: false } : null,
+              )
+            }
+            onHighlightDone={() =>
+              setExternalTargetSelection((current) =>
+                current ? { ...current, highlight: false } : null,
+              )
+            }
+            refreshToken={targetsRefreshToken}
+          />
+        </CollapsibleSection>
+      ) : null}
 
       {topology && !deploymentId ? (
         <SectionEmptyState

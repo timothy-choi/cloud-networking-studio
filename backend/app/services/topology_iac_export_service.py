@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import re
 import textwrap
 import zipfile
@@ -91,6 +92,72 @@ def _indent_block(text: str, spaces: int = 2) -> str:
     return "\n".join(pad + line if line else line for line in text.splitlines())
 
 
+_IDLE_WORKLOAD_NAMES = frozenset({"client", "host", "debug", "test"})
+_SERVICE_IMAGE_REPOS = frozenset(
+    {
+        "nginx",
+        "httpd",
+        "apache",
+        "apache2",
+        "caddy",
+        "traefik",
+        "redis",
+        "postgres",
+        "postgresql",
+        "mysql",
+        "mariadb",
+        "mongo",
+        "mongodb",
+    }
+)
+
+
+def _image_repo_name(image: str | None) -> str:
+    ref = (image or "alpine:latest").strip().lower()
+    ref = ref.split("@", 1)[0]
+    tagless = ref.rsplit("/", 1)[-1]
+    return tagless.split(":", 1)[0]
+
+
+def _is_alpine_like_image(image: str | None) -> bool:
+    repo = _image_repo_name(image)
+    return repo in ("alpine", "busybox")
+
+
+def _is_service_image(image: str | None) -> bool:
+    if not image:
+        return False
+    repo = _image_repo_name(image)
+    return repo in _SERVICE_IMAGE_REPOS
+
+
+def _is_idle_workload_node(node: ExportNode) -> bool:
+    if node.node_type == "host":
+        return True
+    label = (node.runtime.role_label or "").strip().lower()
+    if label in _IDLE_WORKLOAD_NAMES:
+        return True
+    name = (node.name or "").strip().lower()
+    return name in _IDLE_WORKLOAD_NAMES
+
+
+def _compose_command_for_node(node: ExportNode) -> list[str] | None:
+    if node.runtime.command:
+        return list(node.runtime.command)
+    if (
+        _is_idle_workload_node(node)
+        and _is_alpine_like_image(node.image)
+        and not _is_service_image(node.image)
+    ):
+        return ["sleep", "infinity"]
+    return None
+
+
+def _format_compose_command_array(parts: list[str]) -> str:
+    inner = ", ".join(json.dumps(part) for part in parts)
+    return f"[{inner}]"
+
+
 def load_topology_export_bundle(session: Session, topology_id: UUID) -> TopologyExportBundle:
     topo = session.scalar(
         select(Topology)
@@ -175,7 +242,6 @@ def generate_docker_compose(bundle: TopologyExportBundle) -> str:
         f"# Topology: {bundle.topology_name} ({bundle.topology_id})",
         f"# Runtime target: {bundle.runtime_target} | Networking: {bundle.networking_mode}",
         *_link_comments(bundle),
-        'version: "3.8"',
         "services:",
     ]
     if not bundle.nodes:
@@ -190,9 +256,9 @@ def generate_docker_compose(bundle: TopologyExportBundle) -> str:
             lines.append(f"    image: {_yaml_scalar(node.image)}")
         else:
             lines.append("    image: alpine:latest  # TODO: set image from topology")
-        if node.runtime.command:
-            cmd = " ".join(node.runtime.command)
-            lines.append(f"    command: {_yaml_scalar(cmd)}")
+        command_parts = _compose_command_for_node(node)
+        if command_parts:
+            lines.append(f"    command: {_format_compose_command_array(command_parts)}")
         ports = node.runtime.ports or ()
         if ports:
             lines.append("    ports:")

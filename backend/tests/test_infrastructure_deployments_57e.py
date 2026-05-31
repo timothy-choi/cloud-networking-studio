@@ -148,7 +148,14 @@ def _stub_gcp_ssh_gates(monkeypatch):
     _patch_gcp_ssh_gates(monkeypatch)
 
 
-def _create_gcp_deployment(client, headers, topo_id, *, variables: dict | None = None) -> str:
+def _create_gcp_deployment(
+    client,
+    headers,
+    topo_id,
+    *,
+    variables: dict | None = None,
+    credentials_ref: str = "env:GOOGLE_APPLICATION_CREDENTIALS",
+) -> str:
     create = client.post(
         f"/topologies/{topo_id}/infrastructure-deployments",
         headers=headers,
@@ -156,7 +163,7 @@ def _create_gcp_deployment(client, headers, topo_id, *, variables: dict | None =
             "name": "gcp-stack",
             "template_id": "docker-vm",
             "provider": "gcp",
-            "credentials_ref": "env:GOOGLE_APPLICATION_CREDENTIALS",
+            "credentials_ref": credentials_ref,
             "variables": variables or GCP_VARS,
         },
     )

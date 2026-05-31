@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import {
   confirmInfrastructureDeployment,
@@ -14,6 +15,7 @@ import {
   type InfrastructureExecution,
   type InfrastructureTemplate,
 } from '../../api/infrastructureDeployments';
+import { listCredentialProfiles, type CredentialProfile } from '../../api/credentialProfiles';
 import { usePolling } from '../../hooks/usePolling';
 import { ApiErrorDisplay } from '../errors/ApiErrorDisplay';
 import { Spinner } from '../Spinner';
@@ -68,10 +70,12 @@ export async function submitInfrastructureCreate(
 
 export function InfrastructureDeploymentsPanel({
   topologyId,
+  projectId,
   onUseRuntimeTarget,
   onRuntimeTargetsChanged,
 }: {
   topologyId: string;
+  projectId?: string;
   onUseRuntimeTarget?: (targetId: string) => void;
   onRuntimeTargetsChanged?: () => void;
 }) {
@@ -86,7 +90,10 @@ export function InfrastructureDeploymentsPanel({
   const [region, setRegion] = useState(defaults.region);
   const [vmCount, setVmCount] = useState(defaults.vmCount);
   const [credentialsRef, setCredentialsRef] = useState(defaults.credentialsRef);
-  const [projectId, setProjectId] = useState(defaults.projectId);
+  const [credentialProfiles, setCredentialProfiles] = useState<CredentialProfile[]>([]);
+  const [credentialRefMode, setCredentialRefMode] = useState<'profile' | 'manual'>('profile');
+  const [selectedProfileId, setSelectedProfileId] = useState('');
+  const [gcpProjectId, setGcpProjectId] = useState(defaults.projectId);
   const [zone, setZone] = useState(defaults.zone);
   const [machineType, setMachineType] = useState(defaults.machineType);
   const [networkName, setNetworkName] = useState(defaults.networkName);
@@ -134,6 +141,38 @@ export function InfrastructureDeploymentsPanel({
     void load().catch(setError);
   }, [load]);
 
+  useEffect(() => {
+    setSelectedProfileId('');
+  }, [provider]);
+
+  useEffect(() => {
+    if (!projectId || !isRealCloudProvider(provider)) {
+      setCredentialProfiles([]);
+      return;
+    }
+    void listCredentialProfiles(projectId)
+      .then((items) => setCredentialProfiles(items.filter((p) => p.provider === provider)))
+      .catch(() => setCredentialProfiles([]));
+  }, [projectId, provider]);
+
+  useEffect(() => {
+    if (credentialRefMode !== 'profile') {
+      return;
+    }
+    const profile = credentialProfiles.find((p) => p.id === selectedProfileId);
+    if (profile) {
+      setCredentialsRef(profile.credentials_ref);
+    } else {
+      setCredentialsRef('');
+    }
+  }, [credentialRefMode, selectedProfileId, credentialProfiles]);
+
+  useEffect(() => {
+    if (credentialRefMode === 'profile' && credentialProfiles.length > 0 && !selectedProfileId) {
+      setSelectedProfileId(credentialProfiles[0].id);
+    }
+  }, [credentialRefMode, credentialProfiles, selectedProfileId]);
+
   const selected = deployments.find((d) => d.id === selectedId) ?? null;
 
   const refreshExecutions = useCallback(async (deploymentId: string) => {
@@ -175,7 +214,7 @@ export function InfrastructureDeploymentsPanel({
       region,
       vmCount,
       credentialsRef,
-      projectId,
+      projectId: gcpProjectId,
       zone,
       machineType,
       networkName,
@@ -454,8 +493,8 @@ export function InfrastructureDeploymentsPanel({
             <>
               <div>
                 <input
-                  value={projectId}
-                  onChange={(e) => setProjectId(e.target.value)}
+                  value={gcpProjectId}
+                  onChange={(e) => setGcpProjectId(e.target.value)}
                   placeholder="GCP project ID"
                   className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
                 />
@@ -540,14 +579,60 @@ export function InfrastructureDeploymentsPanel({
             </>
           ) : null}
           {showCredentialsRef ? (
-            <div className="md:col-span-2">
-              <input
-                value={credentialsRef}
-                onChange={(e) => setCredentialsRef(e.target.value)}
-                placeholder="credentials_ref (e.g. env:GOOGLE_APPLICATION_CREDENTIALS)"
-                className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-              />
-              <p className="mt-1 text-xs text-cns-muted">{credentialsRefHelpText(provider)}</p>
+            <div className="md:col-span-2 space-y-2">
+              <div className="flex flex-wrap gap-3 text-xs">
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="credentialRefMode"
+                    checked={credentialRefMode === 'profile'}
+                    onChange={() => setCredentialRefMode('profile')}
+                  />
+                  Credential profile
+                </label>
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="credentialRefMode"
+                    checked={credentialRefMode === 'manual'}
+                    onChange={() => setCredentialRefMode('manual')}
+                  />
+                  Manual credentials_ref
+                </label>
+              </div>
+              {credentialRefMode === 'profile' ? (
+                <>
+                  {credentialProfiles.length === 0 ? (
+                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                      No {provider} credential profiles for this project.{' '}
+                      <Link to="/credential-profiles" className="font-semibold underline">
+                        Create one
+                      </Link>
+                      .
+                    </p>
+                  ) : (
+                    <select
+                      value={selectedProfileId}
+                      onChange={(e) => setSelectedProfileId(e.target.value)}
+                      className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                    >
+                      {credentialProfiles.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.validation_status})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </>
+              ) : (
+                <input
+                  value={credentialsRef}
+                  onChange={(e) => setCredentialsRef(e.target.value)}
+                  placeholder="credentials_ref (e.g. env:GOOGLE_APPLICATION_CREDENTIALS)"
+                  className="w-full rounded border px-2 py-1 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                />
+              )}
+              <p className="text-xs text-cns-muted">{credentialsRefHelpText(provider)}</p>
               {fieldErrors.credentialsRef ? (
                 <p className="mt-1 text-xs text-red-600">{fieldErrors.credentialsRef}</p>
               ) : null}

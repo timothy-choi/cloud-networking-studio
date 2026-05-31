@@ -52,7 +52,7 @@ export type ApplySafetyChecklist = {
   cost_warning?: string | null;
 };
 
-export const REAL_CLOUD_PROVIDERS = new Set(['gcp', 'aws']);
+export const REAL_CLOUD_PROVIDERS = new Set(['gcp', 'aws', 'azure']);
 
 export function isRealCloudProvider(provider: string): boolean {
   return REAL_CLOUD_PROVIDERS.has(provider);
@@ -496,10 +496,13 @@ export function isMockInfrastructureDeployment(templateId: string, provider: str
 
 export function credentialsRefHelpText(provider: string): string {
   if (provider === 'gcp') {
-    return 'Use env:GOOGLE_APPLICATION_CREDENTIALS (service account file path on server) or env:GOOGLE_CREDENTIALS_JSON.';
+    return 'Select a credential profile, or enter a platform-admin ref such as env:GOOGLE_APPLICATION_CREDENTIALS.';
   }
   if (provider === 'aws') {
-    return 'Use env:AWS_PROFILE or env:AWS_ACCESS_KEY_ID (requires AWS_SECRET_ACCESS_KEY on server).';
+    return 'Select a credential profile, or enter env:AWS_PROFILE / env:AWS_ACCESS_KEY_ID for platform-managed credentials.';
+  }
+  if (provider === 'azure') {
+    return 'Select an Azure credential profile (credential:<profile_id>).';
   }
   return 'Not required for local/mock providers.';
 }

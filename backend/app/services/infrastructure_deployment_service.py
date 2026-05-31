@@ -41,7 +41,7 @@ from app.services.remote_ssh_public_key_service import resolve_remote_docker_ssh
 from app.runtime.infra_runner_client import InfraRunnerClientError
 
 
-from app.services.terraform_credentials_service import resolve_terraform_credentials_env
+from app.services.terraform_credentials_service import validate_terraform_credentials_ref
 
 
 class RealCloudApplyDisabledError(Exception):
@@ -89,14 +89,19 @@ def _assert_cloud_template_ready(template_id: str, provider: str) -> None:
         raise ValueError("AWS docker-vm Terraform support is coming soon.")
 
 
-def _require_real_cloud_ready(deployment: InfrastructureDeployment) -> None:
+def _require_real_cloud_ready(db: Session, deployment: InfrastructureDeployment) -> None:
     _assert_cloud_template_ready(deployment.template_id, deployment.provider)
     if not is_real_cloud_provider(deployment.provider):
         return
     ref = (deployment.credentials_ref or "").strip()
     if not ref:
         raise ValueError("Terraform credentials_ref is not configured on the server.")
-    resolve_terraform_credentials_env(deployment.provider, ref)
+    validate_terraform_credentials_ref(
+        deployment.provider,
+        ref,
+        db=db,
+        project_id=deployment.project_id,
+    )
     if is_gcp_docker_vm_apply_eligible(deployment):
         resolve_remote_docker_ssh_public_key()
 
@@ -446,7 +451,7 @@ def retry_configuration(
     if meta.get("configuration_job_status") == "running":
         raise InfraInvalidStateError("Configuration is already running.")
 
-    _require_real_cloud_ready(deployment)
+    _require_real_cloud_ready(db, deployment)
     deployment.events_json = append_event(
         deployment.events_json,
         "configure_retry_started",
@@ -487,7 +492,7 @@ def create_deployment(
     if is_real_cloud_provider(provider):
         if not cred_ref:
             raise ValueError("Terraform credentials_ref is not configured on the server.")
-        resolve_terraform_credentials_env(provider, cred_ref)
+        validate_terraform_credentials_ref(provider, cred_ref, db=db, project_id=topology.project_id)
 
     deployment = InfrastructureDeployment(
         project_id=topology.project_id,
@@ -658,7 +663,7 @@ def _register_runtime_targets(
 
 def run_validate(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
     try:
-        _require_real_cloud_ready(deployment)
+        _require_real_cloud_ready(db, deployment)
         deployment.status = "validating"
         deployment.events_json = append_event(deployment.events_json, "validate_started")
         db.flush()
@@ -699,7 +704,7 @@ def run_plan(db: Session, *, deployment: InfrastructureDeployment, actor: User) 
     try:
         if deployment.status not in {"validated", "failed"}:
             raise ValueError("Run Validate first (deployment must be in validated status).")
-        _require_real_cloud_ready(deployment)
+        _require_real_cloud_ready(db, deployment)
         deployment.status = "planning"
         deployment.events_json = append_event(deployment.events_json, "plan_started")
         db.flush()
@@ -902,7 +907,7 @@ def confirm_and_apply(
         if (confirmation_text or "").strip() != "APPLY":
             raise ValueError("Typed confirmation required: enter APPLY to confirm.")
         validate_gcp_apply_safety(deployment, unsafe_testing_override=unsafe_testing_override)
-        _require_real_cloud_ready(deployment)
+        _require_real_cloud_ready(db, deployment)
 
     started = time.monotonic()
     deployment.confirmed_at = datetime.now(UTC)
@@ -1004,7 +1009,7 @@ def destroy_deployment(
     if is_gcp_docker_vm_apply_eligible(deployment):
         if (confirmation_text or "").strip() != "DESTROY":
             raise ValueError("Typed confirmation required: enter DESTROY to confirm destroy.")
-        _require_real_cloud_ready(deployment)
+        _require_real_cloud_ready(db, deployment)
         if infra_phases.has_terraform_resources(deployment) and not infra_phases.has_terraform_workspace(deployment):
             raise ValueError(
                 "Terraform workspace/state is missing. Use force metadata cleanup if cloud resources cannot be reached."

@@ -51,7 +51,7 @@ services:
       CNS_INFRA_TEMPLATES_ROOT: /opt/cns/infra_templates
       CNS_ANSIBLE_PLAYBOOKS_ROOT: /opt/cns/ansible_playbooks
       CNS_INFRA_WORKSPACES_ROOT: /opt/cns/infra-workspaces
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/opt/cns/secrets/gcp-terraform-sa.json}
       CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key}
       CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key.pub}
     volumes:
@@ -92,7 +92,7 @@ services:
       CNS_CORS_ORIGIN_REGEX: ${CNS_CORS_ORIGIN_REGEX:-}
       CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key}
       CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key.pub}
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/opt/cns/secrets/gcp-terraform-sa.json}
       # Step 34 auth: smoke tests expect AUTH_REQUIRE_LOGIN=true (set in CI / .env for production-like runs).
       AUTH_REQUIRE_LOGIN: ${AUTH_REQUIRE_LOGIN:-false}
       AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-local-dev-only-change-AUTH_SECRET_KEY-in-production-min-32-chars}

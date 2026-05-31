@@ -53,6 +53,7 @@ def test_gcp_apply_payload_includes_ssh_public_key(monkeypatch, tmp_path):
     import uuid
     from types import SimpleNamespace
 
+    from app.services.terraform_credentials_service import resolve_terraform_credentials_env
     from app.services.terraform_executor_service import _base_payload
 
     _write_ssh_keys(tmp_path, monkeypatch)
@@ -81,7 +82,13 @@ def test_gcp_apply_payload_includes_ssh_public_key(monkeypatch, tmp_path):
     )
     execution = SimpleNamespace(id=uuid.uuid4())
 
-    payload = _base_payload(execution=execution, deployment=deployment, mode="apply")
+    cred_env = resolve_terraform_credentials_env("gcp", deployment.credentials_ref)
+    payload = _base_payload(
+        execution=execution,
+        deployment=deployment,
+        mode="apply",
+        credentials_env=cred_env,
+    )
     assert payload["variables"]["ssh_public_key"] == SSH_PUB
     assert payload["variables"]["ssh_user"] == "ubuntu"
 

@@ -124,6 +124,28 @@ The repo declares a partial **`backend "s3" {}`** in `infra/terraform/backend.tf
 
 **`docker-compose.prod.yml`** reads **`POSTGRES_*`**, **`DATABASE_URL`**, **`CNS_*`**, etc. from **`.env`** when you pass **`--env-file .env`** (as the workflow does).
 
+### GCP infrastructure deployment credentials (production)
+
+Production **Infrastructure Deployments** (GCP Terraform + remote Docker SSH) require three host files under **`/opt/cns/secrets/`**, mounted read-only into **backend** and **runner**:
+
+| Variable | Default path | Purpose |
+|----------|--------------|---------|
+| **`GOOGLE_APPLICATION_CREDENTIALS`** | `/opt/cns/secrets/gcp-terraform-sa.json` | GCP service account JSON for Terraform |
+| **`CNS_REMOTE_DOCKER_SSH_KEY_PATH`** | `/opt/cns/secrets/gcp-remote-docker-key` | Private SSH key for runtime targets |
+| **`CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH`** | `/opt/cns/secrets/gcp-remote-docker-key.pub` | Public key injected into VM metadata |
+
+**First-time setup on the EC2 host:** place the three files on disk (mode **`0600`** for private keys, **`0644`** for public key and JSON). The deploy script creates **`/opt/cns/secrets`** if missing but does **not** upload secret contents from GitHub.
+
+**Every production deploy** runs **`scripts/prod_deploy_remote.sh`**, which:
+
+1. Merges credential paths into **`~/cloud-networking-studio/.env`** (preserves existing non-empty values from the previous **`.env`**).
+2. Verifies each host file exists and is readable **before** `docker compose up`.
+3. Verifies **backend** and **runner** containers see the env vars and can read the mounted files **after** recreate.
+
+Override paths with repository **Variables** **`CNS_PRODUCTION_GCP_TERRAFORM_CREDS_PATH`**, **`CNS_REMOTE_DOCKER_SSH_KEY_PATH`**, **`CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH`** (same as staging). Deploy **fails with a clear error** if any required file is missing.
+
+See also **`docs/EXTERNAL_INFRA_DEPLOYMENT.md`** and **`docs/INFRASTRUCTURE_DEPLOYMENTS.md`**.
+
 **Bundled Postgres** starts with the rest of the stack (no Compose profile). Example on the instance:
 
 ```bash
@@ -143,7 +165,7 @@ On **`push` to `main`** (and **`workflow_dispatch`**), the **`deploy`** job:
 5. Sets up **Node.js 20** (for the Vercel deploy step).
 6. Runs **Terraform** under **`infra/terraform`**: **`backend.ci.hcl`**, **`terraform init`**, **`fmt -check`**, **`validate`**, **`plan`**, **`apply`**, **`terraform output`** (including **`public_ip`**, sslip URLs for reference, and optional **`rds_*`** fields when **`RDS_ENABLED`** is true). When **`RDS_ENABLED`**, **`TF_VAR_rds_master_password`** is taken from **`RDS_PASSWORD`** or **`POSTGRES_PASSWORD`**.
 7. **Wait for SSH** until **TCP port 22** on **`public_ip`** accepts connections.
-8. **SSH** (`appleboy/ssh-action`): **`cloud-init`**, **Docker** install if needed, clone/update **`~/cloud-networking-studio`**, **`git checkout`** pushed SHA, **write `.env`**, **`docker compose … down`** (no **`-v`**), **`docker compose … up -d --build --remove-orphans`**, then **`docker volume ls | grep caddy`**, **`docker compose ps`**, **`docker compose … logs caddy --tail=80`** (full-stack compose logs only if config/up fails).
+8. **SSH** (`appleboy/ssh-action`): **`cloud-init`**, **Docker** install if needed, runs **`scripts/prod_deploy_remote.sh`** (clone/update **`~/cloud-networking-studio`**, **`git checkout`** pushed SHA, **write `.env`** with infra credential paths, validate host files + container env, **`docker compose … down`** (no **`-v`**), **`docker compose … up -d --build --remove-orphans`**, force-recreate **backend/runner**, then **`docker volume ls | grep caddy`**, **`docker compose ps`**, **`docker compose … logs caddy --tail=80`** (full-stack compose logs only if config/up fails).
 9. **`scripts/prod_smoke_test.sh`** with **`CNS_BASE_URL`** = **`https://<API host>`** and **`CNS_SMOKE_API_ONLY=1`** (no **`-L`**): waits for **`GET /api/health`** only (SPA is on Vercel, not the API host). After **Step 34** the script authenticates (register/login), uses **Bearer** tokens for topology APIs, and expects **401** for unauthenticated topology **POST** when **`AUTH_REQUIRE_LOGIN=true`** (set in the workflow-written **`.env`**).
 10. **`curl -vL`** **`http://<API host>/api/health`** on the runner (follow redirect to HTTPS).
 11. Retries **`curl -sfS`** on **`https://<API host>/api/health`**; on failure prints **`curl -vk`** for TLS debugging.

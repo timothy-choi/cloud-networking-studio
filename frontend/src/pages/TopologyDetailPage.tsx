@@ -528,6 +528,7 @@ export function TopologyDetailPage() {
         <CollapsibleSection title="Infrastructure Deployments" defaultOpen={false}>
           <InfrastructureDeploymentsPanel
             topologyId={id}
+            projectId={topology.project_id}
             onUseRuntimeTarget={(targetId) => {
               setExternalDeploymentsOpen(true);
               setExternalTargetSelection({

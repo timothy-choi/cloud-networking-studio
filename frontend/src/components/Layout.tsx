@@ -22,6 +22,12 @@ export function Layout() {
               <Link to="/api-tokens" className="text-cns-muted hover:text-zinc-900 dark:hover:text-zinc-100">
                 API tokens
               </Link>
+              <Link
+                to="/credential-profiles"
+                className="text-cns-muted hover:text-zinc-900 dark:hover:text-zinc-100"
+              >
+                Credentials
+              </Link>
               <Link to="/templates" className="text-cns-muted hover:text-zinc-900 dark:hover:text-zinc-100">
                 Templates
               </Link>

@@ -63,6 +63,7 @@ def test_gcp_apply_payload_fields_match_runner_schema(monkeypatch, tmp_path):
     import uuid
     from types import SimpleNamespace
 
+    from app.services.terraform_credentials_service import resolve_terraform_credentials_env
     from app.services.terraform_executor_service import _base_payload
 
     cred_file = tmp_path / "gcp-sa.json"
@@ -98,7 +99,13 @@ def test_gcp_apply_payload_fields_match_runner_schema(monkeypatch, tmp_path):
         status="queued",
     )
 
-    payload = _base_payload(execution=execution, deployment=deployment, mode="apply")
+    cred_env = resolve_terraform_credentials_env("gcp", deployment.credentials_ref)
+    payload = _base_payload(
+        execution=execution,
+        deployment=deployment,
+        mode="apply",
+        credentials_env=cred_env,
+    )
     payload["mode"] = "apply"
 
     assert payload["execution_type"] == "terraform"

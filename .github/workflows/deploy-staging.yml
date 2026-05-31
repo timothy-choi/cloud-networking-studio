@@ -83,10 +83,8 @@ jobs:
           for block, name in ((backend_block, "backend"), (runner_block, "runner")):
               assert "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}" in block, name
               assert "/opt/cns/secrets:/opt/cns/secrets:ro" in block, name
-          assert (
-              "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/opt/cns/secrets/gcp-terraform-sa.json}"
-              in staging
-          )
+          gcp_default = "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/opt/cns/secrets/gcp-terraform-sa.json}"
+          assert gcp_default in prod, "production compose should default GCP creds path"
           print("staging compose: GCP credentials env + secrets mount OK for backend and runner")
           PY
 

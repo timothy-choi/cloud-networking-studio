@@ -72,8 +72,36 @@ jobs:
         run: |
           set -euo pipefail
           docker compose -f docker-compose.prod.yml config --quiet
-          CNS_CADDY_SITE_ADDRESS=api.example.com SSLIP_HOST=api.example.com CNS_SSLIP_HOST=api.example.com \
+          GOOGLE_APPLICATION_CREDENTIALS=/opt/cns/secrets/gcp-terraform-sa.json \
+            CNS_REMOTE_DOCKER_SSH_KEY_PATH=/opt/cns/secrets/gcp-remote-docker-key \
+            CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH=/opt/cns/secrets/gcp-remote-docker-key.pub \
+            CNS_CADDY_SITE_ADDRESS=api.example.com SSLIP_HOST=api.example.com CNS_SSLIP_HOST=api.example.com \
             docker compose -f docker-compose.prod.yml -f docker-compose.caddy-https.yml config --quiet
+          python3 - <<'PY'
+          from pathlib import Path
+
+          prod = Path("docker-compose.prod.yml").read_text()
+          assert prod.count("/opt/cns/secrets:/opt/cns/secrets:ro") >= 2
+          backend_idx = prod.index("  backend:")
+          runner_idx = prod.index("  runner:")
+          frontend_idx = prod.index("  frontend:")
+          runner_block = prod[runner_idx:backend_idx]
+          backend_block = prod[backend_idx:frontend_idx]
+          gcp_default = "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/opt/cns/secrets/gcp-terraform-sa.json}"
+          ssh_default = "CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key}"
+          pub_default = "CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key.pub}"
+          for block, name in ((backend_block, "backend"), (runner_block, "runner")):
+              assert gcp_default in block, name
+              assert ssh_default in block, name
+              assert pub_default in block, name
+              assert "/opt/cns/secrets:/opt/cns/secrets:ro" in block, name
+          prod_script = Path("scripts/prod_deploy_remote.sh").read_text()
+          cred_script = Path("scripts/infra_deployment_credentials.sh").read_text()
+          assert "infra_deployment_credentials.sh" in prod_script
+          assert "ensure_infra_deployment_credential_env_lines" in cred_script
+          assert "verify_host_infra_credential_files" in cred_script
+          print("production compose + deploy scripts: GCP infra credentials wiring OK")
+          PY
 
       - name: Require EC2 deploy secrets
         env:
@@ -196,6 +224,9 @@ jobs:
       - name: Deploy Docker stack on EC2 (Caddy HTTPS on custom API domain)
         uses: appleboy/ssh-action@v1.1.0
         env:
+          GIT_SHA: ${{ github.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
           POSTGRES_PASSWORD: ${{ secrets.RDS_PASSWORD || secrets.POSTGRES_PASSWORD }}
           CNS_CORS_ORIGINS: ${{ secrets.CNS_CORS_ORIGINS }}
           CNS_CADDY_SITE_ADDRESS: ${{ steps.prod_api.outputs.api_host }}
@@ -209,259 +240,26 @@ jobs:
           RDS_USERNAME: ${{ steps.tf.outputs.rds_username }}
           RDS_PASSWORD: ${{ secrets.RDS_PASSWORD }}
           CNS_LEGACY_SSLIP_HTTP: ${{ steps.tf.outputs.stack_base_url_sslip_http }}
-          # Production stack: FastAPI -> Go runner -> Docker (not local kind/kubernetes).
           RUNTIME_EXECUTOR: "go"
           RUNTIME_PROVIDER: "docker"
           GO_RUNNER_URL: "http://runner:8090"
           AUTH_SECRET_KEY: ${{ secrets.AUTH_SECRET_KEY }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ vars.CNS_PRODUCTION_GCP_TERRAFORM_CREDS_PATH || '/opt/cns/secrets/gcp-terraform-sa.json' }}
+          CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${{ vars.CNS_REMOTE_DOCKER_SSH_KEY_PATH || '/opt/cns/secrets/gcp-remote-docker-key' }}
+          CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH: ${{ vars.CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH || '/opt/cns/secrets/gcp-remote-docker-key.pub' }}
         with:
           host: ${{ steps.tf.outputs.public_ip }}
           username: ${{ secrets.EC2_SSH_USER }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          envs: POSTGRES_PASSWORD,RDS_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_CADDY,RDS_ENDPOINT,RDS_PORT,RDS_DATABASE_NAME,RDS_USERNAME,CNS_LEGACY_SSLIP_HTTP,RUNTIME_EXECUTOR,RUNTIME_PROVIDER,GO_RUNNER_URL,AUTH_SECRET_KEY
+          envs: GIT_SHA,GITHUB_REPOSITORY,GITHUB_TOKEN,POSTGRES_PASSWORD,RDS_PASSWORD,CNS_CORS_ORIGINS,CNS_CADDY_SITE_ADDRESS,CNS_CADDY_AUTO_HTTPS,CNS_ENVIRONMENT,CNS_CONTROLLER_MODE,CADDYFILE_CADDY,RDS_ENDPOINT,RDS_PORT,RDS_DATABASE_NAME,RDS_USERNAME,CNS_LEGACY_SSLIP_HTTP,RUNTIME_EXECUTOR,RUNTIME_PROVIDER,GO_RUNNER_URL,AUTH_SECRET_KEY,GOOGLE_APPLICATION_CREDENTIALS,CNS_REMOTE_DOCKER_SSH_KEY_PATH,CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH
           script_stop: true
           script: |
-            #!/usr/bin/env bash
             set -euo pipefail
-
-            REPO_SLUG="${{ github.repository }}"
-            GIT_SHA="${{ github.sha }}"
-            TOKEN="${{ github.token }}"
-            curl -fsSL -H "Authorization: Bearer ${TOKEN}" \
-              "https://raw.githubusercontent.com/${REPO_SLUG}/${GIT_SHA}/scripts/ec2_bootstrap_docker.sh" \
-              -o /tmp/ec2_bootstrap_docker.sh
-            # shellcheck source=/dev/null
-            source /tmp/ec2_bootstrap_docker.sh
-            ec2_bootstrap_host
-
-            # xtrace off: clone URL and .env contain secrets (token, DB password, CORS).
-            set +x
-            echo "=== git clone / fetch / checkout (xtrace off — secrets) ==="
-            REPO_DIR="${HOME}/cloud-networking-studio"
-            REPO_SLUG="${{ github.repository }}"
-            GIT_SHA="${{ github.sha }}"
-            TOKEN="${{ github.token }}"
-            CLONE_URL="https://x-access-token:${TOKEN}@github.com/${REPO_SLUG}.git"
-            if [[ ! -d "${REPO_DIR}/.git" ]]; then
-              git clone "${CLONE_URL}" "${REPO_DIR}"
-            fi
-            cd "${REPO_DIR}"
-            git remote set-url origin "${CLONE_URL}"
-            git fetch origin
-            git checkout "${GIT_SHA}"
-            git rev-parse HEAD
-            git status --short || true
-
-            echo "=== write .env (values not printed) ==="
-
-            echo "POSTGRES_PASSWORD present? $([[ -n "${POSTGRES_PASSWORD:-}" ]] && echo yes || echo no)"
-            echo "RDS_PASSWORD present? $([[ -n "${RDS_PASSWORD:-}" ]] && echo yes || echo no)"
-            echo "RDS_ENDPOINT present? $([[ -n "${RDS_ENDPOINT:-}" ]] && echo yes || echo no)"
-            echo "CNS_CORS_ORIGINS present? $([[ -n "${CNS_CORS_ORIGINS:-}" ]] && echo yes || echo no)"
-            echo "AUTH_SECRET_KEY present? $([[ -n "${AUTH_SECRET_KEY:-}" ]] && echo yes || echo no)"
-
-            gen_secret_hex() {
-              if command -v openssl >/dev/null 2>&1; then
-                openssl rand -hex 32
-              elif command -v python3 >/dev/null 2>&1; then
-                python3 -c 'import secrets; print(secrets.token_hex(32))'
-              else
-                ( set +o pipefail; LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c 64 )
-              fi
-            }
-
-            AUTH_SECRET_KEY="$(printf '%s' "${AUTH_SECRET_KEY:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            if [[ -z "${AUTH_SECRET_KEY}" ]] && [[ -f .env ]]; then
-              AUTH_SECRET_KEY="$(grep -E '^AUTH_SECRET_KEY=' .env | tail -n1 | cut -d= -f2- || true)"
-              AUTH_SECRET_KEY="$(printf '%s' "${AUTH_SECRET_KEY}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            fi
-            CNS_DEV_AUTH_DEFAULT="local-dev-only-change-AUTH_SECRET_KEY-in-production-min-32-chars"
-            if [[ -z "${AUTH_SECRET_KEY}" ]] || [[ "${AUTH_SECRET_KEY}" == "${CNS_DEV_AUTH_DEFAULT}" ]]; then
-              AUTH_SECRET_KEY="$(gen_secret_hex)"
-            fi
-            if [[ -z "${AUTH_SECRET_KEY}" ]] || [[ ${#AUTH_SECRET_KEY} -lt 32 ]]; then
-              echo "::error::SSH deploy: AUTH_SECRET_KEY material was empty or too short after resolution."
-              exit 1
-            fi
-
-            PUB_HOST="$(printf '%s' "${CNS_CADDY_SITE_ADDRESS:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            if [[ -z "${PUB_HOST}" ]]; then
-              echo "::error::SSH deploy: CNS_CADDY_SITE_ADDRESS empty after trim."
-              exit 1
-            fi
-            if [[ -z "${POSTGRES_PASSWORD:-}" ]] || [[ -z "${CNS_CORS_ORIGINS:-}" ]]; then
-              echo "::error::SSH deploy: POSTGRES_PASSWORD or CNS_CORS_ORIGINS empty on remote."
-              exit 1
-            fi
-
-            CNS_REQUIRED_CORS_ORIGINS="https://app.cloudnetstudio.com,http://${PUB_HOST},https://${PUB_HOST}"
-            if [[ -n "${CNS_LEGACY_SSLIP_HTTP:-}" ]]; then
-              CNS_REQUIRED_CORS_ORIGINS="${CNS_REQUIRED_CORS_ORIGINS},${CNS_LEGACY_SSLIP_HTTP}"
-            fi
-            CNS_CORS_ORIGINS="${CNS_CORS_ORIGINS},${CNS_REQUIRED_CORS_ORIGINS}"
-
-            CNS_CADDY_SITE_ADDRESS="${PUB_HOST}"
-            CNS_CADDY_AUTO_HTTPS="${CNS_CADDY_AUTO_HTTPS:-on}"
-            CADDYFILE_CADDY="${CADDYFILE_CADDY:-./deploy/Caddyfile.public-https}"
-
-            # Production default: control plane delegates to cns-runner; runner uses Docker only.
-            RUNTIME_EXECUTOR="${RUNTIME_EXECUTOR:-go}"
-            RUNTIME_PROVIDER="${RUNTIME_PROVIDER:-docker}"
-            GO_RUNNER_URL="${GO_RUNNER_URL:-http://runner:8090}"
-
-            RDS_EP="$(printf '%s' "${RDS_ENDPOINT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            RDS_P="$(printf '%s' "${RDS_PORT:-}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            if [[ -z "${RDS_P}" ]]; then RDS_P="5432"; fi
-            RDS_USER="$(printf '%s' "${RDS_USERNAME:-cns_user}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            RDS_DB="$(printf '%s' "${RDS_DATABASE_NAME:-cloud_networking_studio}" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-
-            DATABASE_URL=""
-
-            if [[ -n "${RDS_EP}" ]] && command -v python3 >/dev/null 2>&1; then
-              export _CNS_PY_HOST="${RDS_EP}"
-              export _CNS_PY_PORT="${RDS_P}"
-              export _CNS_PY_USER="${RDS_USER}"
-              export _CNS_PY_DB="${RDS_DB}"
-              export _CNS_PY_PW="${POSTGRES_PASSWORD}"
-              set +e
-              PYOUT="$(python3 -c 'import os,urllib.parse as u;h=os.environ["_CNS_PY_HOST"].strip();pt=(os.environ.get("_CNS_PY_PORT") or "5432").strip() or "5432";user=u.quote(os.environ["_CNS_PY_USER"].strip(),safe="");pw=u.quote(os.environ["_CNS_PY_PW"],safe="");db=os.environ["_CNS_PY_DB"].strip();print("postgresql://"+user+":"+pw+"@"+h+":"+pt+"/"+db)' 2>/dev/null)"
-              PYRC=$?
-              set -e
-              unset _CNS_PY_HOST _CNS_PY_PORT _CNS_PY_USER _CNS_PY_DB _CNS_PY_PW || true
-              if [[ "${PYRC}" -eq 0 ]] && [[ -n "${PYOUT}" ]]; then
-                DATABASE_URL="${PYOUT}"
-              else
-                echo "::warning::Could not build RDS DATABASE_URL (python rc=${PYRC}); using Docker Postgres service."
-              fi
-            elif [[ -n "${RDS_EP}" ]]; then
-              echo "::warning::RDS_ENDPOINT set but python3 not found; using Docker Postgres service."
-            fi
-
-            if [[ -z "${DATABASE_URL}" ]]; then
-              DATABASE_URL="postgresql://cns_user:${POSTGRES_PASSWORD}@postgres:5432/cloud_networking_studio"
-            fi
-
-            if [[ "${DATABASE_URL}" == *"@postgres:"* ]]; then
-              DB_MODE="localdb"
-            else
-              DB_MODE="external"
-            fi
-            COMPOSE=(sudo docker compose)
-            echo "database mode: ${DB_MODE}"
-
-            C_ARGS=(-f docker-compose.prod.yml -f docker-compose.caddy-https.yml --env-file .env)
-
-            # Caddy certs are persisted via caddy_data/caddy_config volumes (docker-compose.caddy-https.yml).
-            # When CNS_CADDY_AUTO_HTTPS=on, never run `docker compose down -v`: it removes those volumes and
-            # forces fresh Let's Encrypt issuances (rate limits).
-            run_compose() {
-              if [[ "${CNS_CADDY_AUTO_HTTPS:-}" == "on" ]]; then
-                local saw_down=0 i arg
-                for ((i=1; i<=$#; i++)); do
-                  if [[ "${!i}" == "down" ]]; then
-                    saw_down=1
-                  fi
-                done
-                if [[ "${saw_down}" -eq 1 ]]; then
-                  for ((i=1; i<=$#; i++)); do
-                    arg="${!i}"
-                    if [[ "${arg}" == "-v" ]] || [[ "${arg}" == "--volumes" ]]; then
-                      echo "::error::Refusing docker compose down with volume removal (-v/--volumes) when CNS_CADDY_AUTO_HTTPS=on (deletes caddy_data/caddy_config; new LE certs → rate limits). Use docker compose down without -v/--volumes. See docs/CICD_DEPLOYMENT.md."
-                      exit 1
-                    fi
-                  done
-                fi
-              fi
-              "${COMPOSE[@]}" "$@"
-            }
-
-            umask 077
-            {
-              printf '%s\n' \
-                "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" \
-                "CNS_CORS_ORIGINS=${CNS_CORS_ORIGINS}" \
-                "CNS_ENVIRONMENT=${CNS_ENVIRONMENT:-production}" \
-                "CNS_CONTROLLER_MODE=${CNS_CONTROLLER_MODE:-manual}" \
-                "CNS_CADDY_SITE_ADDRESS=${CNS_CADDY_SITE_ADDRESS}" \
-                "CNS_CADDY_AUTO_HTTPS=${CNS_CADDY_AUTO_HTTPS}" \
-                "DATABASE_URL=${DATABASE_URL}" \
-                "SSLIP_HOST=${PUB_HOST}" \
-                "CNS_SSLIP_HOST=${PUB_HOST}" \
-                "CADDYFILE_CADDY=${CADDYFILE_CADDY}" \
-                "AUTH_REQUIRE_LOGIN=true" \
-                "AUTH_SECRET_KEY=${AUTH_SECRET_KEY}" \
-                "RUNTIME_EXECUTOR=${RUNTIME_EXECUTOR}" \
-                "RUNTIME_PROVIDER=${RUNTIME_PROVIDER}" \
-                "GO_RUNNER_URL=${GO_RUNNER_URL}"
-            } > .env
-            echo "=== .env written ==="
-            cut -d= -f1 .env
-            echo "=== runtime vars in .env ==="
-            grep -E '^(RUNTIME_EXECUTOR|RUNTIME_PROVIDER|GO_RUNNER_URL)=' .env || true
-
-            unset TOKEN CLONE_URL POSTGRES_PASSWORD RDS_PASSWORD CNS_CORS_ORIGINS CNS_LEGACY_SSLIP_HTTP DATABASE_URL RDS_ENDPOINT RDS_PORT RDS_DATABASE_NAME RDS_USERNAME AUTH_SECRET_KEY || true
-            set -x
-
-            echo "=== docker compose config ==="
-            if ! run_compose "${C_ARGS[@]}" config; then
-              echo "=== docker compose ps (after failed config) ==="
-              run_compose "${C_ARGS[@]}" ps -a || true
-              echo "=== docker compose logs (after failed config, tail=120) ==="
-              run_compose "${C_ARGS[@]}" logs --tail=120 || true
-              exit 1
-            fi
-
-            # Caddy certs are persisted via caddy_data/caddy_config volumes — down without -v only.
-            echo "=== docker compose down (no -v: keeps postgres_data, caddy_data, caddy_config) ==="
-            run_compose "${C_ARGS[@]}" down || true
-
-            echo "=== docker compose up -d --build --remove-orphans ==="
-            if ! run_compose "${C_ARGS[@]}" up -d --build --remove-orphans; then
-              echo "=== docker compose ps (after failed up) ==="
-              run_compose "${C_ARGS[@]}" ps -a || true
-              echo "=== docker compose logs (after failed up, tail=120) ==="
-              run_compose "${C_ARGS[@]}" logs --tail=120 || true
-              exit 1
-            fi
-
-            echo "=== docker volume ls (caddy TLS volumes — never docker volume rm in production) ==="
-            sudo docker volume ls | grep -i caddy || true
-
-            echo "=== docker compose ps ==="
-            run_compose "${C_ARGS[@]}" ps
-
-            echo "=== alembic upgrade head (before smoke / health gate) ==="
-            if ! run_compose "${C_ARGS[@]}" exec -T backend alembic upgrade head; then
-              echo "=== docker compose logs backend (after failed alembic, tail=120) ==="
-              run_compose "${C_ARGS[@]}" logs backend --tail=120 || true
-              exit 1
-            fi
-
-            echo "=== runner RUNTIME_PROVIDER (container env) ==="
-            run_compose "${C_ARGS[@]}" exec -T runner env | grep RUNTIME_PROVIDER || true
-
-            echo "=== backend runtime executor (container env) ==="
-            run_compose "${C_ARGS[@]}" exec -T backend env | grep -E 'RUNTIME_EXECUTOR|GO_RUNNER_URL' || true
-
-            echo "=== docker compose logs caddy (tail=80) ==="
-            run_compose "${C_ARGS[@]}" logs caddy --tail=80 || true
-
-            echo "=== EC2-local backend /health (debug fallback — blocking check is runner HTTPS prod_smoke_test.sh) ==="
-            EC2_LOCAL_OK=0
-            for attempt in $(seq 1 30); do
-              if run_compose "${C_ARGS[@]}" exec -T backend python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health').read()" >/dev/null 2>&1; then
-                echo "EC2-local backend /health OK (attempt ${attempt})"
-                EC2_LOCAL_OK=1
-                break
-              fi
-              echo "Waiting for backend /health on EC2 (attempt ${attempt}/30)..."
-              sleep 2
-            done
-            if [[ "${EC2_LOCAL_OK}" -ne 1 ]]; then
-              echo "::warning::EC2-local backend /health failed (non-blocking). GitHub runner prod_smoke_test.sh against HTTPS is authoritative."
-              run_compose "${C_ARGS[@]}" ps -a || true
-              run_compose "${C_ARGS[@]}" logs backend --tail=80 || true
-            fi
+            curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GIT_SHA}/scripts/prod_deploy_remote.sh" \
+              -o /tmp/prod_deploy_remote.sh
+            chmod +x /tmp/prod_deploy_remote.sh
+            bash /tmp/prod_deploy_remote.sh
 
       - name: Production smoke (HTTPS API)
         env:

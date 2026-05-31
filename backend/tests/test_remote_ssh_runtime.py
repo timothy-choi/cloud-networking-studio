@@ -112,15 +112,20 @@ def test_compose_backend_contains_env_and_secrets_mount():
         "CNS_REMOTE_DOCKER_SSH_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key}"
         in compose_text
     )
-    assert "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}" in compose_text
+    assert (
+        "CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH: ${CNS_REMOTE_DOCKER_SSH_PUBLIC_KEY_PATH:-/opt/cns/secrets/gcp-remote-docker-key.pub}"
+        in compose_text
+    )
+    gcp_default = "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/opt/cns/secrets/gcp-terraform-sa.json}"
+    assert gcp_default in compose_text
     assert compose_text.count("/opt/cns/secrets:/opt/cns/secrets:ro") >= 2
     runner_idx = compose_text.index("  runner:")
     backend_idx = compose_text.index("  backend:")
     frontend_idx = compose_text.index("  frontend:")
     runner_block = compose_text[runner_idx:backend_idx]
     backend_block = compose_text[backend_idx:frontend_idx]
-    assert "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}" in backend_block
-    assert "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}" in runner_block
+    assert gcp_default in backend_block
+    assert gcp_default in runner_block
     assert "/opt/cns/secrets:/opt/cns/secrets:ro" in backend_block
     assert "/opt/cns/secrets:/opt/cns/secrets:ro" in runner_block
 

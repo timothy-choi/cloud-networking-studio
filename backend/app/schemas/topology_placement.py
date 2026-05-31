@@ -43,9 +43,24 @@ class TopologyNodeResourceBreakdown(BaseModel):
     resource_memory_mb: int
     resource_disk_gb: float
     replicas: int
-    node_role: str
-    exposure: str
-    stateful: bool
+    node_role: str = "workload"
+    exposure: str = "internal"
+    stateful: bool = False
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cpu(self) -> float:
+        return self.resource_cpu
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def memory_mb(self) -> int:
+        return self.resource_memory_mb
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def disk_gb(self) -> float:
+        return self.resource_disk_gb
 
 
 class TopologyResourceEstimateResponse(BaseModel):

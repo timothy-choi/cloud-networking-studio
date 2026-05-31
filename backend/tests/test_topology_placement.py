@@ -206,6 +206,40 @@ def test_node_role_enum_values():
     assert "public" in EXPOSURE_VALUES
 
 
+def test_estimate_response_includes_cpu_aliases():
+    from app.api.topology_placement import _estimate_response
+
+    payload = _estimate_response(
+        {
+            "total_cpu": 1.0,
+            "total_memory_mb": 1024,
+            "total_disk_gb": 8.0,
+            "total_replicas": 1,
+            "node_count": 1,
+            "workload_node_count": 1,
+            "placement_unit_count": 1,
+            "nodes": [
+                {
+                    "node_id": "n1",
+                    "node_name": "app",
+                    "resource_cpu": 1.0,
+                    "resource_memory_mb": 1024,
+                    "resource_disk_gb": 8.0,
+                    "replicas": 1,
+                    "node_role": "workload",
+                    "exposure": "internal",
+                    "stateful": False,
+                }
+            ],
+        }
+    )
+    dumped = payload.model_dump()
+    node = dumped["nodes"][0]
+    assert node["cpu"] == 1.0
+    assert node["memory_mb"] == 1024
+    assert node["disk_gb"] == 8.0
+
+
 def test_placement_plan_api(client_strict, engine_db):
     email = f"place{uuid.uuid4().hex[:8]}@example.com"
     reg = client_strict.post(

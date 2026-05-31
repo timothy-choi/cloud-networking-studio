@@ -13,9 +13,22 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-def upgrade() -> None:
+def _table_exists(name: str) -> bool:
     bind = op.get_bind()
-    if "credential_profiles" in sa.inspect(bind).get_table_names():
+    return name in sa.inspect(bind).get_table_names()
+
+
+def _core_tables_present() -> bool:
+    bind = op.get_bind()
+    tables = set(sa.inspect(bind).get_table_names())
+    return "users" in tables and "projects" in tables
+
+
+def upgrade() -> None:
+    if _table_exists("credential_profiles"):
+        return
+    if not _core_tables_present():
+        # Fresh install: core tables (and credential_profiles) are created by create_all.
         return
     op.create_table(
         "credential_profiles",
@@ -44,8 +57,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    if "credential_profiles" not in sa.inspect(bind).get_table_names():
+    if not _table_exists("credential_profiles"):
         return
     op.drop_index("ix_credential_profiles_validation_status", table_name="credential_profiles")
     op.drop_index("ix_credential_profiles_provider", table_name="credential_profiles")

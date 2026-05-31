@@ -584,7 +584,9 @@ def validate_and_normalize_node_config(config: dict[str, Any] | None) -> dict[st
         ]
     if parsed.env:
         out["env"] = parsed.env
-    return out or None
+    from app.services.node_resource_metadata import validate_and_normalize_resource_metadata
+
+    return validate_and_normalize_resource_metadata(out) or None
 
 
 def validate_node_payload(

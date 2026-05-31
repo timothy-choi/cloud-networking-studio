@@ -69,11 +69,14 @@ When creating a deployment:
 Infrastructure deployment
   → validate credentials_ref (ownership + provider match)
   → decrypt encrypted_secret
-  → materialize temporary credentials (temp file or env vars)
-  → Terraform init/plan/apply/destroy
-  → secure cleanup (temp files removed)
+  → send GOOGLE_CREDENTIALS_JSON (GCP) inline to the Go runner
+  → runner writes /tmp/cns-gcp-sa-<execution_id>.json before Terraform
+  → terraform init/plan/apply/destroy
+  → runner removes temp credential file
   → update last_used_at + audit log
 ```
+
+For platform `env:GOOGLE_APPLICATION_CREDENTIALS` refs, the runner uses the mounted file path directly (`/opt/cns/secrets/gcp-terraform-sa.json`).
 
 ## Encryption
 

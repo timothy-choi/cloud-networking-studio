@@ -150,10 +150,15 @@ func executeTerraform(ctx context.Context, req model.InfraExecutionRequest, star
 		return finish(resp, start, req, "failed", msg)
 	}
 
-	cmdEnv := os.Environ()
-	for k, v := range req.CredentialsEnv {
-		cmdEnv = append(cmdEnv, fmt.Sprintf("%s=%s", k, v))
+	cmdEnv, credCleanup, err := prepareTerraformCredentialEnv(req.CredentialsEnv, req.ExecutionID)
+	if err != nil {
+		msg := err.Error()
+		resp.Logs = log.String()
+		resp.Error = &msg
+		return finish(resp, start, req, "failed", msg)
 	}
+	defer credCleanup()
+
 	if cacheDir := strings.TrimSpace(os.Getenv("TF_PLUGIN_CACHE_DIR")); cacheDir != "" {
 		cmdEnv = append(cmdEnv, "TF_PLUGIN_CACHE_DIR="+cacheDir)
 	}

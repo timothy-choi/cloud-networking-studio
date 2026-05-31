@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
-import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -20,6 +20,8 @@ from app.core.secret_masking import scrub_sensitive_dict
 from app.models.credential_profile import CredentialProfile
 from app.models.user import User
 from app.services.audit_service import record_audit
+
+_log = logging.getLogger(__name__)
 
 SUPPORTED_PROVIDERS = frozenset({"gcp", "aws", "azure"})
 CREDENTIAL_REF_PREFIX = "credential:"
@@ -310,6 +312,8 @@ class MaterializedCredentials:
     def cleanup(self) -> None:
         for path in self.temp_paths:
             try:
+                if os.path.exists(path):
+                    _log.info("Removing credential profile temp file path=%s", path)
                 os.remove(path)
             except OSError:
                 pass
@@ -323,13 +327,12 @@ def materialize_profile_credentials(profile: CredentialProfile) -> MaterializedC
     materialized = MaterializedCredentials()
 
     if profile.provider == "gcp":
-        fd, path = tempfile.mkstemp(prefix="cns-gcp-sa-", suffix=".json")
-        os.close(fd)
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle)
-        os.chmod(path, 0o600)
-        materialized.env["GOOGLE_APPLICATION_CREDENTIALS"] = path
-        materialized.temp_paths.append(path)
+        # Send inline JSON to the Go runner; it writes a local temp file before Terraform runs.
+        materialized.env["GOOGLE_CREDENTIALS_JSON"] = secret
+        _log.info(
+            "Credential profile materialized for runner dispatch profile_id=%s provider=gcp transport=google_credentials_json",
+            profile.id,
+        )
         return materialized
 
     if profile.provider == "aws":

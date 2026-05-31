@@ -28,9 +28,15 @@ export interface PlacementAssignedNode {
 
 export interface PlacementHost {
   host_index: number;
-  estimated_cpu_used: number;
-  estimated_memory_used_mb: number;
-  assigned_nodes: PlacementAssignedNode[];
+  machine_type: string;
+  cpu_used: number;
+  cpu_capacity: number;
+  memory_used_mb: number;
+  memory_capacity_mb: number;
+  assigned_nodes: string[];
+  assigned_node_details?: PlacementAssignedNode[];
+  estimated_cpu_used?: number;
+  estimated_memory_used_mb?: number;
 }
 
 export interface TopologyResourceEstimate {
@@ -101,4 +107,16 @@ export async function generateInfrastructureDeployment(
       body: JSON.stringify(body),
     },
   );
+}
+
+export function formatHostUtilization(host: PlacementHost): { cpu: string; memory: string } {
+  return {
+    cpu: `${host.cpu_used} / ${host.cpu_capacity}`,
+    memory: `${host.memory_used_mb} MB / ${host.memory_capacity_mb} MB`,
+  };
+}
+
+export function formatNodeResourceLine(node: TopologyNodeResourceBreakdown): string {
+  const replicasLabel = node.replicas === 1 ? '1 replica' : `${node.replicas} replicas`;
+  return `${node.node_name}: ${node.resource_cpu} CPU, ${node.resource_memory_mb} MB, ${replicasLabel}`;
 }

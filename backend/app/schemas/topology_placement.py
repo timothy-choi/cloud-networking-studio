@@ -1,4 +1,4 @@
-"""API schemas for topology placement planning (Feature 59A)."""
+"""API schemas for topology placement planning (Feature 59A/59B)."""
 
 from __future__ import annotations
 
@@ -23,9 +23,15 @@ class PlacementAssignedNode(BaseModel):
 
 class PlacementHost(BaseModel):
     host_index: int
-    estimated_cpu_used: float
-    estimated_memory_used_mb: int
-    assigned_nodes: list[PlacementAssignedNode] = Field(default_factory=list)
+    machine_type: str
+    cpu_used: float
+    cpu_capacity: float
+    memory_used_mb: int
+    memory_capacity_mb: int
+    assigned_nodes: list[str] = Field(default_factory=list)
+    assigned_node_details: list[PlacementAssignedNode] = Field(default_factory=list)
+    estimated_cpu_used: float | None = None
+    estimated_memory_used_mb: int | None = None
 
 
 class TopologyNodeResourceBreakdown(BaseModel):

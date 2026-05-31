@@ -51,15 +51,34 @@ def _estimate_response(raw: dict) -> TopologyResourceEstimateResponse:
 
 
 def _placement_response(raw: dict) -> TopologyPlacementPlanResponse:
-    hosts = [
-        PlacementHost(
-            host_index=host["host_index"],
-            estimated_cpu_used=host["estimated_cpu_used"],
-            estimated_memory_used_mb=host["estimated_memory_used_mb"],
-            assigned_nodes=[PlacementAssignedNode(**node) for node in host.get("assigned_nodes") or []],
+    hosts: list[PlacementHost] = []
+    for host in raw.get("hosts") or []:
+        details = host.get("assigned_node_details") or []
+        assigned = host.get("assigned_nodes")
+        if assigned and isinstance(assigned[0], dict):
+            details = [PlacementAssignedNode(**node) for node in assigned]
+            assigned = [node.display_name for node in details]
+        elif not assigned and details:
+            assigned = [str(node.get("display_name") or node.get("node_name")) for node in details]
+        else:
+            assigned = [str(name) for name in (assigned or [])]
+            details = [PlacementAssignedNode(**node) for node in details]
+        hosts.append(
+            PlacementHost(
+                host_index=int(host["host_index"]),
+                machine_type=str(host.get("machine_type") or raw.get("recommended_machine_type") or ""),
+                cpu_used=float(host.get("cpu_used") or host.get("estimated_cpu_used") or 0),
+                cpu_capacity=float(host.get("cpu_capacity") or 0),
+                memory_used_mb=int(host.get("memory_used_mb") or host.get("estimated_memory_used_mb") or 0),
+                memory_capacity_mb=int(host.get("memory_capacity_mb") or 0),
+                assigned_nodes=assigned,
+                assigned_node_details=details,
+                estimated_cpu_used=float(host.get("estimated_cpu_used") or host.get("cpu_used") or 0),
+                estimated_memory_used_mb=int(
+                    host.get("estimated_memory_used_mb") or host.get("memory_used_mb") or 0
+                ),
+            )
         )
-        for host in raw.get("hosts") or []
-    ]
     return TopologyPlacementPlanResponse(
         total_cpu=raw["total_cpu"],
         total_memory_mb=raw["total_memory_mb"],
@@ -159,9 +178,11 @@ def generate_infrastructure_deployment(
             credentials_ref=draft.get("credentials_ref"),
         )
         plan = draft["placement_plan"]
+        placement_summary = draft.get("placement_summary") or {}
         deployment.state_metadata_json = {
             **(deployment.state_metadata_json or {}),
             "topology_placement": plan,
+            "placement_summary": placement_summary,
             "topology_capacity": capacity,
             "generated_from_topology": True,
             "exposed_ports": plan.get("exposed_ports") or [],
@@ -172,6 +193,7 @@ def generate_infrastructure_deployment(
             "generated_from_topology",
             message="Infrastructure deployment generated from topology placement plan",
             metadata={
+                "placement_summary": placement_summary,
                 "topology_placement": {
                     "recommended_host_count": plan.get("recommended_host_count"),
                     "recommended_machine_type": plan.get("recommended_machine_type"),

@@ -102,28 +102,50 @@ def _bin_pack_units(
         placed = False
         for host in hosts:
             if (
-                host["estimated_cpu_used"] + unit.resource_cpu <= host_cpu
-                and host["estimated_memory_used_mb"] + unit.resource_memory_mb
-                <= host_memory
+                host["_cpu_used"] + unit.resource_cpu <= host_cpu
+                and host["_memory_used_mb"] + unit.resource_memory_mb <= host_memory
             ):
-                host["estimated_cpu_used"] += unit.resource_cpu
-                host["estimated_memory_used_mb"] += unit.resource_memory_mb
-                host["assigned_nodes"].append(_assigned_node_payload(unit))
+                host["_cpu_used"] += unit.resource_cpu
+                host["_memory_used_mb"] += unit.resource_memory_mb
+                host["_node_details"].append(_assigned_node_payload(unit))
                 placed = True
                 break
         if placed:
             continue
         if limit is not None and len(hosts) >= limit:
-            return hosts, False
+            return [_finalize_host(host, spec) for host in hosts], False
         hosts.append(
             {
-                "host_index": len(hosts),
-                "estimated_cpu_used": unit.resource_cpu,
-                "estimated_memory_used_mb": unit.resource_memory_mb,
-                "assigned_nodes": [_assigned_node_payload(unit)],
+                "_cpu_used": unit.resource_cpu,
+                "_memory_used_mb": unit.resource_memory_mb,
+                "_node_details": [_assigned_node_payload(unit)],
             }
         )
-    return hosts, True
+    return [_finalize_host(host, spec) for host in hosts], True
+
+
+def _finalize_host(raw: dict[str, Any], spec: MachineSpec) -> dict[str, Any]:
+    details = raw.get("_node_details") or []
+    return {
+        "host_index": 0,  # assigned after packing
+        "machine_type": spec.machine_type,
+        "cpu_used": round(float(raw.get("_cpu_used") or 0), 3),
+        "cpu_capacity": float(spec.vcpu),
+        "memory_used_mb": int(raw.get("_memory_used_mb") or 0),
+        "memory_capacity_mb": int(spec.memory_mb),
+        "assigned_nodes": [str(node["display_name"]) for node in details],
+        "assigned_node_details": details,
+        # Backward-compatible aliases
+        "estimated_cpu_used": round(float(raw.get("_cpu_used") or 0), 3),
+        "estimated_memory_used_mb": int(raw.get("_memory_used_mb") or 0),
+    }
+
+
+def _number_hosts(hosts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    numbered: list[dict[str, Any]] = []
+    for idx, host in enumerate(hosts):
+        numbered.append({**host, "host_index": idx + 1})
+    return numbered
 
 
 def _assigned_node_payload(unit: PlacementUnit) -> dict[str, Any]:
@@ -155,6 +177,21 @@ def _collect_warnings(
     warnings: list[str] = []
     host_cpu, host_memory = _host_capacity(spec)
 
+    for host in hosts:
+        host_label = f"Host {host['host_index']}"
+        cpu_used = float(host.get("cpu_used") or 0)
+        memory_used = int(host.get("memory_used_mb") or 0)
+        if cpu_used > host_cpu:
+            over = cpu_used - host_cpu
+            warnings.append(
+                f"{host_label}: CPU demand exceeds usable capacity by {over:.2f} vCPU on {spec.machine_type}."
+            )
+        if memory_used > host_memory:
+            over = memory_used - host_memory
+            warnings.append(
+                f"Selected {spec.machine_type} would exceed memory capacity by {over} MB."
+            )
+
     if not packed:
         warnings.append(
             f"Insufficient capacity: selected machine type cannot fit all placement units "
@@ -163,21 +200,30 @@ def _collect_warnings(
         )
 
     for unit in units:
+        if unit.resource_cpu > host_cpu:
+            warnings.append(
+                f"Node '{unit.node_name}' requires {unit.resource_cpu} vCPU but {spec.machine_type} "
+                f"only provides {host_cpu:.2f} vCPU usable per host."
+            )
+        if unit.resource_memory_mb > host_memory:
+            over = unit.resource_memory_mb - host_memory
+            warnings.append(
+                f"Selected {spec.machine_type} would exceed memory capacity by {over} MB for node '{unit.node_name}'."
+            )
         if unit.exposure == "public":
             ports = ", ".join(str(p) for p in unit.required_ports) or "default app ports"
             warnings.append(
-                f"Node '{unit.node_name}' has public exposure; ensure firewall allows ports: {ports}."
+                f"Public workload '{unit.node_name}' requires exposed ports: {ports}."
             )
         if unit.stateful:
             warnings.append(
-                f"Node '{unit.node_name}' is stateful ({unit.resource_disk_gb:.1f} GB disk); "
-                "persistent storage is not provisioned automatically by the docker-vm template."
+                f"Stateful workload '{unit.node_name}' ({unit.resource_disk_gb:.1f} GB disk) requires persistent storage; "
+                "the docker-vm template does not provision persistent volumes automatically."
             )
         if unit.placement_constraints:
             constraints = ", ".join(unit.placement_constraints)
             warnings.append(
-                f"Node '{unit.node_name}' declares placement constraints ({constraints}) "
-                "that are not enforced by the current planner."
+                f"Placement constraints ({constraints}) on '{unit.node_name}' are not supported by the planner."
             )
 
     if recommended_host_count > GCP_APPLY_MAX_INSTANCES:
@@ -195,14 +241,33 @@ def _collect_warnings(
 
     total_cpu = sum(u.resource_cpu for u in units)
     total_memory = sum(u.resource_memory_mb for u in units)
-    if spec.vcpu < total_cpu + _HOST_OVERHEAD_CPU or spec.memory_mb < total_memory + _HOST_OVERHEAD_MEMORY_MB:
-        if not any("Insufficient capacity" in w for w in warnings):
-            warnings.append(
-                f"Aggregate workload ({total_cpu:.2f} vCPU, {total_memory} MB) exceeds "
-                f"single-host capacity for {spec.machine_type}."
-            )
+    if (
+        len(hosts) == 1
+        and not packed
+        and total_memory > host_memory
+        and not any("exceed memory capacity" in w for w in warnings)
+    ):
+        warnings.append(
+            f"Selected {spec.machine_type} would exceed memory capacity by {total_memory - host_memory} MB."
+        )
+    if (
+        len(hosts) == 1
+        and not packed
+        and total_cpu > host_cpu
+        and not any("CPU demand exceeds" in w for w in warnings)
+    ):
+        warnings.append(
+            f"Selected {spec.machine_type} would exceed CPU capacity by {total_cpu - host_cpu:.2f} vCPU."
+        )
 
-    return warnings
+    # De-duplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for warning in warnings:
+        if warning not in seen:
+            seen.add(warning)
+            unique.append(warning)
+    return unique
 
 
 def build_resource_estimate(topology: Topology) -> dict[str, Any]:
@@ -281,6 +346,7 @@ def build_placement_plan(
     hosts, packed = _bin_pack_units(units, spec, max_hosts=host_count)
     if not hosts:
         hosts, packed = _bin_pack_units(units, spec)
+    hosts = _number_hosts(hosts)
 
     recommended_host_count = len(hosts)
     warnings = _collect_warnings(
@@ -382,8 +448,35 @@ def build_generate_deployment_payload(
 
     deployment_name = (name or f"{topology.name}-infra").strip()[:128]
     capacity_status = "compatible"
-    if any("Insufficient capacity" in w for w in plan.get("warnings") or []):
+    warning_text = " ".join(plan.get("warnings") or [])
+    if any(
+        phrase in warning_text
+        for phrase in (
+            "Insufficient capacity",
+            "exceed memory capacity",
+            "exceed CPU capacity",
+            "CPU demand exceeds",
+        )
+    ):
         capacity_status = "insufficient_capacity"
+
+    placement_summary = {
+        "recommended_machine_type": plan.get("recommended_machine_type"),
+        "recommended_host_count": plan.get("recommended_host_count"),
+        "hosts": [
+            {
+                "host_index": host.get("host_index"),
+                "machine_type": host.get("machine_type"),
+                "assigned_nodes": host.get("assigned_nodes") or [],
+                "cpu_used": host.get("cpu_used"),
+                "cpu_capacity": host.get("cpu_capacity"),
+                "memory_used_mb": host.get("memory_used_mb"),
+                "memory_capacity_mb": host.get("memory_capacity_mb"),
+            }
+            for host in plan.get("hosts") or []
+        ],
+        "warnings": plan.get("warnings") or [],
+    }
 
     return {
         "name": deployment_name,
@@ -392,6 +485,7 @@ def build_generate_deployment_payload(
         "variables": merged_vars,
         "credentials_ref": cred_ref,
         "placement_plan": plan,
+        "placement_summary": placement_summary,
         "capacity_check": {
             "status": capacity_status,
             "messages": plan.get("warnings") or [],

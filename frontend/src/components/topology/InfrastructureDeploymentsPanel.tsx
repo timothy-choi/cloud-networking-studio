@@ -358,6 +358,14 @@ export function InfrastructureDeploymentsPanel({
   const configurationStatus = selected ? deriveConfigurationStatus(selected.status, eventTypes) : null;
   const phaseChecklist = selected ? extractPhaseChecklist(selected.state_metadata_json) : [];
   const recoveryMessage = selected ? extractRecoveryMessage(selected.state_metadata_json) : null;
+  const topologyCapacity = selected
+    ? ((selected.state_metadata_json?.topology_capacity as {
+        status?: string;
+        messages?: string[];
+        required_memory_mb?: number;
+        available_memory_mb?: number | null;
+      } | undefined) ?? null)
+    : null;
   const runtimeTargets = selected?.runtime_targets_json ?? [];
   const isMockDeployment = selected
     ? isMockInfrastructureDeployment(selected.template_id, selected.provider)
@@ -690,6 +698,27 @@ export function InfrastructureDeploymentsPanel({
                 </p>
                 {selected.error_message ? (
                   <p className="mt-2 text-xs text-red-600">{selected.error_message}</p>
+                ) : null}
+                {topologyCapacity ? (
+                  <div className="mt-2 rounded border px-2 py-2 text-xs dark:border-zinc-600">
+                    <div className="font-medium">Topology capacity</div>
+                    <p
+                      className={
+                        topologyCapacity.status === 'compatible'
+                          ? 'text-emerald-700 dark:text-emerald-400'
+                          : topologyCapacity.status === 'warning'
+                            ? 'text-amber-700 dark:text-amber-400'
+                            : 'text-red-700 dark:text-red-400'
+                      }
+                    >
+                      {topologyCapacity.status ?? 'unknown'}
+                    </p>
+                    {(topologyCapacity.messages ?? []).map((message) => (
+                      <p key={message} className="mt-1 text-cns-muted">
+                        {message}
+                      </p>
+                    ))}
+                  </div>
                 ) : null}
                 {showRetryConfigureButton || recoveryMessage ? (
                   <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">

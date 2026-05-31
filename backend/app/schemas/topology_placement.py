@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class PlacementAssignedNode(BaseModel):
@@ -28,6 +28,8 @@ class PlacementHost(BaseModel):
     cpu_capacity: float
     memory_used_mb: int
     memory_capacity_mb: int
+    disk_used_gb: float = 0
+    disk_capacity_gb: float = 30
     assigned_nodes: list[str] = Field(default_factory=list)
     assigned_node_details: list[PlacementAssignedNode] = Field(default_factory=list)
     estimated_cpu_used: float | None = None
@@ -41,9 +43,24 @@ class TopologyNodeResourceBreakdown(BaseModel):
     resource_memory_mb: int
     resource_disk_gb: float
     replicas: int
-    node_role: str
-    exposure: str
-    stateful: bool
+    node_role: str = "workload"
+    exposure: str = "internal"
+    stateful: bool = False
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cpu(self) -> float:
+        return self.resource_cpu
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def memory_mb(self) -> int:
+        return self.resource_memory_mb
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def disk_gb(self) -> float:
+        return self.resource_disk_gb
 
 
 class TopologyResourceEstimateResponse(BaseModel):

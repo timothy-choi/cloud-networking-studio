@@ -24,6 +24,7 @@ _TEMPLATE_ID = "docker-vm"
 
 _HOST_OVERHEAD_CPU = 0.25
 _HOST_OVERHEAD_MEMORY_MB = 256
+_HOST_BOOT_DISK_GB = 30.0
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,7 @@ def _bin_pack_units(
             ):
                 host["_cpu_used"] += unit.resource_cpu
                 host["_memory_used_mb"] += unit.resource_memory_mb
+                host["_disk_used_gb"] += unit.resource_disk_gb
                 host["_node_details"].append(_assigned_node_payload(unit))
                 placed = True
                 break
@@ -118,6 +120,7 @@ def _bin_pack_units(
             {
                 "_cpu_used": unit.resource_cpu,
                 "_memory_used_mb": unit.resource_memory_mb,
+                "_disk_used_gb": unit.resource_disk_gb,
                 "_node_details": [_assigned_node_payload(unit)],
             }
         )
@@ -126,6 +129,7 @@ def _bin_pack_units(
 
 def _finalize_host(raw: dict[str, Any], spec: MachineSpec) -> dict[str, Any]:
     details = raw.get("_node_details") or []
+    disk_used = round(float(raw.get("_disk_used_gb") or 0), 2)
     return {
         "host_index": 0,  # assigned after packing
         "machine_type": spec.machine_type,
@@ -133,6 +137,8 @@ def _finalize_host(raw: dict[str, Any], spec: MachineSpec) -> dict[str, Any]:
         "cpu_capacity": float(spec.vcpu),
         "memory_used_mb": int(raw.get("_memory_used_mb") or 0),
         "memory_capacity_mb": int(spec.memory_mb),
+        "disk_used_gb": disk_used,
+        "disk_capacity_gb": _HOST_BOOT_DISK_GB,
         "assigned_nodes": [str(node["display_name"]) for node in details],
         "assigned_node_details": details,
         # Backward-compatible aliases
@@ -190,6 +196,13 @@ def _collect_warnings(
             over = memory_used - host_memory
             warnings.append(
                 f"Selected {spec.machine_type} would exceed memory capacity by {over} MB."
+            )
+        disk_used = float(host.get("disk_used_gb") or 0)
+        if disk_used > _HOST_BOOT_DISK_GB:
+            over = round(disk_used - _HOST_BOOT_DISK_GB, 2)
+            warnings.append(
+                f"{host_label}: disk demand ({disk_used:.1f} GB) exceeds boot disk capacity "
+                f"({_HOST_BOOT_DISK_GB:.0f} GB) by {over:.1f} GB."
             )
 
     if not packed:

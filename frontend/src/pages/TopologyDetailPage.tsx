@@ -36,7 +36,7 @@ import { TopologyVersionsPanel } from '../components/topology/TopologyVersionsPa
 import { DeploymentProfilesPanel } from '../components/topology/DeploymentProfilesPanel';
 import { ExternalDeploymentsPanel } from '../components/topology/ExternalDeploymentsPanel';
 import { InfrastructureDeploymentsPanel } from '../components/topology/InfrastructureDeploymentsPanel';
-import { TopologyInfraPlanningPanel } from '../components/topology/TopologyInfraPlanningPanel';
+import { TopologyPlacementPlanningPanel } from '../components/topology/TopologyPlacementPlanningPanel';
 import { DeployModal } from '../components/topology/DeployModal';
 import { IaCExportPanel } from '../components/topology/IaCExportPanel';
 import { TrafficValidationSection } from '../components/traffic/TrafficValidationSection';
@@ -528,9 +528,10 @@ export function TopologyDetailPage() {
 
       {topology?.project_id ? (
         <CollapsibleSection title="Infrastructure planning" defaultOpen={false}>
-          <TopologyInfraPlanningPanel
+          <TopologyPlacementPlanningPanel
             topologyId={id}
             projectId={topology.project_id}
+            readOnly={viewerMode}
             onDeploymentGenerated={() => setInfraRefreshToken((current) => current + 1)}
           />
         </CollapsibleSection>

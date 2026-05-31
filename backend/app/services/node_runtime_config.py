@@ -494,6 +494,52 @@ def _validate_env_raw(raw: Any) -> None:
     raise NodeConfigValidationError("env must be a JSON object or array of KEY=value strings")
 
 
+def _validate_resource_requests(out: dict[str, Any]) -> None:
+    """Validate optional topology resource planning fields on node config."""
+    resources = out.get("resources")
+    if resources is not None:
+        if not isinstance(resources, dict):
+            raise NodeConfigValidationError("resources must be a JSON object")
+        for key in ("cpu_request", "memory_request_mb", "disk_request_gb", "replicas"):
+            if key in resources:
+                out.setdefault(key, resources[key])
+
+    if "cpu_request" in out:
+        cpu = _coerce_float(out["cpu_request"], -1)
+        if cpu <= 0 or cpu > 128:
+            raise NodeConfigValidationError("cpu_request must be between 0 and 128")
+        out["cpu_request"] = round(cpu, 3)
+    if "memory_request_mb" in out:
+        mem = _coerce_int(out["memory_request_mb"], -1)
+        if mem < 128 or mem > 1_048_576:
+            raise NodeConfigValidationError("memory_request_mb must be between 128 and 1048576")
+        out["memory_request_mb"] = mem
+    if "disk_request_gb" in out:
+        disk = _coerce_float(out["disk_request_gb"], -1)
+        if disk < 1 or disk > 65536:
+            raise NodeConfigValidationError("disk_request_gb must be between 1 and 65536")
+        out["disk_request_gb"] = round(disk, 2)
+    if "replicas" in out:
+        replicas = _coerce_int(out["replicas"], -1)
+        if replicas < 1 or replicas > 100:
+            raise NodeConfigValidationError("replicas must be between 1 and 100")
+        out["replicas"] = replicas
+
+
+def _coerce_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def validate_and_normalize_node_config(config: dict[str, Any] | None) -> dict[str, Any] | None:
     """Validate freeform keys in node config; normalize parsed ports/env/command."""
     if config is None:
@@ -522,6 +568,8 @@ def validate_and_normalize_node_config(config: dict[str, Any] | None) -> dict[st
     if desc is not None and len(str(desc)) > 4096:
         raise NodeConfigValidationError("description must be at most 4096 characters")
 
+    _validate_resource_requests(out)
+
     parsed = extract_node_runtime_config(out)
     if parsed.command:
         out["command"] = parsed.command
@@ -536,7 +584,9 @@ def validate_and_normalize_node_config(config: dict[str, Any] | None) -> dict[st
         ]
     if parsed.env:
         out["env"] = parsed.env
-    return out or None
+    from app.services.node_resource_metadata import validate_and_normalize_resource_metadata
+
+    return validate_and_normalize_resource_metadata(out) or None
 
 
 def validate_node_payload(

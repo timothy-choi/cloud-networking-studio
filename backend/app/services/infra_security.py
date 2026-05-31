@@ -124,10 +124,15 @@ def validate_template_variables(template_id: str, provider: str, variables: dict
         _validate_aws_docker_vm(variables)
 
 
-def _validate_gcp_docker_vm(variables: dict[str, Any]) -> None:
-    project_id = str(variables.get("project_id") or "").strip()
-    if not _GCP_PROJECT_PATTERN.match(project_id):
+def validate_gcp_project_id(project_id: str) -> str:
+    value = str(project_id or "").strip()
+    if not _GCP_PROJECT_PATTERN.match(value):
         raise ValueError("project_id must be a valid GCP project ID")
+    return value
+
+
+def _validate_gcp_docker_vm(variables: dict[str, Any]) -> None:
+    validate_gcp_project_id(str(variables.get("project_id") or ""))
 
     region = str(variables.get("region") or "").strip()
     zone = str(variables.get("zone") or "").strip()

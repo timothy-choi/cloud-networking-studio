@@ -66,6 +66,7 @@ def test_create_and_validate_gcp_profile(client_strict, engine_db):
     body = create.json()
     assert body["validation_status"] == "valid"
     assert body["credentials_ref"].startswith("credential:")
+    assert body["gcp_project_id"] == "my-gcp-project"
     assert "secret" not in body
     assert "encrypted_secret" not in body
 
@@ -83,6 +84,118 @@ def test_create_and_validate_gcp_profile(client_strict, engine_db):
         assert row is not None
         assert row.encrypted_secret != json.dumps(GCP_SA)
         assert decrypt_secret(row.encrypted_secret) == json.dumps(GCP_SA)
+        assert row.gcp_project_id == "my-gcp-project"
+
+
+def test_create_gcp_profile_with_explicit_gcp_project_id(client_strict, engine_db):
+    email = f"gcpex{uuid.uuid4().hex[:8]}@example.com"
+    reg = client_strict.post(
+        "/auth/register",
+        json={"email": email, "password": "password123", "display_name": "GCP Ex"},
+    )
+    headers = {"Authorization": f"Bearer {reg.json()['access_token']}"}
+    project_id = client_strict.get("/projects", headers=headers).json()[0]["id"]
+
+    sa = {**GCP_SA, "project_id": "other-project-id"}
+    create = client_strict.post(
+        f"/projects/{project_id}/credential-profiles",
+        headers=headers,
+        json={
+            "name": "Explicit GCP project",
+            "provider": "gcp",
+            "credential_type": "gcp_service_account_json",
+            "secret": json.dumps(sa),
+            "gcp_project_id": "my-gcp-project",
+        },
+    )
+    assert create.status_code == 201, create.text
+    assert create.json()["gcp_project_id"] == "my-gcp-project"
+
+
+def test_create_gcp_profile_rejects_invalid_gcp_project_id(client_strict, engine_db):
+    email = f"gcpbad{uuid.uuid4().hex[:8]}@example.com"
+    reg = client_strict.post(
+        "/auth/register",
+        json={"email": email, "password": "password123", "display_name": "GCP Bad"},
+    )
+    headers = {"Authorization": f"Bearer {reg.json()['access_token']}"}
+    project_id = client_strict.get("/projects", headers=headers).json()[0]["id"]
+
+    create = client_strict.post(
+        f"/projects/{project_id}/credential-profiles",
+        headers=headers,
+        json={
+            "name": "Bad GCP project",
+            "provider": "gcp",
+            "credential_type": "gcp_service_account_json",
+            "secret": json.dumps({**GCP_SA, "project_id": "BAD"}),
+        },
+    )
+    assert create.status_code == 400, create.text
+    assert "valid GCP project ID" in create.text
+
+
+def test_resolve_gcp_project_id_missing_from_profile():
+    profile = SimpleNamespace(
+        id=uuid.uuid4(),
+        provider="gcp",
+        gcp_project_id=None,
+    )
+    db = SimpleNamespace(
+        scalar=lambda *_args, **_kwargs: profile,
+    )
+    with pytest.raises(ValueError, match=profile_svc.MISSING_GCP_PROJECT_ID_MSG):
+        profile_svc.resolve_gcp_project_id_for_credentials_ref(
+            db,  # type: ignore[arg-type]
+            credentials_ref=f"credential:{profile.id}",
+            workspace_project_id=uuid.uuid4(),
+        )
+
+
+def test_create_deployment_resolves_project_id_from_credential_profile(
+    client_strict, monkeypatch, engine_db, tmp_path
+):
+    from tests.test_infrastructure_deployments_57e import (
+        GCP_VARS,
+        _gcp_credentials,
+        _patch_gcp_ssh_gates,
+        _project_and_topology,
+        _register,
+    )
+
+    _patch_gcp_ssh_gates(monkeypatch)
+    _gcp_credentials(monkeypatch, tmp_path)
+
+    h = _register(client_strict, prefix="credproj")
+    _, topo_id = _project_and_topology(client_strict, h)
+    project_id = client_strict.get("/projects", headers=h).json()[0]["id"]
+
+    create_profile = client_strict.post(
+        f"/projects/{project_id}/credential-profiles",
+        headers=h,
+        json={
+            "name": "Deploy GCP",
+            "provider": "gcp",
+            "credential_type": "gcp_service_account_json",
+            "secret": json.dumps(GCP_SA),
+        },
+    )
+    cred_ref = create_profile.json()["credentials_ref"]
+    vars_without_project = {k: v for k, v in GCP_VARS.items() if k != "project_id"}
+
+    create = client_strict.post(
+        f"/topologies/{topo_id}/infrastructure-deployments",
+        headers=h,
+        json={
+            "name": "gcp-from-profile",
+            "template_id": "docker-vm",
+            "provider": "gcp",
+            "credentials_ref": cred_ref,
+            "variables": vars_without_project,
+        },
+    )
+    assert create.status_code == 201, create.text
+    assert create.json()["variables_json"]["project_id"] == "my-gcp-project"
 
 
 def test_credential_profile_ownership_blocks_other_project(client_strict, engine_db):

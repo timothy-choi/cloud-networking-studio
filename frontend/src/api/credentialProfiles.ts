@@ -9,6 +9,7 @@ export interface CredentialProfile {
   project_id: string;
   owner_id: string;
   name: string;
+  gcp_project_id: string | null;
   provider: CredentialProvider;
   credential_type: string;
   metadata_json: Record<string, unknown>;
@@ -30,6 +31,17 @@ export interface CredentialProfileValidateResponse {
   validation_status: CredentialValidationStatus;
   validation_message: string | null;
   last_validated_at: string | null;
+}
+
+export const GCP_PROJECT_ID_PATTERN = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+
+export function validateGcpProjectId(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return 'GCP project ID is required.';
+  if (!GCP_PROJECT_ID_PATTERN.test(trimmed)) {
+    return 'Enter a valid GCP project ID (lowercase letters, numbers, hyphens; 6–30 characters).';
+  }
+  return null;
 }
 
 export const CREDENTIAL_TYPE_BY_PROVIDER: Record<CredentialProvider, string> = {
@@ -66,6 +78,7 @@ export async function createCredentialProfile(
     provider: CredentialProvider;
     credential_type: string;
     secret: string;
+    gcp_project_id?: string;
     metadata?: Record<string, unknown>;
   },
 ): Promise<CredentialProfile> {
@@ -80,6 +93,7 @@ export async function updateCredentialProfile(
   body: {
     name?: string;
     secret?: string;
+    gcp_project_id?: string;
     metadata?: Record<string, unknown>;
   },
 ): Promise<CredentialProfile> {

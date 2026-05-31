@@ -29,6 +29,7 @@ def _to_response(row) -> CredentialProfileResponse:
         project_id=str(row.project_id),
         owner_id=str(row.owner_id),
         name=row.name,
+        gcp_project_id=row.gcp_project_id,
         provider=row.provider,
         credential_type=row.credential_type,
         metadata_json=row.metadata_json or {},
@@ -77,6 +78,7 @@ def create_credential_profile(
             provider=body.provider,
             credential_type=body.credential_type,
             secret=body.secret,
+            gcp_project_id=body.gcp_project_id,
             metadata=body.metadata,
         )
     except ValueError as exc:
@@ -123,6 +125,7 @@ def update_credential_profile(
             actor=user,
             name=body.name,
             secret=body.secret,
+            gcp_project_id=body.gcp_project_id,
             metadata=body.metadata,
         )
     except ValueError as exc:

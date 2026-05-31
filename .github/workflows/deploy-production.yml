@@ -256,9 +256,12 @@ jobs:
           script: |
             set -euo pipefail
             curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GIT_SHA}/scripts/infra_deployment_credentials.sh" \
+              -o /tmp/infra_deployment_credentials.sh
+            curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" \
               "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GIT_SHA}/scripts/prod_deploy_remote.sh" \
               -o /tmp/prod_deploy_remote.sh
-            chmod +x /tmp/prod_deploy_remote.sh
+            chmod +x /tmp/infra_deployment_credentials.sh /tmp/prod_deploy_remote.sh
             bash /tmp/prod_deploy_remote.sh
 
       - name: Production smoke (HTTPS API)

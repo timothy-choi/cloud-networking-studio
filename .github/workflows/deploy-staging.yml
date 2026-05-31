@@ -316,10 +316,14 @@ jobs:
             if [[ ! -d "${APP_DIR}/.git" ]]; then
               git clone "${CLONE_URL}" "${APP_DIR}"
             fi
-            # Run the deploy script from CHECKOUT_REF so redeploys pick up script fixes immediately.
+            # Run deploy scripts from CHECKOUT_REF so redeploys pick up script fixes immediately.
+            curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${CHECKOUT_REF}/scripts/infra_deployment_credentials.sh" \
+              -o /tmp/infra_deployment_credentials.sh
             curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" \
               "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${CHECKOUT_REF}/scripts/staging_deploy_remote.sh" \
               -o /tmp/staging_deploy_remote.sh
+            chmod +x /tmp/infra_deployment_credentials.sh /tmp/staging_deploy_remote.sh
             bash /tmp/staging_deploy_remote.sh
 
       - name: Staging smoke (HTTPS API, environment=staging)

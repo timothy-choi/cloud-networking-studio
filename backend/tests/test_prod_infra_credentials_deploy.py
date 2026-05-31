@@ -24,6 +24,17 @@ def _source_credentials_bash(*statements: str) -> subprocess.CompletedProcess[st
     )
 
 
+STAGING_WORKFLOW = REPO / ".github/workflows/deploy-staging.yml"
+
+
+def test_staging_workflow_downloads_infra_credentials_helper_before_deploy():
+    workflow = STAGING_WORKFLOW.read_text(encoding="utf-8")
+    assert "scripts/infra_deployment_credentials.sh" in workflow
+    assert "/tmp/infra_deployment_credentials.sh" in workflow
+    assert "chmod +x /tmp/infra_deployment_credentials.sh" in workflow
+    assert "staging_deploy_remote.sh" in workflow
+
+
 def test_prod_compose_backend_and_runner_include_infra_credential_defaults():
     compose_text = PROD_COMPOSE.read_text(encoding="utf-8")
     gcp_default = "GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/opt/cns/secrets/gcp-terraform-sa.json}"

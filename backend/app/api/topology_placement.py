@@ -71,6 +71,8 @@ def _placement_response(raw: dict) -> TopologyPlacementPlanResponse:
                 cpu_capacity=float(host.get("cpu_capacity") or 0),
                 memory_used_mb=int(host.get("memory_used_mb") or host.get("estimated_memory_used_mb") or 0),
                 memory_capacity_mb=int(host.get("memory_capacity_mb") or 0),
+                disk_used_gb=float(host.get("disk_used_gb") or 0),
+                disk_capacity_gb=float(host.get("disk_capacity_gb") or 30),
                 assigned_nodes=assigned,
                 assigned_node_details=details,
                 estimated_cpu_used=float(host.get("estimated_cpu_used") or host.get("cpu_used") or 0),

@@ -100,7 +100,7 @@ def test_resource_fields_validate_on_node_config():
         validate_and_normalize_node_config({"memory_request_mb": 10})
 
 
-def test_resource_estimate_api(client_strict, engine_db):
+def test_resource_estimate_api_returns_node_fields(client_strict, engine_db):
     email = f"est{uuid.uuid4().hex[:8]}@example.com"
     reg = client_strict.post(
         "/auth/register",
@@ -127,7 +127,7 @@ def test_resource_estimate_api(client_strict, engine_db):
             "name": "app",
             "node_type": "host",
             "image": "nginx:latest",
-            "config": {"cpu_request": 1, "memory_request_mb": 1024, "disk_request_gb": 8, "replicas": 1},
+            "config": {"resource_cpu": 1, "resource_memory_mb": 1024, "resource_disk_gb": 8, "replicas": 1},
         },
     )
     assert node.status_code == 201, node.text
@@ -138,6 +138,11 @@ def test_resource_estimate_api(client_strict, engine_db):
     assert body["total_cpu"] >= 1
     assert body["total_memory_mb"] >= 1024
     assert body["node_count"] == 1
+    assert body["nodes"][0]["node_name"] == "app"
+    assert body["nodes"][0]["cpu"] == 1
+    assert body["nodes"][0]["memory_mb"] == 1024
+    assert body["nodes"][0]["disk_gb"] == 8
+    assert body["nodes"][0]["replicas"] == 1
 
 
 def test_infrastructure_recommendations_api(client_strict, engine_db):
@@ -236,6 +241,7 @@ def test_generate_infrastructure_deployment_api(client_strict, monkeypatch, engi
     assert body["deployment"]["template_id"] == "docker-vm"
     assert body["deployment"]["variables_json"]["project_id"] == "my-gcp-project"
     assert body["capacity_check"]["status"] in {"compatible", "warning"}
+    assert body["placement_plan"]["recommended_machine_type"]
 
 
 def test_generate_infrastructure_deployment_missing_gcp_project_id(

@@ -6,8 +6,11 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from app.models.infrastructure_deployment import InfrastructureDeployment
 from app.models.topology import Topology, TopologyNode
+from app.services import credential_profile_service as profile_svc
 from app.services.infra_apply_safety import GCP_APPLY_MACHINE_TYPES
 from app.services.infra_security import sanitize_variables
 
@@ -381,6 +384,7 @@ def validate_deployment_capacity(deployment: InfrastructureDeployment, topology:
 def build_generate_deployment_payload(
     topology: Topology,
     *,
+    db: Session | None = None,
     provider: str = "gcp",
     template_id: str = "docker-vm",
     machine_type: str | None = None,
@@ -403,6 +407,16 @@ def build_generate_deployment_payload(
         machine_type=chosen_machine,
         overrides=variables,
     )
+    cred_ref = (credentials_ref or "").strip() or None
+    if provider_key == "gcp" and cred_ref and profile_svc.is_credential_profile_ref(cred_ref):
+        if db is None:
+            raise ValueError("Database session required to resolve credential profile.")
+        if not str(merged_vars.get("project_id") or "").strip():
+            merged_vars["project_id"] = profile_svc.resolve_gcp_project_id_for_credentials_ref(
+                db,
+                credentials_ref=cred_ref,
+                workspace_project_id=topology.project_id,
+            )
     capacity = validate_topology_capacity(topology, provider=provider_key, variables=merged_vars)
     deployment_name = (name or f"{topology.name}-infra").strip()[:128]
     return {
@@ -410,7 +424,7 @@ def build_generate_deployment_payload(
         "template_id": template_id,
         "provider": provider_key,
         "variables": merged_vars,
-        "credentials_ref": credentials_ref,
+        "credentials_ref": cred_ref,
         "resource_estimate": planning["resource_estimate"],
         "recommendations": planning["recommendations"],
         "capacity_check": capacity,

@@ -20,6 +20,7 @@ from app.services import ansible_executor_service as ansible_svc
 from app.services import deployment_target_service as target_svc
 from app.services import terraform_executor_service as tf_svc
 from app.services.audit_service import record_audit
+from app.services import credential_profile_service as profile_svc
 from app.services.infra_observability import append_event, increment_counter, record_metric
 from app.services.infra_security import (
     is_real_cloud_provider,
@@ -515,10 +516,20 @@ def create_deployment(
 ) -> InfrastructureDeployment:
     validate_provider(provider, SUPPORTED_PROVIDERS)
     validate_template_provider(template_id, provider)
+    cred_ref = (credentials_ref or "").strip() or None
     clean_vars = sanitize_variables(variables)
+    if is_real_cloud_provider(provider) and cred_ref:
+        clean_vars = sanitize_variables(
+            profile_svc.apply_gcp_project_id_from_credentials_ref(
+                db,
+                provider=provider,
+                variables=clean_vars,
+                credentials_ref=cred_ref,
+                workspace_project_id=topology.project_id,
+            )
+        )
     validate_template_variables(template_id, provider, clean_vars)
     _assert_cloud_template_ready(template_id, provider)
-    cred_ref = (credentials_ref or "").strip() or None
     if is_real_cloud_provider(provider):
         if not cred_ref:
             raise ValueError("Terraform credentials_ref is not configured on the server.")

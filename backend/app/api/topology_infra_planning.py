@@ -112,6 +112,7 @@ def generate_infrastructure_deployment(
     try:
         draft = planning_svc.build_generate_deployment_payload(
             topology,
+            db=db,
             provider=body.provider,
             template_id=body.template_id,
             machine_type=body.machine_type,

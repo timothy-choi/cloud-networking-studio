@@ -9,6 +9,7 @@ import {
   secretPlaceholder,
   updateCredentialProfile,
   validateCredentialProfile,
+  validateGcpProjectId,
   type CredentialProfile,
   type CredentialProvider,
 } from '../api/credentialProfiles';
@@ -59,6 +60,7 @@ export function CredentialProfilesPage() {
   const [editing, setEditing] = useState<CredentialProfile | null>(null);
   const [name, setName] = useState('');
   const [provider, setProvider] = useState<CredentialProvider>('gcp');
+  const [gcpProjectId, setGcpProjectId] = useState('');
   const [secret, setSecret] = useState('');
 
   const loadProjects = useCallback(async () => {
@@ -103,6 +105,7 @@ export function CredentialProfilesPage() {
     setEditing(null);
     setName('');
     setProvider('gcp');
+    setGcpProjectId('');
     setSecret('');
     setErr(null);
   }
@@ -112,6 +115,7 @@ export function CredentialProfilesPage() {
     setEditing(profile);
     setName(profile.name);
     setProvider(profile.provider);
+    setGcpProjectId(profile.gcp_project_id ?? '');
     setSecret('');
     setErr(null);
   }
@@ -120,6 +124,7 @@ export function CredentialProfilesPage() {
     setFormMode(null);
     setEditing(null);
     setSecret('');
+    setGcpProjectId('');
   }
 
   async function onSubmitForm(e: React.FormEvent) {
@@ -127,6 +132,15 @@ export function CredentialProfilesPage() {
     if (!projectId) return;
     const trimmedName = name.trim();
     if (!trimmedName) return;
+    const activeProvider = formMode === 'edit' && editing ? editing.provider : provider;
+    const trimmedGcpProjectId = gcpProjectId.trim();
+    if (activeProvider === 'gcp' && trimmedGcpProjectId) {
+      const gcpErr = validateGcpProjectId(trimmedGcpProjectId);
+      if (gcpErr) {
+        setErr(gcpErr);
+        return;
+      }
+    }
     setBusy(true);
     setErr(null);
     try {
@@ -141,11 +155,17 @@ export function CredentialProfilesPage() {
           provider,
           credential_type: CREDENTIAL_TYPE_BY_PROVIDER[provider],
           secret: trimmedSecret,
+          ...(provider === 'gcp' && trimmedGcpProjectId
+            ? { gcp_project_id: trimmedGcpProjectId }
+            : {}),
         });
       } else if (formMode === 'edit' && editing) {
         await updateCredentialProfile(editing.id, {
           name: trimmedName,
           ...(secret.trim() ? { secret: secret.trim() } : {}),
+          ...(editing.provider === 'gcp'
+            ? { gcp_project_id: trimmedGcpProjectId || undefined }
+            : {}),
         });
       }
       closeForm();
@@ -281,6 +301,20 @@ export function CredentialProfilesPage() {
                 <code className="font-mono">{editing.credential_type}</code>
               </p>
             ) : null}
+            {(formMode === 'create' ? provider : editing?.provider) === 'gcp' ? (
+              <label className="block text-xs text-cns-label">
+                GCP project ID
+                <input
+                  value={gcpProjectId}
+                  onChange={(e) => setGcpProjectId(e.target.value)}
+                  placeholder="my-gcp-project"
+                  className="mt-1 w-full max-w-md rounded border px-2 py-1.5 font-mono text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                />
+                <span className="mt-1 block text-[11px] text-cns-muted">
+                  Used for Terraform deployments. Auto-filled from service account JSON when omitted on create.
+                </span>
+              </label>
+            ) : null}
             <label className="block text-xs text-cns-label">
               {formMode === 'edit' ? 'New secret JSON (leave blank to keep current)' : 'Secret JSON'}
               <textarea
@@ -330,6 +364,7 @@ export function CredentialProfilesPage() {
                 <tr>
                   <th className="px-4 py-3 font-medium">Name</th>
                   <th className="px-4 py-3 font-medium">Provider</th>
+                  <th className="px-4 py-3 font-medium">GCP project</th>
                   <th className="px-4 py-3 font-medium">Validation</th>
                   <th className="px-4 py-3 font-medium">Reference</th>
                   <th className="px-4 py-3 font-medium">Last used</th>
@@ -341,6 +376,9 @@ export function CredentialProfilesPage() {
                   <tr key={profile.id} className="border-b border-zinc-100 dark:border-zinc-800">
                     <td className="px-4 py-3 font-medium">{profile.name}</td>
                     <td className="px-4 py-3">{profile.provider}</td>
+                    <td className="px-4 py-3 font-mono text-xs">
+                      {profile.provider === 'gcp' ? profile.gcp_project_id ?? '—' : '—'}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={validationTone(profile.validation_status)}>
                         {profile.validation_status}

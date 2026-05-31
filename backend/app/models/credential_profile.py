@@ -39,6 +39,7 @@ class CredentialProfile(Base):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(128))
+    gcp_project_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     provider: Mapped[str] = mapped_column(String(32), index=True)
     credential_type: Mapped[str] = mapped_column(String(64))
     encrypted_secret: Mapped[str] = mapped_column(Text)

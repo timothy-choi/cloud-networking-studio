@@ -68,9 +68,42 @@ def test_bin_pack_nodes_across_multiple_hosts():
     plan = placement_svc.build_placement_plan(topo, machine_type="e2-medium")  # type: ignore[arg-type]
     assert plan["recommended_host_count"] >= 2
     assert len(plan["hosts"]) >= 2
-    assigned = [n["display_name"] for host in plan["hosts"] for n in host["assigned_nodes"]]
+    assigned = [name for host in plan["hosts"] for name in host["assigned_nodes"]]
     assert "a" in assigned
     assert "b" in assigned
+
+
+def test_single_host_placement_includes_capacity_fields():
+    topo = _topology(
+        _node(name="cli-edge", config={"resource_cpu": 0.25, "resource_memory_mb": 256, "replicas": 1}),
+        _node(name="svc-origin", config={"resource_cpu": 0.5, "resource_memory_mb": 512, "replicas": 1}),
+    )
+    plan = placement_svc.build_placement_plan(topo, machine_type="e2-micro")  # type: ignore[arg-type]
+    assert plan["recommended_host_count"] == 1
+    host = plan["hosts"][0]
+    assert host["host_index"] == 1
+    assert host["cpu_capacity"] == 2
+    assert host["memory_capacity_mb"] == 1024
+    assert set(host["assigned_nodes"]) == {"cli-edge", "svc-origin"}
+    assert host["cpu_used"] == 0.75
+    assert host["memory_used_mb"] == 768
+
+
+def test_capacity_warning_when_machine_type_too_small():
+    topo = _topology(
+        _node(name="heavy", config={"resource_cpu": 1, "resource_memory_mb": 900, "replicas": 1}),
+    )
+    plan = placement_svc.build_placement_plan(topo, machine_type="e2-micro")  # type: ignore[arg-type]
+    assert any("exceed memory capacity" in w for w in plan["warnings"])
+
+
+def test_placement_summary_in_generate_payload():
+    topo = _topology(_node(name="app", config={"resource_cpu": 0.5, "resource_memory_mb": 512, "replicas": 1}))
+    draft = placement_svc.build_generate_deployment_payload(topo)  # type: ignore[arg-type]
+    summary = draft["placement_summary"]
+    assert summary["recommended_machine_type"] == draft["variables"]["machine_type"]
+    assert summary["recommended_host_count"] >= 1
+    assert summary["hosts"][0]["assigned_nodes"]
 
 
 def test_warn_on_public_ports():
@@ -86,7 +119,7 @@ def test_warn_on_public_ports():
         ),
     )
     plan = placement_svc.build_placement_plan(topo)  # type: ignore[arg-type]
-    assert any("public exposure" in w.lower() for w in plan["warnings"])
+    assert any("public workload" in w.lower() or "exposed ports" in w.lower() for w in plan["warnings"])
     assert 8080 in plan["exposed_ports"]
 
 
@@ -99,7 +132,7 @@ def test_warn_on_stateful_storage():
         ),
     )
     plan = placement_svc.build_placement_plan(topo)  # type: ignore[arg-type]
-    assert any("stateful" in w.lower() for w in plan["warnings"])
+    assert any("stateful workload" in w.lower() for w in plan["warnings"])
 
 
 def test_warn_on_unsupported_placement_constraints():
@@ -114,7 +147,7 @@ def test_warn_on_unsupported_placement_constraints():
         ),
     )
     plan = placement_svc.build_placement_plan(topo)  # type: ignore[arg-type]
-    assert any("placement constraints" in w.lower() for w in plan["warnings"])
+    assert any("not supported" in w.lower() for w in plan["warnings"])
 
 
 def test_generate_payload_uses_placement_recommendation():
@@ -207,7 +240,10 @@ def test_placement_plan_api(client_strict, engine_db):
     assert body["total_memory_mb"] >= 1024
     assert body["recommended_machine_type"]
     assert len(body["hosts"]) >= 1
-    assert body["hosts"][0]["assigned_nodes"][0]["node_name"] == "redis"
+    assert body["hosts"][0]["assigned_nodes"][0] == "redis"
+    assert body["hosts"][0]["host_index"] == 1
+    assert body["hosts"][0]["cpu_capacity"] > 0
+    assert body["hosts"][0]["memory_capacity_mb"] > 0
 
 
 def test_generate_infrastructure_deployment_uses_credential_profile_project_id(

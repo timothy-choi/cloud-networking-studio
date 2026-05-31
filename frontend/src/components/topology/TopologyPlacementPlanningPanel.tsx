@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 
 import { listCredentialProfiles, type CredentialProfile } from '../../api/credentialProfiles';
 import {
+  formatNodeResourceLine,
+  formatHostUtilization,
   generateInfrastructureDeployment,
   getTopologyPlacementPlan,
   type TopologyPlacementPlan,
@@ -75,9 +77,9 @@ export function TopologyPlacementPlanningPanel({ topologyId, projectId, readOnly
       });
       setPlan(result.placement_plan);
       setSuccess(
-        `Created deployment "${String((result.deployment as { name?: string }).name ?? 'infra')}" with ` +
-          `${String((result.deployment as { variables_json?: { project_id?: string } }).variables_json?.project_id ?? 'project')} / ` +
-          `${String((result.deployment as { variables_json?: { machine_type?: string } }).variables_json?.machine_type ?? plan?.recommended_machine_type)}.`,
+        `Created deployment "${String((result.deployment as { name?: string }).name ?? 'infra')}" — ` +
+          `${String((result.deployment as { variables_json?: { machine_type?: string } }).variables_json?.machine_type ?? result.placement_plan.recommended_machine_type)}, ` +
+          `${String((result.deployment as { variables_json?: { vm_count?: number } }).variables_json?.vm_count ?? 1)} VM(s).`,
       );
     } catch (e) {
       setErr(formatApiError(e));
@@ -86,12 +88,19 @@ export function TopologyPlacementPlanningPanel({ topologyId, projectId, readOnly
     }
   }
 
+  const hasCapacityWarning = plan?.warnings.some(
+    (w) =>
+      w.includes('Insufficient capacity') ||
+      w.includes('exceed memory capacity') ||
+      w.includes('exceed CPU capacity') ||
+      w.includes('CPU demand exceeds'),
+  );
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-cns-muted">
-        Generic placement planner: estimates workload capacity, bin-packs topology nodes onto hosts, and can
-        generate a GCP infrastructure deployment. Works for arbitrary Docker workloads — not tied to a specific
-        app stack.
+        Generic placement planner for arbitrary Docker workloads: estimates capacity, bin-packs nodes onto
+        hosts, and generates GCP infrastructure deployments from the placement output.
       </p>
 
       {err ? (
@@ -152,6 +161,15 @@ export function TopologyPlacementPlanningPanel({ topologyId, projectId, readOnly
                 <dd className="font-medium">{plan.placement_unit_count}</dd>
               </div>
             </dl>
+            {plan.nodes.length > 0 ? (
+              <ul className="mt-3 space-y-1 font-mono text-xs text-zinc-800 dark:text-zinc-200">
+                {plan.nodes.map((node) => (
+                  <li key={node.node_id}>{formatNodeResourceLine(node)}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-cns-muted">No workload nodes with resource metadata.</p>
+            )}
           </section>
 
           <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
@@ -162,23 +180,7 @@ export function TopologyPlacementPlanningPanel({ topologyId, projectId, readOnly
               {plan.recommended_host_count} host{plan.recommended_host_count === 1 ? '' : 's'}
             </p>
             <p className="mt-1 text-xs text-cns-muted">{plan.machine_rationale}</p>
-            {plan.exposed_ports.length > 0 ? (
-              <p className="mt-2 text-xs text-cns-muted">
-                Exposed ports: {plan.exposed_ports.join(', ')}
-              </p>
-            ) : null}
           </section>
-
-          {plan.warnings.length > 0 ? (
-            <section className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
-              <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">Warnings</h3>
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-900 dark:text-amber-200">
-                {plan.warnings.map((w) => (
-                  <li key={w}>{w}</li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
 
           <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Placement plan</h3>
@@ -187,27 +189,49 @@ export function TopologyPlacementPlanningPanel({ topologyId, projectId, readOnly
                 No hosts assigned. Add resource metadata to topology nodes (CPU, memory, replicas).
               </p>
             ) : (
-              <div className="mt-3 space-y-3">
+              <div className="mt-3 space-y-4">
                 {plan.hosts.map((host) => (
-                  <div key={host.host_index} className="rounded border border-zinc-100 p-2 dark:border-zinc-800">
-                    <p className="text-xs font-semibold uppercase text-cns-label">
-                      Host {host.host_index + 1} — {host.estimated_cpu_used.toFixed(2)} vCPU,{' '}
-                      {host.estimated_memory_used_mb} MB
+                  <div key={host.host_index} className="rounded border border-zinc-100 p-3 dark:border-zinc-800">
+                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                      Host {host.host_index}
                     </p>
-                    <ul className="mt-1 space-y-1 text-sm">
-                      {host.assigned_nodes.map((node) => (
-                        <li key={`${node.node_id}-${node.replica_index}`}>
-                          <span className="font-medium">{node.display_name}</span>
-                          <span className="text-cns-muted">
-                            {' '}
-                            ({node.node_role}, {node.resource_cpu} vCPU, {node.resource_memory_mb} MB)
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                    <p className="mt-1 text-xs text-cns-muted">
+                      Machine type: <span className="font-mono">{host.machine_type}</span>
+                    </p>
+                    <div className="mt-2">
+                      <p className="text-xs font-medium text-cns-label">Assigned nodes</p>
+                      <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm">
+                        {host.assigned_nodes.map((nodeName) => (
+                          <li key={nodeName}>{nodeName}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                      <div>
+                        <dt className="text-xs text-cns-muted">CPU</dt>
+                        <dd>{formatHostUtilization(host).cpu}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-cns-muted">Memory</dt>
+                        <dd>{formatHostUtilization(host).memory}</dd>
+                      </div>
+                    </dl>
                   </div>
                 ))}
               </div>
+            )}
+          </section>
+
+          <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Warnings</h3>
+            {plan.warnings.length === 0 ? (
+              <p className="mt-2 text-sm text-cns-muted">None</p>
+            ) : (
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-900 dark:text-amber-200">
+                {plan.warnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
             )}
           </section>
 
@@ -242,7 +266,7 @@ export function TopologyPlacementPlanningPanel({ topologyId, projectId, readOnly
                   </label>
                   <button
                     type="button"
-                    disabled={busy || plan.warnings.some((w) => w.startsWith('Insufficient capacity'))}
+                    disabled={busy || hasCapacityWarning}
                     onClick={() => void onGenerate()}
                     className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                   >

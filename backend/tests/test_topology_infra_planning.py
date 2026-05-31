@@ -195,7 +195,7 @@ def test_generate_infrastructure_deployment_api(client_strict, monkeypatch, engi
             "secret": json.dumps(
                 {
                     "type": "service_account",
-                    "project_id": "demo",
+                    "project_id": "my-gcp-project",
                     "private_key": "-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----\n",
                     "client_email": "demo@test.iam.gserviceaccount.com",
                 }
@@ -227,14 +227,93 @@ def test_generate_infrastructure_deployment_api(client_strict, monkeypatch, engi
         json={
             "provider": "gcp",
             "credentials_ref": cred_ref,
-            "variables": {"project_id": "my-gcp-project", "zone": "us-central1-a"},
+            "variables": {"zone": "us-central1-a"},
         },
     )
     assert generated.status_code == 201, generated.text
     body = generated.json()
     assert body["deployment"]["topology_id"] == topo_id
     assert body["deployment"]["template_id"] == "docker-vm"
+    assert body["deployment"]["variables_json"]["project_id"] == "my-gcp-project"
     assert body["capacity_check"]["status"] in {"compatible", "warning"}
+
+
+def test_generate_infrastructure_deployment_missing_gcp_project_id(
+    client_strict, monkeypatch, engine_db, tmp_path
+):
+    from app.db.session import SessionLocal
+    from app.models.credential_profile import CredentialProfile
+    from app.core.credential_encryption import encrypt_secret
+    from tests.test_infrastructure_deployments_57e import _gcp_credentials, _patch_gcp_ssh_gates
+
+    _patch_gcp_ssh_gates(monkeypatch)
+    _gcp_credentials(monkeypatch, tmp_path)
+
+    email = f"genmiss{uuid.uuid4().hex[:8]}@example.com"
+    reg = client_strict.post(
+        "/auth/register",
+        json={"email": email, "password": "password123", "display_name": "GenMiss"},
+    )
+    headers = {"Authorization": f"Bearer {reg.json()['access_token']}"}
+    project_id = client_strict.get("/projects", headers=headers).json()[0]["id"]
+
+    profile_id = uuid.uuid4()
+    with SessionLocal() as db:
+        from sqlalchemy import select
+
+        from app.models.user import User
+
+        user = db.scalar(select(User).where(User.email == email))
+        db.add(
+            CredentialProfile(
+                id=profile_id,
+                project_id=uuid.UUID(project_id),
+                owner_id=user.id,
+                name="Missing GCP project",
+                gcp_project_id=None,
+                provider="gcp",
+                credential_type="gcp_service_account_json",
+                encrypted_secret=encrypt_secret(
+                    json.dumps(
+                        {
+                            "type": "service_account",
+                            "project_id": "my-gcp-project",
+                            "private_key": "-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----\n",
+                            "client_email": "demo@test.iam.gserviceaccount.com",
+                        }
+                    )
+                ),
+                metadata_json={},
+                validation_status="valid",
+            )
+        )
+        db.commit()
+
+    cred_ref = f"credential:{profile_id}"
+    topo = client_strict.post(
+        "/topologies",
+        headers=headers,
+        json={
+            "name": "gen-miss-lab",
+            "runtime_target": "docker",
+            "networking_mode": "docker_bridge",
+            "project_id": project_id,
+        },
+    )
+    topo_id = topo.json()["id"]
+    client_strict.post(
+        f"/topologies/{topo_id}/nodes",
+        headers=headers,
+        json={"name": "web", "node_type": "host", "image": "nginx", "config": {"memory_request_mb": 512}},
+    )
+
+    generated = client_strict.post(
+        f"/topologies/{topo_id}/generate-infrastructure-deployment",
+        headers=headers,
+        json={"provider": "gcp", "credentials_ref": cred_ref},
+    )
+    assert generated.status_code == 400, generated.text
+    assert "Selected credential profile does not contain a GCP project ID." in generated.text
 
 
 def test_validate_rejects_undersized_deployment(client_strict, monkeypatch, engine_db, tmp_path):
@@ -260,7 +339,7 @@ def test_validate_rejects_undersized_deployment(client_strict, monkeypatch, engi
             "secret": json.dumps(
                 {
                     "type": "service_account",
-                    "project_id": "demo",
+                    "project_id": "my-gcp-project",
                     "private_key": "-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----\n",
                     "client_email": "demo@test.iam.gserviceaccount.com",
                 }

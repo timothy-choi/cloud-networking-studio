@@ -24,6 +24,7 @@ from app.api.templates import router as templates_router
 from app.api.topologies import router as topologies_router
 from app.api.topology_exports import router as topology_exports_router
 from app.api.topology_versions import router as topology_versions_router
+from app.api.topology_placement import router as topology_placement_router
 from app.api.credential_profiles import router as credential_profiles_router
 from app.api.deployment_profiles import router as deployment_profiles_router
 from app.api.deployment_targets import router as deployment_targets_router
@@ -44,6 +45,10 @@ OPENAPI_TAGS_METADATA: list[dict[str, str]] = [
     {
         "name": "api-tokens",
         "description": "Personal **API tokens** (Bearer) for CLI and CI/CD — same project RBAC as interactive users.",
+    },
+    {
+        "name": "topology-placement",
+        "description": "Topology-aware **placement planning** and infrastructure deployment generation (Feature 59A).",
     },
     {
         "name": "credential-profiles",
@@ -142,6 +147,7 @@ app.include_router(project_invitations_router)
 app.include_router(topologies_router)
 app.include_router(topology_versions_router)
 app.include_router(deployment_profiles_router)
+app.include_router(topology_placement_router)
 app.include_router(credential_profiles_router)
 app.include_router(deployment_targets_router)
 app.include_router(external_deployment_jobs_router)

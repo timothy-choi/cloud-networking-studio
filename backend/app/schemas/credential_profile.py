@@ -13,12 +13,14 @@ class CredentialProfileCreate(BaseModel):
     provider: str = Field(min_length=1, max_length=32)
     credential_type: str = Field(min_length=1, max_length=64)
     secret: str = Field(min_length=1, description="Provider secret JSON — never returned by API")
+    gcp_project_id: str | None = Field(default=None, max_length=64)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class CredentialProfileUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     secret: str | None = Field(default=None, min_length=1)
+    gcp_project_id: str | None = Field(default=None, max_length=64)
     metadata: dict[str, Any] | None = None
 
 
@@ -27,6 +29,7 @@ class CredentialProfileResponse(BaseModel):
     project_id: str
     owner_id: str
     name: str
+    gcp_project_id: str | None
     provider: str
     credential_type: str
     metadata_json: dict[str, Any]

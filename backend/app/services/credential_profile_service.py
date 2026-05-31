@@ -20,11 +20,13 @@ from app.core.secret_masking import scrub_sensitive_dict
 from app.models.credential_profile import CredentialProfile
 from app.models.user import User
 from app.services.audit_service import record_audit
+from app.services.infra_security import validate_gcp_project_id
 
 _log = logging.getLogger(__name__)
 
 SUPPORTED_PROVIDERS = frozenset({"gcp", "aws", "azure"})
 CREDENTIAL_REF_PREFIX = "credential:"
+MISSING_GCP_PROJECT_ID_MSG = "Selected credential profile does not contain a GCP project ID."
 
 GCP_TYPES = frozenset({"gcp_service_account_json"})
 AWS_TYPES = frozenset({"aws_access_key"})
@@ -39,6 +41,10 @@ _PROVIDER_TYPES: dict[str, frozenset[str]] = {
 
 def credentials_ref_for_profile(profile_id: UUID) -> str:
     return f"{CREDENTIAL_REF_PREFIX}{profile_id}"
+
+
+def is_credential_profile_ref(credentials_ref: str | None) -> bool:
+    return (credentials_ref or "").strip().startswith(CREDENTIAL_REF_PREFIX)
 
 
 def parse_credential_profile_ref(credentials_ref: str | None) -> UUID | None:
@@ -136,6 +142,58 @@ def _validate_secret_structure(
     raise ValueError("Unsupported credential profile configuration.")
 
 
+def _resolve_gcp_project_id(*, explicit: str | None, secret_payload: dict[str, Any]) -> str:
+    raw = (explicit or "").strip()
+    if not raw:
+        raw = str(secret_payload.get("project_id") or "").strip()
+    return validate_gcp_project_id(raw)
+
+
+def resolve_gcp_project_id_for_credentials_ref(
+    db: Session,
+    *,
+    credentials_ref: str,
+    workspace_project_id: UUID,
+) -> str:
+    profile_id = parse_credential_profile_ref(credentials_ref)
+    if profile_id is None:
+        raise ValueError("Invalid credential profile reference.")
+    profile = get_profile_for_project(
+        db, profile_id=profile_id, project_id=workspace_project_id
+    )
+    if profile is None:
+        raise ValueError("Credential profile not found for this project.")
+    if profile.provider != "gcp":
+        raise ValueError("Credential profile is not a GCP profile.")
+    gcp_project_id = (profile.gcp_project_id or "").strip()
+    if not gcp_project_id:
+        raise ValueError(MISSING_GCP_PROJECT_ID_MSG)
+    return gcp_project_id
+
+
+def apply_gcp_project_id_from_credentials_ref(
+    db: Session,
+    *,
+    provider: str,
+    variables: dict[str, Any],
+    credentials_ref: str | None,
+    workspace_project_id: UUID,
+) -> dict[str, Any]:
+    provider_key = provider.strip().lower()
+    ref = (credentials_ref or "").strip()
+    if provider_key != "gcp" or not ref or not is_credential_profile_ref(ref):
+        return dict(variables or {})
+    result = dict(variables or {})
+    if str(result.get("project_id") or "").strip():
+        return result
+    result["project_id"] = resolve_gcp_project_id_for_credentials_ref(
+        db,
+        credentials_ref=ref,
+        workspace_project_id=workspace_project_id,
+    )
+    return result
+
+
 def create_profile(
     db: Session,
     *,
@@ -145,6 +203,7 @@ def create_profile(
     provider: str,
     credential_type: str,
     secret: str,
+    gcp_project_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> CredentialProfile:
     provider_key, meta = _validate_secret_structure(
@@ -153,10 +212,25 @@ def create_profile(
         secret=secret,
         metadata=metadata or {},
     )
+    try:
+        secret_payload = json.loads(secret)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Secret must be valid JSON.") from exc
+    if not isinstance(secret_payload, dict):
+        raise ValueError("Secret JSON must be an object.")
+
+    resolved_gcp_project_id: str | None = None
+    if provider_key == "gcp":
+        resolved_gcp_project_id = _resolve_gcp_project_id(
+            explicit=gcp_project_id,
+            secret_payload=secret_payload,
+        )
+
     profile = CredentialProfile(
         project_id=project_id,
         owner_id=actor.id,
         name=name.strip(),
+        gcp_project_id=resolved_gcp_project_id,
         provider=provider_key,
         credential_type=credential_type,
         encrypted_secret=encrypt_secret(secret),
@@ -191,10 +265,13 @@ def update_profile(
     actor: User,
     name: str | None = None,
     secret: str | None = None,
+    gcp_project_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> CredentialProfile:
     if name is not None:
         profile.name = name.strip()
+    if gcp_project_id is not None and profile.provider == "gcp":
+        profile.gcp_project_id = validate_gcp_project_id(gcp_project_id)
     if secret is not None:
         provider_key, meta = _validate_secret_structure(
             provider=profile.provider,
@@ -206,6 +283,18 @@ def update_profile(
         profile.metadata_json = meta
         profile.validation_status = "pending"
         profile.validation_message = None
+        if profile.provider == "gcp":
+            try:
+                secret_payload = json.loads(secret)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Secret must be valid JSON.") from exc
+            if not isinstance(secret_payload, dict):
+                raise ValueError("Secret JSON must be an object.")
+            if gcp_project_id is None:
+                profile.gcp_project_id = _resolve_gcp_project_id(
+                    explicit=profile.gcp_project_id,
+                    secret_payload=secret_payload,
+                )
     elif metadata is not None:
         _, meta = _validate_secret_structure(
             provider=profile.provider,

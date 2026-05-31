@@ -485,10 +485,22 @@ def create_deployment(
 ) -> InfrastructureDeployment:
     validate_provider(provider, SUPPORTED_PROVIDERS)
     validate_template_provider(template_id, provider)
+    cred_ref = (credentials_ref or "").strip() or None
     clean_vars = sanitize_variables(variables)
+    if is_real_cloud_provider(provider) and cred_ref:
+        from app.services import credential_profile_service as profile_svc
+
+        clean_vars = sanitize_variables(
+            profile_svc.apply_gcp_project_id_from_credentials_ref(
+                db,
+                provider=provider,
+                variables=clean_vars,
+                credentials_ref=cred_ref,
+                workspace_project_id=topology.project_id,
+            )
+        )
     validate_template_variables(template_id, provider, clean_vars)
     _assert_cloud_template_ready(template_id, provider)
-    cred_ref = (credentials_ref or "").strip() or None
     if is_real_cloud_provider(provider):
         if not cred_ref:
             raise ValueError("Terraform credentials_ref is not configured on the server.")

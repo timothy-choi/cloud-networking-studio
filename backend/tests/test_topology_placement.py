@@ -44,6 +44,13 @@ def test_estimate_simple_topology():
     assert estimate["total_cpu"] == 1.0
     assert estimate["total_memory_mb"] == 1024
     assert estimate["placement_unit_count"] == 1
+    node = estimate["nodes"][0]
+    assert node["node_name"] == "web"
+    assert node["node_id"]
+    assert node["resource_cpu"] == 1
+    assert node["resource_memory_mb"] == 1024
+    assert node["resource_disk_gb"] == 10
+    assert node["replicas"] == 1
 
 
 def test_estimate_topology_with_replicas():
@@ -87,6 +94,8 @@ def test_single_host_placement_includes_capacity_fields():
     assert set(host["assigned_nodes"]) == {"cli-edge", "svc-origin"}
     assert host["cpu_used"] == 0.75
     assert host["memory_used_mb"] == 768
+    assert host["disk_used_gb"] == 10
+    assert host["disk_capacity_gb"] == 30
 
 
 def test_capacity_warning_when_machine_type_too_small():
@@ -244,6 +253,9 @@ def test_placement_plan_api(client_strict, engine_db):
     assert body["hosts"][0]["host_index"] == 1
     assert body["hosts"][0]["cpu_capacity"] > 0
     assert body["hosts"][0]["memory_capacity_mb"] > 0
+    assert body["hosts"][0]["disk_capacity_gb"] == 30
+    assert body["nodes"][0]["node_name"] == "redis"
+    assert body["nodes"][0]["cpu"] == body["nodes"][0]["resource_cpu"]
 
 
 def test_generate_infrastructure_deployment_uses_credential_profile_project_id(

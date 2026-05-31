@@ -3,9 +3,14 @@ import { apiFetch } from './client';
 export interface TopologyNodeResourceBreakdown {
   node_id: string;
   node_name: string;
+  /** Canonical placement fields */
   resource_cpu: number;
   resource_memory_mb: number;
   resource_disk_gb: number;
+  /** API aliases (same values as resource_*) */
+  cpu?: number;
+  memory_mb?: number;
+  disk_gb?: number;
   replicas: number;
   node_role: string;
   exposure: string;
@@ -33,6 +38,8 @@ export interface PlacementHost {
   cpu_capacity: number;
   memory_used_mb: number;
   memory_capacity_mb: number;
+  disk_used_gb: number;
+  disk_capacity_gb: number;
   assigned_nodes: string[];
   assigned_node_details?: PlacementAssignedNode[];
   estimated_cpu_used?: number;
@@ -109,14 +116,28 @@ export async function generateInfrastructureDeployment(
   );
 }
 
-export function formatHostUtilization(host: PlacementHost): { cpu: string; memory: string } {
+function nodeCpu(node: TopologyNodeResourceBreakdown): number {
+  return node.cpu ?? node.resource_cpu;
+}
+
+function nodeMemoryMb(node: TopologyNodeResourceBreakdown): number {
+  return node.memory_mb ?? node.resource_memory_mb;
+}
+
+function nodeDiskGb(node: TopologyNodeResourceBreakdown): number {
+  return node.disk_gb ?? node.resource_disk_gb;
+}
+
+export function formatHostUtilization(host: PlacementHost): { cpu: string; memory: string; disk: string } {
   return {
-    cpu: `${host.cpu_used} / ${host.cpu_capacity}`,
-    memory: `${host.memory_used_mb} MB / ${host.memory_capacity_mb} MB`,
+    cpu: `${host.cpu_used} / ${host.cpu_capacity} vCPU`,
+    memory: `${host.memory_used_mb} / ${host.memory_capacity_mb} MB`,
+    disk: `${host.disk_used_gb} / ${host.disk_capacity_gb} GB`,
   };
 }
 
 export function formatNodeResourceLine(node: TopologyNodeResourceBreakdown): string {
+  const name = node.node_name?.trim() || 'unnamed node';
   const replicasLabel = node.replicas === 1 ? '1 replica' : `${node.replicas} replicas`;
-  return `${node.node_name}: ${node.resource_cpu} CPU, ${node.resource_memory_mb} MB, ${replicasLabel}`;
+  return `${name}: ${nodeCpu(node)} CPU, ${nodeMemoryMb(node)} MB, ${nodeDiskGb(node)} GB disk, ${replicasLabel}`;
 }

@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { formatApiError } from '../api/client';
+import { formatApiError } from '../../api/client';
 import {
   generateInfrastructureDeployment,
   getTopologyInfrastructureRecommendations,
   getTopologyResourceEstimate,
   type CapacityStatus,
   type InfrastructureRecommendations,
+  type TopologyNodeResourceBreakdown,
   type TopologyResourceEstimate,
-} from '../api/topologyInfraPlanning';
-import { listCredentialProfiles, type CredentialProfile } from '../api/credentialProfiles';
+} from '../../api/topologyInfraPlanning';
+import { listCredentialProfiles, type CredentialProfile } from '../../api/credentialProfiles';
 import { Spinner } from '../Spinner';
 
 function capacityTone(status: CapacityStatus): string {
@@ -48,7 +49,7 @@ export function TopologyInfraPlanningPanel({
       setRecommendations(recs);
       if (projectId) {
         const creds = await listCredentialProfiles(projectId);
-        const gcpProfiles = creds.filter((p) => p.provider === 'gcp');
+        const gcpProfiles = creds.filter((p: CredentialProfile) => p.provider === 'gcp');
         setProfiles(gcpProfiles);
         if (gcpProfiles.length > 0) {
           setSelectedProfileId(gcpProfiles[0].id);
@@ -134,7 +135,7 @@ export function TopologyInfraPlanningPanel({
           </dl>
           {estimate.nodes.length > 0 ? (
             <ul className="mt-3 space-y-1 text-xs text-cns-muted">
-              {estimate.nodes.map((node) => (
+              {estimate.nodes.map((node: TopologyNodeResourceBreakdown) => (
                 <li key={node.node_id}>
                   {node.name}: {node.cpu_request} CPU, {node.memory_request_mb}MB, {node.replicas} replica(s)
                 </li>
@@ -152,7 +153,7 @@ export function TopologyInfraPlanningPanel({
               <div key={provider} className="rounded border px-2 py-2 text-sm dark:border-zinc-600">
                 <div className="text-xs font-semibold uppercase text-cns-muted">{provider}</div>
                 <ul className="mt-1 space-y-0.5 font-mono text-[11px]">
-                  {(recommendations.recommendations[provider] ?? []).map((machine) => (
+                  {(recommendations.recommendations[provider] ?? []).map((machine: string) => (
                     <li key={machine}>{machine}</li>
                   ))}
                 </ul>
@@ -161,7 +162,7 @@ export function TopologyInfraPlanningPanel({
           </div>
           {recommendations.rationale.length > 0 ? (
             <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-cns-muted">
-              {recommendations.rationale.map((line) => (
+              {recommendations.rationale.map((line: string) => (
                 <li key={line}>{line}</li>
               ))}
             </ul>

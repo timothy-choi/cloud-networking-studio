@@ -36,7 +36,7 @@ import { TopologyVersionsPanel } from '../components/topology/TopologyVersionsPa
 import { DeploymentProfilesPanel } from '../components/topology/DeploymentProfilesPanel';
 import { ExternalDeploymentsPanel } from '../components/topology/ExternalDeploymentsPanel';
 import { InfrastructureDeploymentsPanel } from '../components/topology/InfrastructureDeploymentsPanel';
-import { TopologyPlacementPlanningPanel } from '../components/topology/TopologyPlacementPlanningPanel';
+import { TopologyInfraPlanningPanel } from '../components/topology/TopologyInfraPlanningPanel';
 import { DeployModal } from '../components/topology/DeployModal';
 import { IaCExportPanel } from '../components/topology/IaCExportPanel';
 import { TrafficValidationSection } from '../components/traffic/TrafficValidationSection';
@@ -143,6 +143,7 @@ export function TopologyDetailPage() {
     tab: 'targets' | 'jobs' | 'deployments';
   } | null>(null);
   const [targetsRefreshToken, setTargetsRefreshToken] = useState(0);
+  const [infraRefreshToken, setInfraRefreshToken] = useState(0);
 
   useEffect(() => {
     if (topology) {
@@ -527,10 +528,10 @@ export function TopologyDetailPage() {
 
       {topology?.project_id ? (
         <CollapsibleSection title="Infrastructure planning" defaultOpen={false}>
-          <TopologyPlacementPlanningPanel
+          <TopologyInfraPlanningPanel
             topologyId={id}
             projectId={topology.project_id}
-            readOnly={viewerMode}
+            onDeploymentGenerated={() => setInfraRefreshToken((current) => current + 1)}
           />
         </CollapsibleSection>
       ) : null}
@@ -538,6 +539,7 @@ export function TopologyDetailPage() {
       {topology?.project_id ? (
         <CollapsibleSection title="Infrastructure Deployments" defaultOpen={false}>
           <InfrastructureDeploymentsPanel
+            key={infraRefreshToken}
             topologyId={id}
             projectId={topology.project_id}
             onUseRuntimeTarget={(targetId) => {

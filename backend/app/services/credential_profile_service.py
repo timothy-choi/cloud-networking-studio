@@ -142,7 +142,11 @@ def _validate_secret_structure(
     raise ValueError("Unsupported credential profile configuration.")
 
 
-def _resolve_gcp_project_id(*, explicit: str | None, secret_payload: dict[str, Any]) -> str:
+def _resolve_gcp_project_id(
+    *,
+    explicit: str | None,
+    secret_payload: dict[str, Any],
+) -> str:
     raw = (explicit or "").strip()
     if not raw:
         raw = str(secret_payload.get("project_id") or "").strip()

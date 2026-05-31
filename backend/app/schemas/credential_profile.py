@@ -13,7 +13,11 @@ class CredentialProfileCreate(BaseModel):
     provider: str = Field(min_length=1, max_length=32)
     credential_type: str = Field(min_length=1, max_length=64)
     secret: str = Field(min_length=1, description="Provider secret JSON — never returned by API")
-    gcp_project_id: str | None = Field(default=None, max_length=64)
+    gcp_project_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="GCP cloud project ID (required for GCP profiles unless present in service account JSON)",
+    )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

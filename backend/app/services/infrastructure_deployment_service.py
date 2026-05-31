@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -19,6 +20,7 @@ from app.services import ansible_executor_service as ansible_svc
 from app.services import deployment_target_service as target_svc
 from app.services import terraform_executor_service as tf_svc
 from app.services.audit_service import record_audit
+from app.services import credential_profile_service as profile_svc
 from app.services.infra_observability import append_event, increment_counter, record_metric
 from app.services.infra_security import (
     is_real_cloud_provider,
@@ -42,6 +44,8 @@ from app.runtime.infra_runner_client import InfraRunnerClientError
 
 
 from app.services.terraform_credentials_service import validate_terraform_credentials_ref
+from app.services.topology_infra_planning_service import validate_deployment_capacity
+from app.services.topology_version_service import load_topology_with_graph
 
 
 class RealCloudApplyDisabledError(Exception):
@@ -472,6 +476,33 @@ def retry_configuration(
     return deployment
 
 
+def _apply_topology_capacity_check(
+    db: Session,
+    *,
+    deployment: InfrastructureDeployment,
+    fail_on_insufficient: bool = True,
+) -> dict[str, Any] | None:
+    topology = load_topology_with_graph(db, deployment.topology_id)
+    if topology is None:
+        return None
+    capacity = validate_deployment_capacity(deployment, topology)
+    deployment.state_metadata_json = {
+        **(deployment.state_metadata_json or {}),
+        "topology_capacity": capacity,
+    }
+    if capacity["status"] == "insufficient_capacity" and fail_on_insufficient:
+        message = capacity["messages"][0] if capacity["messages"] else "Insufficient infrastructure capacity for topology."
+        raise ValueError(message)
+    if capacity["status"] == "warning" and capacity["messages"]:
+        deployment.events_json = append_event(
+            deployment.events_json,
+            "capacity_warning",
+            message=capacity["messages"][0],
+            metadata={"topology_capacity": capacity},
+        )
+    return capacity
+
+
 def create_deployment(
     db: Session,
     *,
@@ -488,8 +519,6 @@ def create_deployment(
     cred_ref = (credentials_ref or "").strip() or None
     clean_vars = sanitize_variables(variables)
     if is_real_cloud_provider(provider) and cred_ref:
-        from app.services import credential_profile_service as profile_svc
-
         clean_vars = sanitize_variables(
             profile_svc.apply_gcp_project_id_from_credentials_ref(
                 db,
@@ -520,6 +549,7 @@ def create_deployment(
     )
     db.add(deployment)
     db.flush()
+    _apply_topology_capacity_check(db, deployment=deployment, fail_on_insufficient=True)
     record_audit(
         db,
         action="infrastructure_deployment.created",
@@ -676,6 +706,7 @@ def _register_runtime_targets(
 def run_validate(db: Session, *, deployment: InfrastructureDeployment, actor: User) -> InfrastructureDeployment:
     try:
         _require_real_cloud_ready(db, deployment)
+        _apply_topology_capacity_check(db, deployment=deployment, fail_on_insufficient=True)
         deployment.status = "validating"
         deployment.events_json = append_event(deployment.events_json, "validate_started")
         db.flush()

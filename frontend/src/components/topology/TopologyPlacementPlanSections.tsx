@@ -3,6 +3,7 @@ import {
   formatNodeResourceLine,
   isStrategySelectable,
   strategyStatusLabel,
+  type CostCapacityAnalysis,
   type DeploymentStrategy,
   type StrategyRecommendation,
   type TopologyPlacementPlan,
@@ -203,6 +204,91 @@ export function DeploymentStrategySection({
           ) : null}
         </div>
       ) : null}
+    </section>
+  );
+}
+
+function formatCurrencyRange(analysis: CostCapacityAnalysis): string {
+  const { low, high, currency } = analysis.cost_estimate.estimated_monthly_cost;
+  const symbol = currency === 'USD' ? '$' : `${currency} `;
+  return `${symbol}${low}-${high}/month`;
+}
+
+function providerLabel(provider: string): string {
+  const key = provider.trim().toLowerCase();
+  if (key === 'gcp') return 'GCP';
+  if (key === 'aws') return 'AWS';
+  return provider;
+}
+
+export function CostCapacitySection({ analysis }: { analysis: CostCapacityAnalysis }) {
+  const riskClass =
+    analysis.scaling_risk.scaling_risk === 'HIGH'
+      ? 'text-red-700 dark:text-red-300'
+      : analysis.scaling_risk.scaling_risk === 'MEDIUM'
+        ? 'text-amber-700 dark:text-amber-300'
+        : 'text-emerald-700 dark:text-emerald-300';
+
+  return (
+    <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+      <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Cost &amp; Capacity</h3>
+
+      <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <div>
+          <dt className="text-xs text-cns-muted">Provider</dt>
+          <dd className="font-medium">{providerLabel(analysis.cost_estimate.provider)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-cns-muted">Machine</dt>
+          <dd className="font-mono font-medium">{analysis.cost_estimate.machine_type}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-cns-muted">Hosts</dt>
+          <dd className="font-medium">{analysis.cost_estimate.host_count}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-cns-muted">Estimated monthly cost</dt>
+          <dd className="font-medium">{formatCurrencyRange(analysis)}</dd>
+        </div>
+      </dl>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-3">
+        <div>
+          <p className="text-xs font-medium text-cns-label">Capacity</p>
+          <ul className="mt-1 space-y-1 text-sm">
+            <li>CPU: {analysis.capacity.cpu_utilization_percent}% used</li>
+            <li>Memory: {analysis.capacity.memory_utilization_percent}% used</li>
+            <li>Disk: {analysis.capacity.disk_utilization_percent}% used</li>
+          </ul>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-cns-label">Headroom</p>
+          <ul className="mt-1 space-y-1 text-sm">
+            <li>CPU: {analysis.headroom.cpu_headroom_percent}% remaining</li>
+            <li>Memory: {analysis.headroom.memory_headroom_percent}% remaining</li>
+            <li>Disk: {analysis.headroom.disk_headroom_percent}% remaining</li>
+          </ul>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-cns-label">Alternatives</p>
+          <ul className="mt-1 space-y-1 text-sm">
+            <li>Cheaper: {analysis.alternatives.cheaper_alternative ?? 'None'}</li>
+            <li>Safer: {analysis.alternatives.safer_alternative ?? 'None'}</li>
+          </ul>
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <p className="text-xs font-medium text-cns-label">Scaling Risk</p>
+        <p className={`mt-1 text-sm font-semibold ${riskClass}`}>{analysis.scaling_risk.scaling_risk}</p>
+        {analysis.scaling_risk.reasons.length > 0 ? (
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-amber-900 dark:text-amber-200">
+            {analysis.scaling_risk.reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
     </section>
   );
 }

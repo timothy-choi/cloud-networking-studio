@@ -19,6 +19,7 @@ from app.models.topology import Topology
 from app.services.deployment_strategy_registry import assert_strategy_available, get_strategy
 from app.services.infra_apply_safety import GCP_APPLY_MACHINE_TYPES
 from app.services import credential_profile_service as profile_svc
+from app.services import cost_capacity_advisor_service as cost_capacity_svc
 from app.services import deployment_strategy_recommendation_service as strategy_svc
 from app.services import topology_placement_planner_service as placement_svc
 
@@ -124,6 +125,12 @@ def build_advisor_context(
     )
     strategy = strategy_svc.recommend_strategy_from_plan(plan)
     estimate = placement_svc.build_resource_estimate(topology)
+    cost_capacity = cost_capacity_svc.build_cost_capacity_analysis(
+        plan,
+        provider=provider,
+        machine_type=machine_type or plan.get("recommended_machine_type"),
+        host_count=plan.get("recommended_host_count"),
+    )
 
     credential_summary = None
     if db is not None and topology.project_id:
@@ -178,6 +185,7 @@ def build_advisor_context(
             "warnings": strategy.get("warnings"),
             "evaluation": strategy.get("evaluation"),
         },
+        "cost_capacity_analysis": cost_capacity,
         "selected": {
             "provider": provider,
             "strategy": selected_strategy or strategy.get("recommended_strategy"),

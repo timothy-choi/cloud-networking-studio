@@ -93,6 +93,40 @@ export interface StrategyRecommendation {
   recommended_strategy_detail?: DeploymentStrategy | null;
 }
 
+export interface CostCapacityAnalysis {
+  cost_estimate: {
+    provider: string;
+    machine_type: string;
+    host_count: number;
+    estimated_monthly_cost: {
+      low: number;
+      high: number;
+      currency: string;
+    };
+  };
+  capacity: {
+    cpu_utilization_percent: number;
+    memory_utilization_percent: number;
+    disk_utilization_percent: number;
+  };
+  headroom: {
+    cpu_headroom_percent: number;
+    memory_headroom_percent: number;
+    disk_headroom_percent: number;
+    remaining_cpu: number;
+    remaining_memory_mb: number;
+    remaining_disk_gb: number;
+  };
+  scaling_risk: {
+    scaling_risk: 'LOW' | 'MEDIUM' | 'HIGH';
+    reasons: string[];
+  };
+  alternatives: {
+    cheaper_alternative?: string | null;
+    safer_alternative?: string | null;
+  };
+}
+
 export interface GenerateInfrastructureDeploymentResponse {
   deployment: Record<string, unknown>;
   placement_plan: TopologyPlacementPlan;
@@ -130,6 +164,18 @@ export async function getTopologyStrategyRecommendation(
   if (params?.host_count != null) qs.set('host_count', String(params.host_count));
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
   return apiFetch<StrategyRecommendation>(`/topologies/${topologyId}/strategy-recommendation${suffix}`);
+}
+
+export async function getTopologyCostCapacityAnalysis(
+  topologyId: string,
+  params?: { provider?: string; machine_type?: string; host_count?: number },
+): Promise<CostCapacityAnalysis> {
+  const qs = new URLSearchParams();
+  if (params?.provider) qs.set('provider', params.provider);
+  if (params?.machine_type) qs.set('machine_type', params.machine_type);
+  if (params?.host_count != null) qs.set('host_count', String(params.host_count));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch<CostCapacityAnalysis>(`/topologies/${topologyId}/cost-capacity-analysis${suffix}`);
 }
 
 export function strategyStatusLabel(status: DeploymentStrategyStatus): string {

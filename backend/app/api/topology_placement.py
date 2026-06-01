@@ -11,6 +11,7 @@ from app.api.deps import get_current_user
 from app.api.infrastructure_deployments import _to_deployment
 from app.db.session import get_db
 from app.models.user import User
+from app.schemas.deployment_strategy import StrategyRecommendationResponse
 from app.schemas.topology_placement import (
     GenerateInfrastructureDeploymentRequest,
     GenerateInfrastructureDeploymentResponse,
@@ -21,6 +22,8 @@ from app.schemas.topology_placement import (
     TopologyResourceEstimateResponse,
 )
 from app.services.access_control import get_topology_for_user, require_topology_editor
+from app.services.deployment_strategy_registry import assert_strategy_available
+from app.services import deployment_strategy_recommendation_service as strategy_svc
 from app.services import infrastructure_deployment_service as infra_svc
 from app.services import topology_placement_planner_service as placement_svc
 from app.services.infra_observability import append_event
@@ -139,6 +142,43 @@ def get_topology_placement_plan(
     return _placement_response(plan)
 
 
+def _strategy_response(raw: dict) -> StrategyRecommendationResponse:
+    return StrategyRecommendationResponse(
+        recommended_strategy=raw["recommended_strategy"],
+        alternatives=raw.get("alternatives") or [],
+        reasons=raw.get("reasons") or [],
+        warnings=raw.get("warnings") or [],
+        strategies=raw.get("strategies") or [],
+        recommended_strategy_detail=raw.get("recommended_strategy_detail"),
+        evaluation=raw.get("evaluation"),
+    )
+
+
+@router.get(
+    "/topologies/{topology_id}/strategy-recommendation",
+    response_model=StrategyRecommendationResponse,
+)
+def get_topology_strategy_recommendation(
+    topology_id: UUID,
+    provider: str = "gcp",
+    machine_type: str | None = None,
+    host_count: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> StrategyRecommendationResponse:
+    topology = _load_topology(db, user, topology_id)
+    try:
+        raw = strategy_svc.build_strategy_recommendation(
+            topology,
+            provider=provider,
+            machine_type=machine_type,
+            host_count=host_count,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _strategy_response(raw)
+
+
 @router.post(
     "/topologies/{topology_id}/generate-infrastructure-deployment",
     response_model=GenerateInfrastructureDeploymentResponse,
@@ -153,11 +193,14 @@ def generate_infrastructure_deployment(
     require_topology_editor(db, user, topology_id)
     topology = _load_topology(db, user, topology_id)
     try:
+        strategy_id = (body.template_id or "docker-vm").strip()
+        assert_strategy_available(strategy_id)
+        template_id = strategy_svc.resolve_template_id_for_strategy(strategy_id)
         draft = placement_svc.build_generate_deployment_payload(
             topology,
             db=db,
             provider=body.provider,
-            template_id=body.template_id,
+            template_id=template_id,
             machine_type=body.machine_type,
             host_count=body.host_count,
             variables=body.variables,
@@ -187,6 +230,7 @@ def generate_infrastructure_deployment(
             "placement_summary": placement_summary,
             "topology_capacity": capacity,
             "generated_from_topology": True,
+            "deployment_strategy": strategy_id,
             "exposed_ports": plan.get("exposed_ports") or [],
             "recommended_disk_gb": plan.get("total_disk_gb"),
         }

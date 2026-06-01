@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-import { formatNodeResourceLine, formatHostUtilization } from '../../api/topologyPlacement';
-import type { TopologyPlacementPlan } from '../../api/topologyPlacement';
+import { formatNodeResourceLine, formatHostUtilization, isStrategySelectable } from '../../api/topologyPlacement';
+import type { StrategyRecommendation, TopologyPlacementPlan } from '../../api/topologyPlacement';
 import {
+  DeploymentStrategySection,
   PlacementPlanSection,
   PlacementWarningsSection,
   ResourceEstimateSection,
@@ -14,6 +15,7 @@ vi.mock('../../api/topologyPlacement', async (importOriginal) => {
   return {
     ...actual,
     getTopologyPlacementPlan: vi.fn(() => new Promise(() => {})),
+    getTopologyStrategyRecommendation: vi.fn(() => new Promise(() => {})),
     generateInfrastructureDeployment: vi.fn(),
   };
 });
@@ -80,6 +82,58 @@ const samplePlan: TopologyPlacementPlan = {
       disk_used_gb: 13,
       disk_capacity_gb: 30,
       assigned_nodes: ['cli-edge', 'svc-origin'],
+    },
+  ],
+};
+
+const sampleStrategy: StrategyRecommendation = {
+  recommended_strategy: 'docker-vm',
+  alternatives: ['docker-multi-vm', 'k8s-cluster'],
+  reasons: [
+    'Topology fits on a single host',
+    'No unsupported placement constraints detected',
+    'Remote Docker runtime is supported',
+  ],
+  warnings: [],
+  strategies: [
+    {
+      id: 'docker-vm',
+      display_name: 'Docker VM',
+      status: 'available',
+      description: 'Single VM',
+      min_hosts: 1,
+      max_hosts: 1,
+      supports_multi_host: false,
+      supports_stateful: true,
+      supports_public_ingress: true,
+      runtime_type: 'docker',
+      template_id: 'docker-vm',
+    },
+    {
+      id: 'docker-multi-vm',
+      display_name: 'Docker Multi-VM',
+      status: 'planning_only',
+      description: 'Multi VM',
+      min_hosts: 2,
+      max_hosts: 10,
+      supports_multi_host: true,
+      supports_stateful: true,
+      supports_public_ingress: true,
+      runtime_type: 'docker',
+      template_id: 'docker-multi-vm',
+    },
+    {
+      id: 'k8s-cluster',
+      display_name: 'Kubernetes Cluster',
+      status: 'future',
+      description: 'K8s',
+      min_hosts: 1,
+      max_hosts: 999,
+      supports_multi_host: true,
+      supports_stateful: true,
+      supports_public_ingress: true,
+      runtime_type: 'kubernetes',
+      template_id: 'k8s-cluster',
     },
   ],
 };
@@ -194,12 +248,39 @@ describe('PlacementWarningsSection', () => {
   });
 });
 
+describe('DeploymentStrategySection', () => {
+  it('renders recommended strategy, reasons, and alternatives', () => {
+    const html = renderToStaticMarkup(
+      <DeploymentStrategySection
+        recommendation={sampleStrategy}
+        selectedStrategyId="docker-vm"
+        onSelectStrategy={() => {}}
+      />,
+    );
+    expect(html).toContain('Deployment strategy');
+    expect(html).toContain('docker-vm');
+    expect(html).toContain('Topology fits on a single host');
+    expect(html).toContain('docker-multi-vm');
+    expect(html).toContain('planning only');
+    expect(html).toContain('k8s-cluster');
+    expect(html).toContain('future');
+  });
+});
+
+describe('isStrategySelectable', () => {
+  it('allows only available strategies', () => {
+    expect(isStrategySelectable('available')).toBe(true);
+    expect(isStrategySelectable('planning_only')).toBe(false);
+    expect(isStrategySelectable('future')).toBe(false);
+  });
+});
+
 describe('TopologyPlacementPlanningPanel', () => {
   it('renders planning shell while loading', () => {
     const html = renderToStaticMarkup(
       <TopologyPlacementPlanningPanel topologyId="topo-1" projectId="proj-1" />,
     );
-    expect(html).toContain('Estimates capacity from topology node metadata');
+    expect(html).toContain('Estimates capacity, plans host placement');
     expect(html).toContain('Loading placement plan');
   });
 });

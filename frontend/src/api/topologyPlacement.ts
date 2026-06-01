@@ -68,6 +68,31 @@ export interface TopologyPlacementPlan extends TopologyResourceEstimate {
   suggested_template_id: string;
 }
 
+export type DeploymentStrategyStatus = 'available' | 'planning_only' | 'future';
+
+export interface DeploymentStrategy {
+  id: string;
+  display_name: string;
+  status: DeploymentStrategyStatus;
+  description: string;
+  min_hosts: number;
+  max_hosts: number;
+  supports_multi_host: boolean;
+  supports_stateful: boolean;
+  supports_public_ingress: boolean;
+  runtime_type: string;
+  template_id: string;
+}
+
+export interface StrategyRecommendation {
+  recommended_strategy: string;
+  alternatives: string[];
+  reasons: string[];
+  warnings: string[];
+  strategies: DeploymentStrategy[];
+  recommended_strategy_detail?: DeploymentStrategy | null;
+}
+
 export interface GenerateInfrastructureDeploymentResponse {
   deployment: Record<string, unknown>;
   placement_plan: TopologyPlacementPlan;
@@ -93,6 +118,28 @@ export async function getTopologyPlacementPlan(
   if (params?.host_count != null) qs.set('host_count', String(params.host_count));
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
   return apiFetch<TopologyPlacementPlan>(`/topologies/${topologyId}/placement-plan${suffix}`);
+}
+
+export async function getTopologyStrategyRecommendation(
+  topologyId: string,
+  params?: { provider?: string; machine_type?: string; host_count?: number },
+): Promise<StrategyRecommendation> {
+  const qs = new URLSearchParams();
+  if (params?.provider) qs.set('provider', params.provider);
+  if (params?.machine_type) qs.set('machine_type', params.machine_type);
+  if (params?.host_count != null) qs.set('host_count', String(params.host_count));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch<StrategyRecommendation>(`/topologies/${topologyId}/strategy-recommendation${suffix}`);
+}
+
+export function strategyStatusLabel(status: DeploymentStrategyStatus): string {
+  if (status === 'available') return 'available';
+  if (status === 'planning_only') return 'planning only';
+  return 'future';
+}
+
+export function isStrategySelectable(status: DeploymentStrategyStatus): boolean {
+  return status === 'available';
 }
 
 export async function generateInfrastructureDeployment(

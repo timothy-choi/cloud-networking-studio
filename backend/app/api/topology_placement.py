@@ -16,6 +16,7 @@ from app.schemas.ai_infrastructure_advice import (
     AiInfrastructureAdviceResponse,
     RecommendedOverrides,
 )
+from app.schemas.cost_capacity import CostCapacityAnalysisResponse
 from app.schemas.deployment_strategy import StrategyRecommendationResponse
 from app.schemas.topology_placement import (
     GenerateInfrastructureDeploymentRequest,
@@ -30,6 +31,7 @@ from app.services.access_control import get_topology_for_user, require_topology_
 from app.services.deployment_strategy_registry import assert_strategy_available
 from app.services import deployment_strategy_recommendation_service as strategy_svc
 from app.services import ai_infrastructure_advisor_service as advisor_svc
+from app.services import cost_capacity_advisor_service as cost_capacity_svc
 from app.services import infrastructure_deployment_service as infra_svc
 from app.services import topology_placement_planner_service as placement_svc
 from app.services.infra_observability import append_event
@@ -183,6 +185,37 @@ def get_topology_strategy_recommendation(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _strategy_response(raw)
+
+
+@router.get(
+    "/topologies/{topology_id}/cost-capacity-analysis",
+    response_model=CostCapacityAnalysisResponse,
+)
+def get_topology_cost_capacity_analysis(
+    topology_id: UUID,
+    provider: str = "gcp",
+    machine_type: str | None = None,
+    host_count: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> CostCapacityAnalysisResponse:
+    topology = _load_topology(db, user, topology_id)
+    try:
+        plan = placement_svc.build_placement_plan(
+            topology,
+            provider=provider,
+            machine_type=machine_type,
+            host_count=host_count,
+        )
+        analysis = cost_capacity_svc.build_cost_capacity_analysis(
+            plan,
+            provider=provider,
+            machine_type=machine_type,
+            host_count=host_count,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return CostCapacityAnalysisResponse(**analysis)
 
 
 def _advice_response(raw: dict) -> AiInfrastructureAdviceResponse:

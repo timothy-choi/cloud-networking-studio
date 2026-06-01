@@ -2,8 +2,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
 import { formatNodeResourceLine, formatHostUtilization, isStrategySelectable } from '../../api/topologyPlacement';
-import type { StrategyRecommendation, TopologyPlacementPlan } from '../../api/topologyPlacement';
+import type { CostCapacityAnalysis, StrategyRecommendation, TopologyPlacementPlan } from '../../api/topologyPlacement';
 import {
+  CostCapacitySection,
   DeploymentStrategySection,
   PlacementPlanSection,
   PlacementWarningsSection,
@@ -16,6 +17,7 @@ vi.mock('../../api/topologyPlacement', async (importOriginal) => {
     ...actual,
     getTopologyPlacementPlan: vi.fn(() => new Promise(() => {})),
     getTopologyStrategyRecommendation: vi.fn(() => new Promise(() => {})),
+    getTopologyCostCapacityAnalysis: vi.fn(() => new Promise(() => {})),
     getAiInfrastructureAdvice: vi.fn(() => new Promise(() => {})),
     generateInfrastructureDeployment: vi.fn(),
   };
@@ -137,6 +139,40 @@ const sampleStrategy: StrategyRecommendation = {
       template_id: 'k8s-cluster',
     },
   ],
+};
+
+const sampleCostCapacity: CostCapacityAnalysis = {
+  cost_estimate: {
+    provider: 'gcp',
+    machine_type: 'e2-micro',
+    host_count: 1,
+    estimated_monthly_cost: {
+      low: 8,
+      high: 12,
+      currency: 'USD',
+    },
+  },
+  capacity: {
+    cpu_utilization_percent: 38,
+    memory_utilization_percent: 75,
+    disk_utilization_percent: 33,
+  },
+  headroom: {
+    cpu_headroom_percent: 62,
+    memory_headroom_percent: 25,
+    disk_headroom_percent: 67,
+    remaining_cpu: 1.25,
+    remaining_memory_mb: 256,
+    remaining_disk_gb: 20,
+  },
+  scaling_risk: {
+    scaling_risk: 'MEDIUM',
+    reasons: ['Memory utilization exceeds 75%'],
+  },
+  alternatives: {
+    cheaper_alternative: null,
+    safer_alternative: 'e2-small',
+  },
 };
 
 describe('formatNodeResourceLine', () => {
@@ -265,6 +301,23 @@ describe('DeploymentStrategySection', () => {
     expect(html).toContain('planning only');
     expect(html).toContain('k8s-cluster');
     expect(html).toContain('future');
+  });
+});
+
+describe('CostCapacitySection', () => {
+  it('renders estimated cost, capacity, risk, and alternatives', () => {
+    const html = renderToStaticMarkup(<CostCapacitySection analysis={sampleCostCapacity} />);
+    expect(html).toContain('Cost &amp; Capacity');
+    expect(html).toContain('GCP');
+    expect(html).toContain('e2-micro');
+    expect(html).toContain('$8-12/month');
+    expect(html).toContain('CPU: 38% used');
+    expect(html).toContain('Memory: 75% used');
+    expect(html).toContain('Disk: 33% used');
+    expect(html).toContain('CPU: 62% remaining');
+    expect(html).toContain('MEDIUM');
+    expect(html).toContain('Memory utilization exceeds 75%');
+    expect(html).toContain('Safer: e2-small');
   });
 });
 

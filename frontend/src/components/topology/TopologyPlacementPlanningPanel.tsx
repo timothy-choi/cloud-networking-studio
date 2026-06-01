@@ -4,14 +4,17 @@ import { Link } from 'react-router-dom';
 import { listCredentialProfiles, type CredentialProfile } from '../../api/credentialProfiles';
 import {
   generateInfrastructureDeployment,
+  getAiInfrastructureAdvice,
   getTopologyPlacementPlan,
   getTopologyStrategyRecommendation,
   isStrategySelectable,
+  type AiInfrastructureAdvice,
   type StrategyRecommendation,
   type TopologyPlacementPlan,
 } from '../../api/topologyPlacement';
 import { formatApiError } from '../../api/client';
 import { Spinner } from '../Spinner';
+import { AiInfrastructureAdvisorSection } from './AiInfrastructureAdvisorSection';
 import {
   DeploymentStrategySection,
   HostRecommendationSection,
@@ -43,6 +46,9 @@ export function TopologyPlacementPlanningPanel({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [aiAdvice, setAiAdvice] = useState<AiInfrastructureAdvice | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiErr, setAiErr] = useState<string | null>(null);
 
   const loadPlan = useCallback(async () => {
     setLoading(true);
@@ -59,6 +65,7 @@ export function TopologyPlacementPlanningPanel({
       setPlan(nextPlan);
       setStrategy(nextStrategy);
       setSelectedStrategyId(nextStrategy.recommended_strategy);
+      setAiAdvice(null);
     } catch (e) {
       setErr(formatApiError(e));
       setPlan(null);
@@ -81,6 +88,30 @@ export function TopologyPlacementPlanningPanel({
       })
       .catch(() => setProfiles([]));
   }, [projectId]);
+
+  async function onGetAiAdvice() {
+    setAiLoading(true);
+    setAiErr(null);
+    try {
+      const advice = await getAiInfrastructureAdvice(topologyId, {
+        provider: 'gcp',
+        selected_strategy: selectedStrategyId,
+        ...(machineType.trim() ? { selected_machine_type: machineType.trim() } : {}),
+        ...(selectedProfileId ? { credential_profile_id: selectedProfileId } : {}),
+      });
+      setAiAdvice(advice);
+    } catch (e) {
+      setAiErr(formatApiError(e));
+      setAiAdvice(null);
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  function onApplySuggestedMachineType(nextMachineType: string) {
+    setMachineType(nextMachineType);
+    setSuccess(`Applied AI suggested machine type: ${nextMachineType}. Refresh the plan to validate.`);
+  }
 
   async function onGenerate() {
     if (readOnly) return;
@@ -185,6 +216,14 @@ export function TopologyPlacementPlanningPanel({
             selectedStrategyId={selectedStrategyId}
             onSelectStrategy={setSelectedStrategyId}
             readOnly={readOnly}
+          />
+          <AiInfrastructureAdvisorSection
+            advice={aiAdvice}
+            loading={aiLoading}
+            error={aiErr}
+            readOnly={readOnly}
+            onRequestAdvice={() => void onGetAiAdvice()}
+            onApplyMachineType={onApplySuggestedMachineType}
           />
           <PlacementWarningsSection warnings={[...plan.warnings, ...strategy.warnings.filter((w) => !plan.warnings.includes(w))]} />
 

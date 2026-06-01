@@ -11,6 +11,11 @@ from app.api.deps import get_current_user
 from app.api.infrastructure_deployments import _to_deployment
 from app.db.session import get_db
 from app.models.user import User
+from app.schemas.ai_infrastructure_advice import (
+    AiInfrastructureAdviceRequest,
+    AiInfrastructureAdviceResponse,
+    RecommendedOverrides,
+)
 from app.schemas.deployment_strategy import StrategyRecommendationResponse
 from app.schemas.topology_placement import (
     GenerateInfrastructureDeploymentRequest,
@@ -24,6 +29,7 @@ from app.schemas.topology_placement import (
 from app.services.access_control import get_topology_for_user, require_topology_editor
 from app.services.deployment_strategy_registry import assert_strategy_available
 from app.services import deployment_strategy_recommendation_service as strategy_svc
+from app.services import ai_infrastructure_advisor_service as advisor_svc
 from app.services import infrastructure_deployment_service as infra_svc
 from app.services import topology_placement_planner_service as placement_svc
 from app.services.infra_observability import append_event
@@ -177,6 +183,49 @@ def get_topology_strategy_recommendation(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _strategy_response(raw)
+
+
+def _advice_response(raw: dict) -> AiInfrastructureAdviceResponse:
+    overrides = raw.get("recommended_overrides") or {}
+    return AiInfrastructureAdviceResponse(
+        summary=raw.get("summary") or "",
+        risks=raw.get("risks") or [],
+        suggestions=raw.get("suggestions") or [],
+        recommended_overrides=RecommendedOverrides(
+            machine_type=overrides.get("machine_type"),
+            strategy=overrides.get("strategy"),
+            machine_type_valid=bool(overrides.get("machine_type_valid")),
+            strategy_valid=bool(overrides.get("strategy_valid")),
+        ),
+        explanation=raw.get("explanation") or "",
+        advisor_mode=raw.get("advisor_mode") or "heuristic",
+        advisory_only=bool(raw.get("advisory_only", True)),
+    )
+
+
+@router.post(
+    "/topologies/{topology_id}/ai-infrastructure-advice",
+    response_model=AiInfrastructureAdviceResponse,
+)
+def post_topology_ai_infrastructure_advice(
+    topology_id: UUID,
+    body: AiInfrastructureAdviceRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AiInfrastructureAdviceResponse:
+    topology = _load_topology(db, user, topology_id)
+    try:
+        raw = advisor_svc.generate_ai_infrastructure_advice(
+            topology,
+            db=db,
+            provider=body.provider,
+            selected_strategy=body.selected_strategy,
+            selected_machine_type=body.selected_machine_type,
+            credential_profile_id=body.credential_profile_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _advice_response(raw)
 
 
 @router.post(

@@ -16,6 +16,7 @@ vi.mock('../../api/topologyPlacement', async (importOriginal) => {
     ...actual,
     getTopologyPlacementPlan: vi.fn(() => new Promise(() => {})),
     getTopologyStrategyRecommendation: vi.fn(() => new Promise(() => {})),
+    getAiInfrastructureAdvice: vi.fn(() => new Promise(() => {})),
     generateInfrastructureDeployment: vi.fn(),
   };
 });

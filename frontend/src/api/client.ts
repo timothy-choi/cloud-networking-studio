@@ -29,6 +29,24 @@ export class ApiError extends Error {
   }
 }
 
+export class ApiParseError extends Error {
+  readonly status: number;
+  readonly statusText: string;
+  readonly url: string;
+  readonly responseText: string;
+  readonly cause: unknown;
+
+  constructor(status: number, statusText: string, url: string, responseText: string, cause: unknown) {
+    super(`Failed to parse API response from ${url}`);
+    this.name = 'ApiParseError';
+    this.status = status;
+    this.statusText = statusText;
+    this.url = url;
+    this.responseText = responseText;
+    this.cause = cause;
+  }
+}
+
 export interface StructuredApiError {
   code: string;
   message: string;
@@ -137,31 +155,75 @@ function buildAuthHeaders(init?: RequestInit): HeadersInit {
   };
 }
 
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+type ApiFetchInit = RequestInit & {
+  debugLabel?: string;
+};
+
+function debugApiFetch(label: string | undefined, message: string, payload?: unknown) {
+  if (!label) return;
+  // Temporary Step 61 regression diagnostics: the UI collapsed browser fetch/parse failures into
+  // a generic reachability message, hiding whether the advisor returned HTTP, body, or JSON errors.
+  // Do not log request headers or bearer tokens.
+  console.debug(`[apiFetch:${label}] ${message}`, payload);
+}
+
+export async function apiFetch<T>(path: string, init?: ApiFetchInit): Promise<T> {
+  const { debugLabel, ...fetchInit } = init ?? {};
   const url = resolveApiUrl(path);
-  const res = await fetch(url, { ...init, headers: buildAuthHeaders(init) });
+  debugApiFetch(debugLabel, 'request', {
+    method: fetchInit.method ?? 'GET',
+    url,
+    hasBody: Boolean(fetchInit.body),
+  });
+
+  let res: Response;
+  try {
+    res = await fetch(url, { ...fetchInit, headers: buildAuthHeaders(fetchInit) });
+  } catch (err) {
+    debugApiFetch(debugLabel, 'fetch threw before an HTTP response was available', err);
+    throw err;
+  }
+
+  const contentType = res.headers.get('content-type');
+  debugApiFetch(debugLabel, 'response status', {
+    status: res.status,
+    statusText: res.statusText,
+    contentType,
+  });
 
   if (!res.ok) {
     let detail: unknown;
     const text = await res.text();
+    debugApiFetch(debugLabel, 'error response body', text);
     try {
       detail = text ? JSON.parse(text) : null;
     } catch {
       detail = text;
     }
+    debugApiFetch(debugLabel, 'parsed error response', detail);
     throw new ApiError(res.status, res.statusText, detail, extractRequestId(detail), url);
   }
 
   if (res.status === 204) {
+    debugApiFetch(debugLabel, 'empty response', null);
     return undefined as T;
   }
 
-  const ct = res.headers.get('content-type');
-  if (!ct?.includes('application/json')) {
+  if (!contentType?.includes('application/json')) {
+    debugApiFetch(debugLabel, 'non-json success response', { contentType });
     return undefined as T;
   }
 
-  return res.json() as Promise<T>;
+  const text = await res.text();
+  debugApiFetch(debugLabel, 'success response body', text);
+  try {
+    const parsed = text ? (JSON.parse(text) as T) : (undefined as T);
+    debugApiFetch(debugLabel, 'parsed success response', parsed);
+    return parsed;
+  } catch (err) {
+    debugApiFetch(debugLabel, 'json parse failed', err);
+    throw new ApiParseError(res.status, res.statusText, url, text, err);
+  }
 }
 
 export async function apiFetchBlob(path: string, init?: RequestInit): Promise<Blob> {
@@ -193,11 +255,23 @@ function extractRequestId(detail: unknown): string | null {
 
 function _isLikelyNetworkError(err: Error): boolean {
   const m = err.message;
-  return m === 'Failed to fetch' || m.includes('NetworkError') || m.includes('Load failed');
+  return (
+    err.name === 'AbortError' ||
+    err.name === 'TimeoutError' ||
+    m === 'Failed to fetch' ||
+    m.includes('NetworkError') ||
+    m.includes('Load failed')
+  );
 }
 
 export function formatNetworkReachabilityError(err: Error): string {
   const base = getApiBase();
+  if (err.name === 'AbortError') {
+    return `Request was aborted before the API returned a response. Endpoint base: ${base}.`;
+  }
+  if (err.name === 'TimeoutError') {
+    return `Request timed out before the API returned a response. Endpoint base: ${base}.`;
+  }
   if (import.meta.env.DEV && isAbsoluteApiBase(base)) {
     return `${err.message} — resolved API base is ${base}. In local dev, use the Vite proxy at /api (remove absolute VITE_API_BASE_URL from frontend/.env, or set VITE_USE_REMOTE_API=true to call a remote API intentionally).`;
   }
@@ -244,6 +318,16 @@ export function formatApiError(err: unknown): string {
       lines.push(`Request ID: ${requestId}`);
     }
     return lines.join('\n');
+  }
+  if (err instanceof ApiParseError) {
+    const snippet =
+      err.responseText.length > 400 ? `${err.responseText.slice(0, 400)}...` : err.responseText;
+    return [
+      'API response could not be parsed as JSON.',
+      `HTTP ${err.status} ${err.statusText}`,
+      `Endpoint: ${err.url}`,
+      snippet ? `Response body: ${snippet}` : 'Response body was empty.',
+    ].join('\n');
   }
   if (err instanceof Error) {
     if (_isLikelyNetworkError(err)) {

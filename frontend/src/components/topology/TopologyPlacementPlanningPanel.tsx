@@ -5,10 +5,12 @@ import { listCredentialProfiles, type CredentialProfile } from '../../api/creden
 import {
   generateInfrastructureDeployment,
   getAiInfrastructureAdvice,
+  getTopologyCostCapacityAnalysis,
   getTopologyPlacementPlan,
   getTopologyStrategyRecommendation,
   isStrategySelectable,
   type AiInfrastructureAdvice,
+  type CostCapacityAnalysis,
   type StrategyRecommendation,
   type TopologyPlacementPlan,
 } from '../../api/topologyPlacement';
@@ -16,6 +18,7 @@ import { formatApiError } from '../../api/client';
 import { Spinner } from '../Spinner';
 import { AiInfrastructureAdvisorSection } from './AiInfrastructureAdvisorSection';
 import {
+  CostCapacitySection,
   DeploymentStrategySection,
   HostRecommendationSection,
   PlacementPlanSection,
@@ -38,6 +41,7 @@ export function TopologyPlacementPlanningPanel({
 }: Props) {
   const [plan, setPlan] = useState<TopologyPlacementPlan | null>(null);
   const [strategy, setStrategy] = useState<StrategyRecommendation | null>(null);
+  const [costCapacity, setCostCapacity] = useState<CostCapacityAnalysis | null>(null);
   const [selectedStrategyId, setSelectedStrategyId] = useState('docker-vm');
   const [profiles, setProfiles] = useState<CredentialProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState('');
@@ -58,18 +62,21 @@ export function TopologyPlacementPlanningPanel({
         provider: 'gcp' as const,
         ...(machineType.trim() ? { machine_type: machineType.trim() } : {}),
       };
-      const [nextPlan, nextStrategy] = await Promise.all([
+      const [nextPlan, nextStrategy, nextCostCapacity] = await Promise.all([
         getTopologyPlacementPlan(topologyId, params),
         getTopologyStrategyRecommendation(topologyId, params),
+        getTopologyCostCapacityAnalysis(topologyId, params),
       ]);
       setPlan(nextPlan);
       setStrategy(nextStrategy);
+      setCostCapacity(nextCostCapacity);
       setSelectedStrategyId(nextStrategy.recommended_strategy);
       setAiAdvice(null);
     } catch (e) {
       setErr(formatApiError(e));
       setPlan(null);
       setStrategy(null);
+      setCostCapacity(null);
     } finally {
       setLoading(false);
     }
@@ -206,7 +213,7 @@ export function TopologyPlacementPlanningPanel({
         <div className="flex items-center gap-2 text-sm text-cns-muted">
           <Spinner /> Loading placement plan…
         </div>
-      ) : plan && strategy ? (
+      ) : plan && strategy && costCapacity ? (
         <>
           <ResourceEstimateSection plan={plan} />
           <HostRecommendationSection plan={plan} />
@@ -217,6 +224,7 @@ export function TopologyPlacementPlanningPanel({
             onSelectStrategy={setSelectedStrategyId}
             readOnly={readOnly}
           />
+          <CostCapacitySection analysis={costCapacity} />
           <AiInfrastructureAdvisorSection
             advice={aiAdvice}
             loading={aiLoading}

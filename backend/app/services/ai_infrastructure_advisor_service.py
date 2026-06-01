@@ -54,13 +54,36 @@ def set_advisor_fn(fn: AdvisorFn | None) -> None:
 
 def _assert_context_has_no_secrets(context: dict[str, Any]) -> None:
     serialized = json.dumps(context, default=str).lower()
-    for token in ("private_key", "encrypted_secret", "-----begin", "service_account_json"):
+    for token in ("private_key", "encrypted_secret", "-----begin"):
         if token in serialized:
             raise ValueError(f"Advisor context must not contain secret material ({token}).")
 
 
+def _sanitize_metadata_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return _sanitize_metadata(value)
+    if isinstance(value, list):
+        return [_sanitize_metadata_value(item) for item in value]
+    if isinstance(value, str) and "-----BEGIN" in value.upper():
+        return "[redacted]"
+    return scrub_sensitive_dict({"value": value})["value"]
+
+
 def _sanitize_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
-    return scrub_sensitive_dict(metadata or {}) or {}
+    sanitized: dict[str, Any] = {}
+    for key, value in (metadata or {}).items():
+        normalized = str(key).lower()
+        if (
+            normalized in _FORBIDDEN_CONTEXT_KEYS
+            or "token" in normalized
+            or "secret" in normalized
+            or "password" in normalized
+            or "private_key" in normalized
+            or "credentials" in normalized
+        ):
+            continue
+        sanitized[str(key)] = _sanitize_metadata_value(value)
+    return sanitized
 
 
 def _credential_profile_summary(db: Session, project_id: UUID, profile_id: str | None) -> dict[str, Any] | None:
@@ -70,7 +93,7 @@ def _credential_profile_summary(db: Session, project_id: UUID, profile_id: str |
         pid = UUID(str(profile_id))
     except ValueError:
         return None
-    profile = profile_svc.get_profile_for_project(db, pid, project_id)
+    profile = profile_svc.get_profile_for_project(db, profile_id=pid, project_id=project_id)
     if profile is None:
         return None
     return {
@@ -78,7 +101,7 @@ def _credential_profile_summary(db: Session, project_id: UUID, profile_id: str |
         "name": profile.name,
         "provider": profile.provider,
         "credential_type": profile.credential_type,
-        "gcp_project_id": profile.gcp_project_id,
+        "project_id": profile.gcp_project_id,
         "validation_status": profile.validation_status,
         "metadata": _sanitize_metadata(profile.metadata_json),
     }

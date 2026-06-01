@@ -43,6 +43,7 @@ def import_all_orm_modules() -> None:
     import app.models.credential_profile  # noqa: F401
     import app.models.infrastructure_deployment  # noqa: F401
     import app.models.infrastructure_execution  # noqa: F401
+    import app.models.topology_placement  # noqa: F401
     import app.models.topology_version  # noqa: F401
     import app.models.failure_injection  # noqa: F401
     import app.models.project  # noqa: F401

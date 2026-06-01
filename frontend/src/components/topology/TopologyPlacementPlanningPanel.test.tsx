@@ -6,6 +6,7 @@ import type { CostCapacityAnalysis, StrategyRecommendation, TopologyPlacementPla
 import {
   CostCapacitySection,
   DeploymentStrategySection,
+  PlacementConstraintsSection,
   PlacementPlanSection,
   PlacementWarningsSection,
   ResourceEstimateSection,
@@ -18,6 +19,8 @@ vi.mock('../../api/topologyPlacement', async (importOriginal) => {
     getTopologyPlacementPlan: vi.fn(() => new Promise(() => {})),
     getTopologyStrategyRecommendation: vi.fn(() => new Promise(() => {})),
     getTopologyCostCapacityAnalysis: vi.fn(() => new Promise(() => {})),
+    listPlacementConstraints: vi.fn(() => Promise.resolve([])),
+    createPlacementConstraint: vi.fn(),
     getAiInfrastructureAdvice: vi.fn(() => new Promise(() => {})),
     generateInfrastructureDeployment: vi.fn(),
   };
@@ -84,6 +87,11 @@ const samplePlan: TopologyPlacementPlan = {
       memory_capacity_mb: 1024,
       disk_used_gb: 13,
       disk_capacity_gb: 30,
+      utilization: {
+        cpu_utilization: 38,
+        memory_utilization: 75,
+        disk_utilization: 43,
+      },
       assigned_nodes: ['cli-edge', 'svc-origin'],
     },
   ],
@@ -262,7 +270,8 @@ describe('ResourceEstimateSection', () => {
 describe('PlacementPlanSection', () => {
   it('renders host assignment and utilization', () => {
     const html = renderToStaticMarkup(<PlacementPlanSection plan={samplePlan} />);
-    expect(html).toContain('Placement plan');
+    expect(html).toContain('Multi-Host Placement Plan');
+    expect(html).toContain('Mode: first_fit');
     expect(html).toContain('Host 1');
     expect(html).toContain('e2-micro');
     expect(html).toContain('cli-edge');
@@ -270,6 +279,37 @@ describe('PlacementPlanSection', () => {
     expect(html).toContain('0.75 / 2 vCPU');
     expect(html).toContain('768 / 1024 MB');
     expect(html).toContain('13 / 30 GB');
+    expect(html).toContain('CPU utilization');
+    expect(html).toContain('38%');
+  });
+});
+
+describe('PlacementConstraintsSection', () => {
+  it('renders constraints and creation controls', () => {
+    const html = renderToStaticMarkup(
+      <PlacementConstraintsSection
+        constraints={[
+          {
+            id: 'c1',
+            topology_id: 'topo-1',
+            constraint_type: 'different_host',
+            node_a: 'worker-a',
+            node_b: 'worker-b',
+            created_at: '2026-06-01T00:00:00Z',
+          },
+        ]}
+        nodes={['worker-a', 'worker-b']}
+        creating={false}
+        form={{ constraint_type: 'preferred_host', node_a: 'worker-a', node_b: '', preferred_host: '2' }}
+        onChangeForm={() => {}}
+        onCreate={() => {}}
+      />,
+    );
+    expect(html).toContain('Placement constraints');
+    expect(html).toContain('different_host');
+    expect(html).toContain('worker-a / worker-b');
+    expect(html).toContain('Preferred host');
+    expect(html).toContain('Add constraint');
   });
 });
 

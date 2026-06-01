@@ -59,6 +59,7 @@ class InfrastructureDeploymentResponse(BaseModel):
     runtime_targets_json: list[dict[str, Any]]
     error_message: str | None
     credentials_ref: str | None
+    placement_plan_id: str | None = None
     confirmed_at: datetime | None
     confirmed_by_user_id: str | None
     created_by_user_id: str | None

@@ -74,9 +74,16 @@ class InfrastructureDeployment(Base):
     )
     destroyed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     credentials_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    placement_plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("topology_placement_plans.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     project: Mapped["Project"] = relationship(back_populates="infrastructure_deployments")
     topology: Mapped["Topology"] = relationship(back_populates="infrastructure_deployments")
+    placement_plan = relationship("TopologyPlacementPlan", foreign_keys=[placement_plan_id])
     created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_user_id])
     confirmed_by: Mapped["User | None"] = relationship(foreign_keys=[confirmed_by_user_id])
     executions: Mapped[list["InfrastructureExecution"]] = relationship(

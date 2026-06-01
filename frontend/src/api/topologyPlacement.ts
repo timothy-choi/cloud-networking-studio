@@ -142,6 +142,44 @@ export function isStrategySelectable(status: DeploymentStrategyStatus): boolean 
   return status === 'available';
 }
 
+export interface RecommendedOverrides {
+  machine_type?: string | null;
+  strategy?: string | null;
+  machine_type_valid: boolean;
+  strategy_valid: boolean;
+}
+
+export interface AiInfrastructureAdvice {
+  summary: string;
+  risks: string[];
+  suggestions: string[];
+  recommended_overrides: RecommendedOverrides;
+  explanation: string;
+  advisor_mode: string;
+  advisory_only: boolean;
+}
+
+export async function getAiInfrastructureAdvice(
+  topologyId: string,
+  body: {
+    provider?: string;
+    selected_strategy?: string;
+    selected_machine_type?: string;
+    credential_profile_id?: string;
+  },
+): Promise<AiInfrastructureAdvice> {
+  return apiFetch<AiInfrastructureAdvice>(`/topologies/${topologyId}/ai-infrastructure-advice`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export const APPLY_SAFE_MACHINE_TYPES = ['e2-micro', 'e2-small', 'e2-medium'] as const;
+
+export function isApplySafeMachineType(machineType: string): boolean {
+  return (APPLY_SAFE_MACHINE_TYPES as readonly string[]).includes(machineType.trim());
+}
+
 export async function generateInfrastructureDeployment(
   topologyId: string,
   body: {

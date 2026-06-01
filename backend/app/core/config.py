@@ -201,6 +201,14 @@ class Settings(BaseSettings):
         le=500,
         validation_alias="CNS_RATE_LIMIT_INVITE_PER_USER",
     )
+    # --- Step 61: AI infrastructure advisor (advisory only) ---
+    ai_advisor_provider: str = Field(
+        default="heuristic",
+        validation_alias="CNS_AI_ADVISOR_PROVIDER",
+        description="heuristic | openai — advisory explanations only; never triggers Terraform",
+    )
+    openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    openai_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_MODEL")
 
 
 settings = Settings()

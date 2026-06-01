@@ -169,6 +169,7 @@ export async function getAiInfrastructureAdvice(
   },
 ): Promise<AiInfrastructureAdvice> {
   return apiFetch<AiInfrastructureAdvice>(`/topologies/${topologyId}/ai-infrastructure-advice`, {
+    debugLabel: 'ai-infrastructure-advice',
     method: 'POST',
     body: JSON.stringify(body),
   });

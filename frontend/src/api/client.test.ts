@@ -1,10 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  apiFetch,
+  ApiParseError,
+  formatApiError,
   formatNetworkReachabilityError,
   isAbsoluteApiBase,
   resolveApiBaseFromEnv,
 } from './client';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('resolveApiBaseFromEnv', () => {
   it('dev ignores absolute production URL and uses Vite proxy', () => {
@@ -88,5 +95,40 @@ describe('formatNetworkReachabilityError', () => {
     const msg = formatNetworkReachabilityError(new Error('Failed to fetch'));
     expect(msg).toContain('Failed to fetch');
     expect(msg).not.toMatch(/Bearer|token/i);
+  });
+
+  it('distinguishes aborted requests from reachability failures', () => {
+    const err = new DOMException('The operation was aborted.', 'AbortError');
+    const msg = formatApiError(err);
+    expect(msg).toContain('Request was aborted');
+    expect(msg).toContain('Endpoint base:');
+  });
+});
+
+describe('apiFetch', () => {
+  it('throws a parse error with response context for invalid JSON success bodies', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response('not-json', {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        ),
+      ),
+    );
+
+    await expect(apiFetch('/topologies/topo-1/ai-infrastructure-advice')).rejects.toBeInstanceOf(
+      ApiParseError,
+    );
+  });
+
+  it('formats parse errors with HTTP status, endpoint, and body snippet', () => {
+    const msg = formatApiError(new ApiParseError(200, 'OK', '/api/example', 'not-json', new Error('bad')));
+    expect(msg).toContain('API response could not be parsed as JSON.');
+    expect(msg).toContain('HTTP 200 OK');
+    expect(msg).toContain('Endpoint: /api/example');
+    expect(msg).toContain('Response body: not-json');
   });
 });

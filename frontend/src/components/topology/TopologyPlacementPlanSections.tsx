@@ -1,6 +1,10 @@
 import {
   formatHostUtilization,
   formatNodeResourceLine,
+  isStrategySelectable,
+  strategyStatusLabel,
+  type DeploymentStrategy,
+  type StrategyRecommendation,
   type TopologyPlacementPlan,
 } from '../../api/topologyPlacement';
 
@@ -115,6 +119,90 @@ export function PlacementWarningsSection({ warnings }: { warnings: string[] }) {
           ))}
         </ul>
       )}
+    </section>
+  );
+}
+
+function strategyById(strategies: DeploymentStrategy[], id: string): DeploymentStrategy | undefined {
+  return strategies.find((s) => s.id === id);
+}
+
+export function DeploymentStrategySection({
+  recommendation,
+  selectedStrategyId,
+  onSelectStrategy,
+  readOnly = false,
+}: {
+  recommendation: StrategyRecommendation;
+  selectedStrategyId: string;
+  onSelectStrategy: (strategyId: string) => void;
+  readOnly?: boolean;
+}) {
+  const recommended = strategyById(recommendation.strategies, recommendation.recommended_strategy);
+
+  return (
+    <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+      <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Deployment strategy</h3>
+      <p className="mt-2 text-sm">
+        Recommended:{' '}
+        <span className="font-mono font-medium">{recommendation.recommended_strategy}</span>
+        {recommended ? (
+          <span className="ml-2 text-xs text-cns-muted">({strategyStatusLabel(recommended.status)})</span>
+        ) : null}
+      </p>
+      {recommendation.reasons.length > 0 ? (
+        <div className="mt-3">
+          <p className="text-xs font-medium text-cns-label">Why</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-zinc-800 dark:text-zinc-200">
+            {recommendation.reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {recommendation.alternatives.length > 0 ? (
+        <div className="mt-3">
+          <p className="text-xs font-medium text-cns-label">Alternatives</p>
+          <ul className="mt-1 space-y-1 text-sm">
+            {recommendation.alternatives.map((altId) => {
+              const alt = strategyById(recommendation.strategies, altId);
+              return (
+                <li key={altId} className="font-mono text-zinc-800 dark:text-zinc-200">
+                  {altId}
+                  {alt ? (
+                    <span className="ml-2 font-sans text-xs text-cns-muted">
+                      ({strategyStatusLabel(alt.status)})
+                    </span>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+      {!readOnly ? (
+        <div className="mt-3">
+          <label className="text-xs text-cns-label">
+            Strategy for generation
+            <select
+              value={selectedStrategyId}
+              onChange={(e) => onSelectStrategy(e.target.value)}
+              className="mt-1 block min-w-[14rem] rounded border px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            >
+              {recommendation.strategies.map((strategy) => (
+                <option key={strategy.id} value={strategy.id} disabled={!isStrategySelectable(strategy.status)}>
+                  {strategy.display_name} ({strategyStatusLabel(strategy.status)})
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedStrategyId !== recommendation.recommended_strategy ? (
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+              Overriding recommended strategy. Only available strategies can be applied.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

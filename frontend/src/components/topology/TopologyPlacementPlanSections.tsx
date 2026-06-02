@@ -5,6 +5,7 @@ import {
   strategyStatusLabel,
   type CostCapacityAnalysis,
   type DeploymentStrategy,
+  type PlacementConstraint,
   type StrategyRecommendation,
   type TopologyPlacementPlan,
 } from '../../api/topologyPlacement';
@@ -61,7 +62,10 @@ export function HostRecommendationSection({ plan }: { plan: TopologyPlacementPla
 export function PlacementPlanSection({ plan }: { plan: TopologyPlacementPlan }) {
   return (
     <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
-      <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Placement plan</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Multi-Host Placement Plan</h3>
+        <span className="text-xs text-cns-muted">Mode: {plan.placement_mode ?? 'first_fit'}</span>
+      </div>
       {plan.hosts.length === 0 ? (
         <p className="mt-2 text-sm text-cns-muted">
           No hosts assigned. Add resource metadata to topology nodes (CPU, memory, replicas).
@@ -98,6 +102,22 @@ export function PlacementPlanSection({ plan }: { plan: TopologyPlacementPlan }) 
                     <dd>{utilization.disk}</dd>
                   </div>
                 </dl>
+                {host.utilization ? (
+                  <dl className="mt-2 grid gap-2 text-xs text-cns-muted sm:grid-cols-3">
+                    <div>
+                      <dt>CPU utilization</dt>
+                      <dd>{host.utilization.cpu_utilization ?? 0}%</dd>
+                    </div>
+                    <div>
+                      <dt>Memory utilization</dt>
+                      <dd>{host.utilization.memory_utilization ?? 0}%</dd>
+                    </div>
+                    <div>
+                      <dt>Disk utilization</dt>
+                      <dd>{host.utilization.disk_utilization ?? 0}%</dd>
+                    </div>
+                  </dl>
+                ) : null}
               </div>
             );
           })}
@@ -289,6 +309,116 @@ export function CostCapacitySection({ analysis }: { analysis: CostCapacityAnalys
           </ul>
         ) : null}
       </div>
+    </section>
+  );
+}
+
+export function PlacementConstraintsSection({
+  constraints,
+  nodes,
+  creating,
+  readOnly = false,
+  form,
+  onChangeForm,
+  onCreate,
+}: {
+  constraints: PlacementConstraint[];
+  nodes: string[];
+  creating: boolean;
+  readOnly?: boolean;
+  form: {
+    constraint_type: PlacementConstraint['constraint_type'];
+    node_a: string;
+    node_b: string;
+    preferred_host: string;
+  };
+  onChangeForm: (next: {
+    constraint_type: PlacementConstraint['constraint_type'];
+    node_a: string;
+    node_b: string;
+    preferred_host: string;
+  }) => void;
+  onCreate: () => void;
+}) {
+  return (
+    <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+      <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Placement constraints</h3>
+      {constraints.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-sm">
+          {constraints.map((constraint) => (
+            <li key={constraint.id}>
+              <span className="font-mono">{constraint.constraint_type}</span>: {constraint.node_a}
+              {constraint.node_b ? ` / ${constraint.node_b}` : ''}
+              {constraint.preferred_host ? ` -> Host ${constraint.preferred_host}` : ''}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm text-cns-muted">None</p>
+      )}
+
+      {!readOnly ? (
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <label className="text-xs text-cns-label">
+            Type
+            <select
+              value={form.constraint_type}
+              onChange={(e) =>
+                onChangeForm({ ...form, constraint_type: e.target.value as PlacementConstraint['constraint_type'] })
+              }
+              className="mt-1 block rounded border px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            >
+              <option value="different_host">different_host</option>
+              <option value="same_host">same_host</option>
+              <option value="preferred_host">preferred_host</option>
+            </select>
+          </label>
+          <label className="text-xs text-cns-label">
+            Node A
+            <input
+              value={form.node_a}
+              onChange={(e) => onChangeForm({ ...form, node_a: e.target.value })}
+              list="placement-node-names"
+              className="mt-1 block w-36 rounded border px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            />
+          </label>
+          {form.constraint_type !== 'preferred_host' ? (
+            <label className="text-xs text-cns-label">
+              Node B
+              <input
+                value={form.node_b}
+                onChange={(e) => onChangeForm({ ...form, node_b: e.target.value })}
+                list="placement-node-names"
+                className="mt-1 block w-36 rounded border px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+              />
+            </label>
+          ) : (
+            <label className="text-xs text-cns-label">
+              Preferred host
+              <input
+                value={form.preferred_host}
+                onChange={(e) => onChangeForm({ ...form, preferred_host: e.target.value })}
+                type="number"
+                min={1}
+                className="mt-1 block w-24 rounded border px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+              />
+            </label>
+          )}
+          <datalist id="placement-node-names">
+            {nodes.map((node) => (
+              <option key={node} value={node} />
+            ))}
+          </datalist>
+          <button
+            type="button"
+            disabled={creating || !form.node_a.trim()}
+            onClick={onCreate}
+            className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-600"
+          >
+            {creating ? 'Adding...' : 'Add constraint'}
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

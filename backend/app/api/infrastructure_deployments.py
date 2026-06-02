@@ -52,6 +52,7 @@ def _to_deployment(row) -> InfrastructureDeploymentResponse:
         runtime_targets_json=row.runtime_targets_json or [],
         error_message=row.error_message,
         credentials_ref=row.credentials_ref,
+        placement_plan_id=str(row.placement_plan_id) if getattr(row, "placement_plan_id", None) else None,
         confirmed_at=row.confirmed_at,
         confirmed_by_user_id=str(row.confirmed_by_user_id) if row.confirmed_by_user_id else None,
         created_by_user_id=str(row.created_by_user_id) if row.created_by_user_id else None,

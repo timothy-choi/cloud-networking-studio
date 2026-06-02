@@ -156,7 +156,80 @@ def test_warn_on_unsupported_placement_constraints():
         ),
     )
     plan = placement_svc.build_placement_plan(topo)  # type: ignore[arg-type]
-    assert any("not supported" in w.lower() for w in plan["warnings"])
+    assert any("legacy placement constraints" in w.lower() for w in plan["warnings"])
+
+
+def test_first_fit_best_fit_and_balanced_modes():
+    topo = _topology(
+        _node(name="a", config={"resource_cpu": 1, "resource_memory_mb": 512, "resource_disk_gb": 5}),
+        _node(name="b", config={"resource_cpu": 1, "resource_memory_mb": 512, "resource_disk_gb": 5}),
+        _node(name="c", config={"resource_cpu": 1, "resource_memory_mb": 512, "resource_disk_gb": 5}),
+    )
+    first = placement_svc.build_placement_plan(topo, machine_type="e2-small", placement_mode="first_fit")  # type: ignore[arg-type]
+    best = placement_svc.build_placement_plan(topo, machine_type="e2-small", placement_mode="best_fit")  # type: ignore[arg-type]
+    balanced = placement_svc.build_placement_plan(
+        topo,
+        machine_type="e2-small",
+        host_count=3,
+        placement_mode="balanced",
+    )  # type: ignore[arg-type]
+    assert first["placement_mode"] == "first_fit"
+    assert best["placement_mode"] == "best_fit"
+    assert balanced["placement_mode"] == "balanced"
+    assert balanced["recommended_host_count"] == 3
+    assert all("utilization" in host for host in balanced["hosts"])
+
+
+def test_different_host_constraint_splits_nodes():
+    topo = _topology(
+        _node(name="worker-a", config={"resource_cpu": 0.25, "resource_memory_mb": 256}),
+        _node(name="worker-b", config={"resource_cpu": 0.25, "resource_memory_mb": 256}),
+    )
+    plan = placement_svc.build_placement_plan(
+        topo,
+        machine_type="e2-micro",
+        constraints=[
+            {"constraint_type": "different_host", "node_a": "worker-a", "node_b": "worker-b"}
+        ],
+    )  # type: ignore[arg-type]
+    host_by_node = {
+        detail["node_name"]: host["host_index"]
+        for host in plan["hosts"]
+        for detail in host.get("assigned_node_details") or []
+    }
+    assert host_by_node["worker-a"] != host_by_node["worker-b"]
+    assert plan["recommended_host_count"] == 2
+
+
+def test_same_host_constraint_keeps_nodes_together():
+    topo = _topology(
+        _node(name="worker-a", config={"resource_cpu": 0.25, "resource_memory_mb": 256}),
+        _node(name="worker-b", config={"resource_cpu": 0.25, "resource_memory_mb": 256}),
+    )
+    plan = placement_svc.build_placement_plan(
+        topo,
+        machine_type="e2-micro",
+        constraints=[{"constraint_type": "same_host", "node_a": "worker-a", "node_b": "worker-b"}],
+    )  # type: ignore[arg-type]
+    host_by_node = {
+        detail["node_name"]: host["host_index"]
+        for host in plan["hosts"]
+        for detail in host.get("assigned_node_details") or []
+    }
+    assert host_by_node["worker-a"] == host_by_node["worker-b"]
+
+
+def test_impossible_same_host_constraint_warns():
+    topo = _topology(
+        _node(name="heavy-a", config={"resource_cpu": 1.5, "resource_memory_mb": 800}),
+        _node(name="heavy-b", config={"resource_cpu": 1.5, "resource_memory_mb": 800}),
+    )
+    plan = placement_svc.build_placement_plan(
+        topo,
+        machine_type="e2-micro",
+        constraints=[{"constraint_type": "same_host", "node_a": "heavy-a", "node_b": "heavy-b"}],
+    )  # type: ignore[arg-type]
+    assert any("same_host constraint could not be satisfied" in warning for warning in plan["warnings"])
 
 
 def test_generate_payload_uses_placement_recommendation():

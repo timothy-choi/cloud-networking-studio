@@ -22,6 +22,9 @@ from app.schemas.topology_placement import (
     GenerateInfrastructureDeploymentRequest,
     GenerateInfrastructureDeploymentResponse,
     PlacementAssignedNode,
+    PlacementConstraintCreate,
+    PlacementConstraintListResponse,
+    PlacementConstraintResponse,
     PlacementHost,
     TopologyNodeResourceBreakdown,
     TopologyPlacementPlanResponse,
@@ -33,6 +36,7 @@ from app.services import deployment_strategy_recommendation_service as strategy_
 from app.services import ai_infrastructure_advisor_service as advisor_svc
 from app.services import cost_capacity_advisor_service as cost_capacity_svc
 from app.services import infrastructure_deployment_service as infra_svc
+from app.services import topology_placement_persistence_service as placement_persist_svc
 from app.services import topology_placement_planner_service as placement_svc
 from app.services.infra_observability import append_event
 from app.services.topology_version_service import load_topology_with_graph
@@ -93,6 +97,7 @@ def _placement_response(raw: dict) -> TopologyPlacementPlanResponse:
             )
         )
     return TopologyPlacementPlanResponse(
+        id=raw.get("id"),
         total_cpu=raw["total_cpu"],
         total_memory_mb=raw["total_memory_mb"],
         total_disk_gb=raw["total_disk_gb"],
@@ -101,14 +106,18 @@ def _placement_response(raw: dict) -> TopologyPlacementPlanResponse:
         workload_node_count=raw["workload_node_count"],
         placement_unit_count=raw.get("placement_unit_count") or raw["total_replicas"],
         provider=raw["provider"],
+        placement_mode=raw.get("placement_mode") or "first_fit",
         recommended_host_count=raw["recommended_host_count"],
+        host_count=raw.get("host_count") or raw["recommended_host_count"],
         recommended_machine_type=raw["recommended_machine_type"],
         machine_rationale=raw["machine_rationale"],
         hosts=hosts,
+        placements=hosts,
         warnings=raw.get("warnings") or [],
         exposed_ports=raw.get("exposed_ports") or [],
         suggested_template_id=raw.get("suggested_template_id") or "docker-vm",
         nodes=[TopologyNodeResourceBreakdown(**node) for node in raw.get("nodes") or []],
+        constraints_used=raw.get("constraints_used") or [],
     )
 
 
@@ -134,17 +143,118 @@ def get_topology_placement_plan(
     provider: str = "gcp",
     machine_type: str | None = None,
     host_count: int | None = None,
+    placement_mode: str = "first_fit",
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> TopologyPlacementPlanResponse:
     topology = _load_topology(db, user, topology_id)
     try:
+        constraints = placement_persist_svc.constraints_as_dicts(db, topology_id)
         plan = placement_svc.build_placement_plan(
             topology,
             provider=provider,
             machine_type=machine_type,
             host_count=host_count,
+            placement_mode=placement_mode,
+            constraints=constraints,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _placement_response(plan)
+
+
+def _constraint_response(row) -> PlacementConstraintResponse:
+    return PlacementConstraintResponse(
+        id=str(row.id),
+        topology_id=str(row.topology_id),
+        constraint_type=row.constraint_type,
+        node_a=row.node_a,
+        node_b=row.node_b,
+        preferred_host=row.preferred_host,
+        created_at=row.created_at,
+    )
+
+
+@router.get(
+    "/topologies/{topology_id}/placement-constraints",
+    response_model=PlacementConstraintListResponse,
+)
+def get_topology_placement_constraints(
+    topology_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> PlacementConstraintListResponse:
+    _load_topology(db, user, topology_id)
+    return PlacementConstraintListResponse(
+        items=[_constraint_response(row) for row in placement_persist_svc.list_constraints(db, topology_id)]
+    )
+
+
+@router.post(
+    "/topologies/{topology_id}/placement-constraints",
+    response_model=PlacementConstraintResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_topology_placement_constraint(
+    topology_id: UUID,
+    body: PlacementConstraintCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> PlacementConstraintResponse:
+    topology = _load_topology(db, user, topology_id)
+    if body.constraint_type in {"same_host", "different_host"} and not body.node_b:
+        raise HTTPException(status_code=400, detail=f"{body.constraint_type} requires node_b.")
+    if body.constraint_type == "preferred_host" and not body.preferred_host:
+        raise HTTPException(status_code=400, detail="preferred_host requires preferred_host.")
+    row = placement_persist_svc.create_constraint(
+        db,
+        topology_id=topology.id,
+        project_id=topology.project_id,
+        actor=user,
+        constraint_type=body.constraint_type,
+        node_a=body.node_a,
+        node_b=body.node_b,
+        preferred_host=body.preferred_host,
+    )
+    db.commit()
+    db.refresh(row)
+    return _constraint_response(row)
+
+
+@router.get(
+    "/topologies/{topology_id}/multi-host-placement-plan",
+    response_model=TopologyPlacementPlanResponse,
+)
+def get_topology_multi_host_placement_plan(
+    topology_id: UUID,
+    provider: str = "gcp",
+    machine_type: str | None = None,
+    host_count: int | None = None,
+    placement_mode: str = "balanced",
+    persist: bool = True,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TopologyPlacementPlanResponse:
+    topology = _load_topology(db, user, topology_id)
+    try:
+        constraints = placement_persist_svc.constraints_as_dicts(db, topology_id)
+        plan = placement_svc.build_placement_plan(
+            topology,
+            provider=provider,
+            machine_type=machine_type,
+            host_count=host_count,
+            placement_mode=placement_mode,
+            constraints=constraints,
+        )
+        if persist:
+            placement_persist_svc.save_plan(
+                db,
+                topology_id=topology.id,
+                project_id=topology.project_id,
+                actor=user,
+                plan=plan,
+            )
+            db.commit()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _placement_response(plan)
@@ -171,6 +281,7 @@ def get_topology_strategy_recommendation(
     provider: str = "gcp",
     machine_type: str | None = None,
     host_count: int | None = None,
+    placement_mode: str = "first_fit",
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> StrategyRecommendationResponse:
@@ -181,6 +292,8 @@ def get_topology_strategy_recommendation(
             provider=provider,
             machine_type=machine_type,
             host_count=host_count,
+            placement_mode=placement_mode,
+            constraints=placement_persist_svc.constraints_as_dicts(db, topology_id),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -196,6 +309,7 @@ def get_topology_cost_capacity_analysis(
     provider: str = "gcp",
     machine_type: str | None = None,
     host_count: int | None = None,
+    placement_mode: str = "first_fit",
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> CostCapacityAnalysisResponse:
@@ -206,6 +320,8 @@ def get_topology_cost_capacity_analysis(
             provider=provider,
             machine_type=machine_type,
             host_count=host_count,
+            placement_mode=placement_mode,
+            constraints=placement_persist_svc.constraints_as_dicts(db, topology_id),
         )
         analysis = cost_capacity_svc.build_cost_capacity_analysis(
             plan,
@@ -285,6 +401,8 @@ def generate_infrastructure_deployment(
             template_id=template_id,
             machine_type=body.machine_type,
             host_count=body.host_count,
+            placement_mode=body.placement_mode,
+            constraints=placement_persist_svc.constraints_as_dicts(db, topology_id),
             variables=body.variables,
             credentials_ref=body.credentials_ref,
             name=body.name,
@@ -305,6 +423,14 @@ def generate_infrastructure_deployment(
             credentials_ref=draft.get("credentials_ref"),
         )
         plan = draft["placement_plan"]
+        saved_plan = placement_persist_svc.save_plan(
+            db,
+            topology_id=topology.id,
+            project_id=topology.project_id,
+            actor=user,
+            plan=plan,
+        )
+        deployment.placement_plan_id = saved_plan.id
         placement_summary = draft.get("placement_summary") or {}
         deployment.state_metadata_json = {
             **(deployment.state_metadata_json or {}),

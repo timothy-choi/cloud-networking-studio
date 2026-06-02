@@ -500,30 +500,66 @@ def _validate_resource_requests(out: dict[str, Any]) -> None:
     if resources is not None:
         if not isinstance(resources, dict):
             raise NodeConfigValidationError("resources must be a JSON object")
-        for key in ("cpu_request", "memory_request_mb", "disk_request_gb", "replicas"):
-            if key in resources:
-                out.setdefault(key, resources[key])
+        aliases = {
+            "cpu": "resource_cpu",
+            "resource_cpu": "resource_cpu",
+            "cpu_request": "resource_cpu",
+            "memory_mb": "resource_memory_mb",
+            "resource_memory_mb": "resource_memory_mb",
+            "memory_request_mb": "resource_memory_mb",
+            "disk_gb": "resource_disk_gb",
+            "resource_disk_gb": "resource_disk_gb",
+            "disk_request_gb": "resource_disk_gb",
+            "replicas": "replicas",
+        }
+        normalized_resources: dict[str, Any] = {}
+        for key, value in resources.items():
+            target = aliases.get(str(key))
+            if target:
+                normalized_resources[target] = value
+        for key, value in normalized_resources.items():
+            out.setdefault(key, value)
 
-    if "cpu_request" in out:
-        cpu = _coerce_float(out["cpu_request"], -1)
+    cpu_key = "resource_cpu" if "resource_cpu" in out else "cpu_request"
+    if cpu_key in out:
+        cpu = _coerce_float(out[cpu_key], -1)
         if cpu <= 0 or cpu > 128:
-            raise NodeConfigValidationError("cpu_request must be between 0 and 128")
-        out["cpu_request"] = round(cpu, 3)
-    if "memory_request_mb" in out:
-        mem = _coerce_int(out["memory_request_mb"], -1)
+            raise NodeConfigValidationError(f"{cpu_key} must be between 0 and 128")
+        out[cpu_key] = round(cpu, 3)
+        out.setdefault("resource_cpu", out[cpu_key])
+        out.setdefault("cpu_request", out[cpu_key])
+    memory_key = "resource_memory_mb" if "resource_memory_mb" in out else "memory_request_mb"
+    if memory_key in out:
+        mem = _coerce_int(out[memory_key], -1)
         if mem < 128 or mem > 1_048_576:
-            raise NodeConfigValidationError("memory_request_mb must be between 128 and 1048576")
-        out["memory_request_mb"] = mem
-    if "disk_request_gb" in out:
-        disk = _coerce_float(out["disk_request_gb"], -1)
+            raise NodeConfigValidationError(f"{memory_key} must be between 128 and 1048576")
+        out[memory_key] = mem
+        out.setdefault("resource_memory_mb", mem)
+        out.setdefault("memory_request_mb", mem)
+    disk_key = "resource_disk_gb" if "resource_disk_gb" in out else "disk_request_gb"
+    if disk_key in out:
+        disk = _coerce_float(out[disk_key], -1)
         if disk < 1 or disk > 65536:
-            raise NodeConfigValidationError("disk_request_gb must be between 1 and 65536")
-        out["disk_request_gb"] = round(disk, 2)
+            raise NodeConfigValidationError(f"{disk_key} must be between 1 and 65536")
+        out[disk_key] = round(disk, 2)
+        out.setdefault("resource_disk_gb", out[disk_key])
+        out.setdefault("disk_request_gb", out[disk_key])
     if "replicas" in out:
         replicas = _coerce_int(out["replicas"], -1)
         if replicas < 1 or replicas > 100:
             raise NodeConfigValidationError("replicas must be between 1 and 100")
         out["replicas"] = replicas
+    if resources is not None:
+        canonical = dict(resources)
+        if "resource_cpu" in out:
+            canonical["cpu"] = out["resource_cpu"]
+        if "resource_memory_mb" in out:
+            canonical["memory_mb"] = out["resource_memory_mb"]
+        if "resource_disk_gb" in out:
+            canonical["disk_gb"] = out["resource_disk_gb"]
+        if "replicas" in out:
+            canonical["replicas"] = out["replicas"]
+        out["resources"] = canonical
 
 
 def _coerce_float(value: Any, default: float) -> float:

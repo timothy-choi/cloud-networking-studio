@@ -15,6 +15,7 @@ class PlacementAssignedNode(BaseModel):
     resource_cpu: float
     resource_memory_mb: int
     resource_disk_gb: float
+    resource_source: str = "default"
     node_role: str
     exposure: str
     stateful: bool
@@ -44,6 +45,7 @@ class TopologyNodeResourceBreakdown(BaseModel):
     resource_memory_mb: int
     resource_disk_gb: float
     replicas: int
+    resource_source: str = "default"
     node_role: str = "workload"
     exposure: str = "internal"
     stateful: bool = False

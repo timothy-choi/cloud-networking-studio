@@ -51,6 +51,41 @@ def test_estimate_simple_topology():
     assert node["resource_memory_mb"] == 1024
     assert node["resource_disk_gb"] == 10
     assert node["replicas"] == 1
+    assert node["resource_source"] == "explicit"
+
+
+def test_estimate_uses_preferred_nested_resource_config():
+    topo = _topology(
+        _node(
+            name="api",
+            config={
+                "resources": {"cpu": 1.5, "memory_mb": 1024, "disk_gb": 10, "replicas": 2},
+                "exposure": "private",
+                "stateful": True,
+                "required_ports": [8080],
+            },
+        ),
+    )
+    estimate = placement_svc.build_resource_estimate(topo)  # type: ignore[arg-type]
+    node = estimate["nodes"][0]
+    assert estimate["total_cpu"] == 3.0
+    assert estimate["total_memory_mb"] == 2048
+    assert estimate["total_disk_gb"] == 20
+    assert node["resource_cpu"] == 1.5
+    assert node["resource_memory_mb"] == 1024
+    assert node["resource_disk_gb"] == 10
+    assert node["replicas"] == 2
+    assert node["resource_source"] == "explicit"
+
+
+def test_estimate_falls_back_to_defaults_when_resources_missing():
+    topo = _topology(_node(name="web", image="nginx:alpine", config={}))
+    estimate = placement_svc.build_resource_estimate(topo)  # type: ignore[arg-type]
+    node = estimate["nodes"][0]
+    assert node["resource_cpu"] == 0.25
+    assert node["resource_memory_mb"] == 256
+    assert node["resource_disk_gb"] == 5
+    assert node["resource_source"] == "default"
 
 
 def test_estimate_topology_with_replicas():
@@ -78,6 +113,16 @@ def test_bin_pack_nodes_across_multiple_hosts():
     assigned = [name for host in plan["hosts"] for name in host["assigned_nodes"]]
     assert "a" in assigned
     assert "b" in assigned
+
+
+def test_nested_resources_can_force_multi_host_placement():
+    topo = _topology(
+        _node(name="heavy-a", config={"resources": {"cpu": 1, "memory_mb": 900, "disk_gb": 5, "replicas": 1}}),
+        _node(name="heavy-b", config={"resources": {"cpu": 1, "memory_mb": 900, "disk_gb": 5, "replicas": 1}}),
+    )
+    plan = placement_svc.build_placement_plan(topo, machine_type="e2-micro")  # type: ignore[arg-type]
+    assert plan["recommended_host_count"] == 2
+    assert len(plan["hosts"]) == 2
 
 
 def test_single_host_placement_includes_capacity_fields():
@@ -299,6 +344,7 @@ def test_estimate_response_includes_cpu_aliases():
                     "resource_memory_mb": 1024,
                     "resource_disk_gb": 8.0,
                     "replicas": 1,
+                    "resource_source": "explicit",
                     "node_role": "workload",
                     "exposure": "internal",
                     "stateful": False,
@@ -311,6 +357,7 @@ def test_estimate_response_includes_cpu_aliases():
     assert node["cpu"] == 1.0
     assert node["memory_mb"] == 1024
     assert node["disk_gb"] == 8.0
+    assert node["resource_source"] == "explicit"
 
 
 def test_placement_plan_api(client_strict, engine_db):

@@ -219,6 +219,23 @@ describe('formatNodeResourceLine', () => {
     ).toBe('api: 0.5 CPU, 512 MB, 10 GB disk, 2 replicas');
   });
 
+  it('includes the resource source when present', () => {
+    expect(
+      formatNodeResourceLine({
+        node_id: '1',
+        node_name: 'cli-edge',
+        resource_cpu: 1.5,
+        resource_memory_mb: 1024,
+        resource_disk_gb: 10,
+        replicas: 1,
+        resource_source: 'explicit',
+        node_role: 'workload',
+        exposure: 'internal',
+        stateful: false,
+      }),
+    ).toBe('cli-edge: 1.5 CPU, 1024 MB, 10 GB disk, 1 replica, source: explicit');
+  });
+
   it('falls back when node_name is empty', () => {
     expect(
       formatNodeResourceLine({

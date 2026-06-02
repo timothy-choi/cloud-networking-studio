@@ -15,7 +15,18 @@ from app.services.infra_apply_safety import GCP_APPLY_MACHINE_TYPES
 from app.services.infra_security import sanitize_variables
 
 _NETWORK_ONLY_TYPES = frozenset({"router", "switch"})
-_RESOURCE_KEYS = ("cpu_request", "memory_request_mb", "disk_request_gb", "replicas")
+_RESOURCE_KEYS = (
+    "cpu_request",
+    "memory_request_mb",
+    "disk_request_gb",
+    "resource_cpu",
+    "resource_memory_mb",
+    "resource_disk_gb",
+    "cpu",
+    "memory_mb",
+    "disk_gb",
+    "replicas",
+)
 
 _DEFAULT_CPU = 0.5
 _DEFAULT_MEMORY_MB = 512
@@ -100,15 +111,27 @@ def _node_resource_requests(node: TopologyNode) -> dict[str, float | int]:
     inferred = _infer_defaults(node)
 
     cpu = _coerce_float(
-        cfg.get("cpu_request") or resources.get("cpu_request") or resources.get("cpu"),
+        cfg.get("resource_cpu")
+        or cfg.get("cpu_request")
+        or resources.get("cpu")
+        or resources.get("resource_cpu")
+        or resources.get("cpu_request"),
         float(inferred["cpu_request"]),
     )
     memory = _coerce_int(
-        cfg.get("memory_request_mb") or resources.get("memory_request_mb") or resources.get("memory_mb"),
+        cfg.get("resource_memory_mb")
+        or cfg.get("memory_request_mb")
+        or resources.get("memory_mb")
+        or resources.get("resource_memory_mb")
+        or resources.get("memory_request_mb"),
         int(inferred["memory_request_mb"]),
     )
     disk = _coerce_float(
-        cfg.get("disk_request_gb") or resources.get("disk_request_gb") or resources.get("disk_gb"),
+        cfg.get("resource_disk_gb")
+        or cfg.get("disk_request_gb")
+        or resources.get("disk_gb")
+        or resources.get("resource_disk_gb")
+        or resources.get("disk_request_gb"),
         float(inferred["disk_request_gb"]),
     )
     replicas = _coerce_int(cfg.get("replicas") or resources.get("replicas"), _DEFAULT_REPLICAS)
@@ -126,6 +149,12 @@ def _counts_as_workload(node: TopologyNode, resources: dict[str, float | int]) -
         return True
     cfg = node.config if isinstance(node.config, dict) else {}
     return any(key in cfg or (isinstance(cfg.get("resources"), dict) and key in cfg["resources"]) for key in _RESOURCE_KEYS)
+
+
+def _has_explicit_resource_config(node: TopologyNode) -> bool:
+    cfg = node.config if isinstance(node.config, dict) else {}
+    resources = cfg.get("resources") if isinstance(cfg.get("resources"), dict) else {}
+    return any(key in cfg or key in resources for key in _RESOURCE_KEYS)
 
 
 def estimate_topology_resources(topology: Topology) -> dict[str, Any]:
@@ -160,6 +189,7 @@ def estimate_topology_resources(topology: Topology) -> dict[str, Any]:
                 "memory_request_mb": memory,
                 "disk_request_gb": disk,
                 "replicas": replicas,
+                "resource_source": "explicit" if _has_explicit_resource_config(node) else "default",
             }
         )
 

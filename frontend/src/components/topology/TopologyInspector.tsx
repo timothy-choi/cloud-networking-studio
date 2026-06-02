@@ -34,6 +34,60 @@ export interface TopologyInspectorProps {
 }
 
 const NODE_TYPES = ['generic', 'host', 'router', 'switch', 'gateway'] as const;
+const EXPOSURE_TYPES = ['internal', 'private', 'public'] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readConfigValue(config: Record<string, unknown> | null | undefined, keys: string[]): unknown {
+  const resources = isRecord(config?.resources) ? config.resources : {};
+  for (const key of keys) {
+    const value = config?.[key] ?? resources[key];
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return undefined;
+}
+
+function readNodeResourceFields(node: TopologyNodeResponse) {
+  const config = node.config ?? {};
+  const exposure = String(config.exposure ?? 'internal');
+  return {
+    cpu: String(readConfigValue(config, ['resource_cpu', 'cpu_request', 'cpu']) ?? 0.5),
+    memoryMb: String(readConfigValue(config, ['resource_memory_mb', 'memory_request_mb', 'memory_mb']) ?? 512),
+    diskGb: String(readConfigValue(config, ['resource_disk_gb', 'disk_request_gb', 'disk_gb']) ?? 5),
+    replicas: String(readConfigValue(config, ['replicas']) ?? 1),
+    exposure: (
+      EXPOSURE_TYPES.includes(exposure as (typeof EXPOSURE_TYPES)[number]) ? exposure : 'internal'
+    ) as (typeof EXPOSURE_TYPES)[number],
+    stateful: config.stateful === true || String(config.stateful ?? '').toLowerCase() === 'true',
+    requiredPorts: Array.isArray(config.required_ports) ? config.required_ports.join(', ') : '',
+  };
+}
+
+function parseResourceNumber(label: string, value: string, min: number, max: number, integer = false): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max || (integer && !Number.isInteger(parsed))) {
+    alert(`${label} must be ${integer ? 'an integer ' : ''}between ${min} and ${max}.`);
+    return null;
+  }
+  return integer ? Math.trunc(parsed) : parsed;
+}
+
+function parseRequiredPorts(value: string): number[] | null {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  const ports = trimmed
+    .split(/[,\s]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => (/^\d+$/.test(part) ? Number(part) : Number.NaN));
+  if (ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535)) {
+    alert('Required ports must be a comma-separated list of integers between 1 and 65535.');
+    return null;
+  }
+  return Array.from(new Set(ports)).sort((a, b) => a - b);
+}
 
 function TopologyMetaForm({
   topology,
@@ -104,6 +158,7 @@ function NodeEditForm({
   const [image, setImage] = useState(node.image ?? '');
   const [ip, setIp] = useState(node.ip_address ?? '');
   const [runtime, setRuntime] = useState<NodeRuntimeFields>(() => readNodeRuntimeFields(node));
+  const [resourceFields, setResourceFields] = useState(() => readNodeResourceFields(node));
   const [healthCheck, setHealthCheck] = useState<HealthCheckFields>(() =>
     healthCheckFieldsFromRaw(readHealthCheckFromNode(node), node.image ?? ''),
   );
@@ -115,6 +170,7 @@ function NodeEditForm({
     setImage(node.image ?? '');
     setIp(node.ip_address ?? '');
     setRuntime(readNodeRuntimeFields(node));
+    setResourceFields(readNodeResourceFields(node));
     setHealthCheck(healthCheckFieldsFromRaw(readHealthCheckFromNode(node), node.image ?? ''));
   }, [node.id]);
 
@@ -128,6 +184,14 @@ function NodeEditForm({
           alert(validation);
           return;
         }
+        const cpu = parseResourceNumber('CPU', resourceFields.cpu, 0.001, 128);
+        const memoryMb = parseResourceNumber('Memory MB', resourceFields.memoryMb, 128, 1048576, true);
+        const diskGb = parseResourceNumber('Disk GB', resourceFields.diskGb, 1, 65536);
+        const replicas = parseResourceNumber('Replicas', resourceFields.replicas, 1, 100, true);
+        const requiredPorts = parseRequiredPorts(resourceFields.requiredPorts);
+        if (cpu == null || memoryMb == null || diskGb == null || replicas == null || requiredPorts == null) {
+          return;
+        }
         const base = { ...(node.config ?? {}) };
         const pos = base[EDITOR_POSITION_KEY];
         const mergedConfig = mergeNodeRuntimeIntoConfig(
@@ -135,6 +199,21 @@ function NodeEditForm({
           runtime,
           healthCheckToConfig(healthCheck),
         );
+        const existingResources = isRecord(mergedConfig.resources) ? mergedConfig.resources : {};
+        mergedConfig.resources = {
+          ...existingResources,
+          cpu,
+          memory_mb: memoryMb,
+          disk_gb: diskGb,
+          replicas,
+        };
+        mergedConfig.resource_cpu = cpu;
+        mergedConfig.resource_memory_mb = memoryMb;
+        mergedConfig.resource_disk_gb = diskGb;
+        mergedConfig.replicas = replicas;
+        mergedConfig.exposure = resourceFields.exposure;
+        mergedConfig.stateful = resourceFields.stateful;
+        mergedConfig.required_ports = requiredPorts;
         if (pos != null) {
           mergedConfig[EDITOR_POSITION_KEY] = pos;
         }
@@ -197,6 +276,94 @@ function NodeEditForm({
         />
       </label>
       <ImageCapabilityHints image={image} command={runtime.command} />
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block text-[11px] text-cns-field-label">
+          CPU
+          <input
+            type="number"
+            min="0.001"
+            max="128"
+            step="0.001"
+            className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+            value={resourceFields.cpu}
+            onChange={(ev) => setResourceFields((r) => ({ ...r, cpu: ev.target.value }))}
+          />
+        </label>
+        <label className="block text-[11px] text-cns-field-label">
+          Memory MB
+          <input
+            type="number"
+            min="128"
+            max="1048576"
+            step="1"
+            className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+            value={resourceFields.memoryMb}
+            onChange={(ev) => setResourceFields((r) => ({ ...r, memoryMb: ev.target.value }))}
+          />
+        </label>
+        <label className="block text-[11px] text-cns-field-label">
+          Disk GB
+          <input
+            type="number"
+            min="1"
+            max="65536"
+            step="0.1"
+            className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+            value={resourceFields.diskGb}
+            onChange={(ev) => setResourceFields((r) => ({ ...r, diskGb: ev.target.value }))}
+          />
+        </label>
+        <label className="block text-[11px] text-cns-field-label">
+          Replicas
+          <input
+            type="number"
+            min="1"
+            max="100"
+            step="1"
+            className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+            value={resourceFields.replicas}
+            onChange={(ev) => setResourceFields((r) => ({ ...r, replicas: ev.target.value }))}
+          />
+        </label>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block text-[11px] text-cns-field-label">
+          Exposure
+          <select
+            className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+            value={resourceFields.exposure}
+            onChange={(ev) =>
+              setResourceFields((r) => ({
+                ...r,
+                exposure: ev.target.value as (typeof EXPOSURE_TYPES)[number],
+              }))
+            }
+          >
+            {EXPOSURE_TYPES.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="mt-5 flex items-center gap-2 text-[11px] text-cns-field-label">
+          <input
+            type="checkbox"
+            checked={resourceFields.stateful}
+            onChange={(ev) => setResourceFields((r) => ({ ...r, stateful: ev.target.checked }))}
+          />
+          Stateful
+        </label>
+      </div>
+      <label className="block text-[11px] text-cns-field-label">
+        Required ports
+        <input
+          className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+          value={resourceFields.requiredPorts}
+          onChange={(ev) => setResourceFields((r) => ({ ...r, requiredPorts: ev.target.value }))}
+          placeholder="80, 443"
+        />
+      </label>
       <label className="block text-[11px] text-cns-field-label">
         Command
         <input

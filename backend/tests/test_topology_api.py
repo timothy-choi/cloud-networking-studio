@@ -53,7 +53,12 @@ def test_nodes_and_links_flow(client):
         "node_type": NodeType.GENERIC.value,
         "image": "nginx:latest",
         "ip_address": "10.0.0.1",
-        "config": {"cpu": "1"},
+        "config": {
+            "resources": {"cpu": "1.5", "memory_mb": "1024", "disk_gb": "10", "replicas": "2"},
+            "exposure": "private",
+            "stateful": True,
+            "required_ports": [8080],
+        },
     }
     n2 = {
         "name": "node-b",
@@ -67,6 +72,12 @@ def test_nodes_and_links_flow(client):
     assert ra.status_code == 201
     id_a = ra.json()["id"]
     assert ra.json()["topology_id"] == tid
+    assert ra.json()["config"]["resources"]["cpu"] == 1.5
+    assert ra.json()["config"]["resources"]["memory_mb"] == 1024
+    assert ra.json()["config"]["resources"]["disk_gb"] == 10.0
+    assert ra.json()["config"]["resources"]["replicas"] == 2
+    assert ra.json()["config"]["exposure"] == "private"
+    assert ra.json()["config"]["stateful"] is True
 
     rb = client.post(f"/topologies/{tid}/nodes", json=n2)
     assert rb.status_code == 201
@@ -78,6 +89,8 @@ def test_nodes_and_links_flow(client):
     assert len(nodes) == 2
     names = {n["name"] for n in nodes}
     assert names == {"node-a", "node-b"}
+    node_a = next(n for n in nodes if n["id"] == id_a)
+    assert node_a["config"]["resources"]["cpu"] == 1.5
 
     link_body = {
         "source_node_id": id_a,
@@ -185,6 +198,23 @@ def test_patch_delete_nodes_and_links(client):
     assert pu.status_code == 200
     assert pu.json()["name"] == "a-renamed"
     assert pu.json()["config"]["editor_position"]["x"] == 50
+
+    pu_resources = client.patch(
+        f"/topologies/{tid}/nodes/{id_a}",
+        json={
+            "config": {
+                "resources": {"cpu": 2, "memory_mb": 2048, "disk_gb": 20, "replicas": 1},
+                "exposure": "public",
+                "required_ports": [80, 443],
+            }
+        },
+    )
+    assert pu_resources.status_code == 200
+    assert pu_resources.json()["config"]["resources"]["cpu"] == 2.0
+    assert pu_resources.json()["config"]["resources"]["memory_mb"] == 2048
+    assert pu_resources.json()["config"]["resources"]["disk_gb"] == 20.0
+    assert pu_resources.json()["config"]["exposure"] == "public"
+    assert pu_resources.json()["config"]["required_ports"] == [80, 443]
 
     nb = client.post(
         f"/topologies/{tid}/nodes",

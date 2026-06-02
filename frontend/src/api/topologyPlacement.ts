@@ -7,6 +7,7 @@ export interface TopologyNodeResourceBreakdown {
   resource_cpu: number;
   resource_memory_mb: number;
   resource_disk_gb: number;
+  resource_source?: string;
   /** API aliases (same values as resource_*) */
   cpu?: number;
   memory_mb?: number;
@@ -25,6 +26,7 @@ export interface PlacementAssignedNode {
   resource_cpu: number;
   resource_memory_mb: number;
   resource_disk_gb: number;
+  resource_source?: string;
   node_role: string;
   exposure: string;
   stateful: boolean;
@@ -329,5 +331,6 @@ export function formatHostUtilization(host: PlacementHost): { cpu: string; memor
 export function formatNodeResourceLine(node: TopologyNodeResourceBreakdown): string {
   const name = node.node_name?.trim() || 'unnamed node';
   const replicasLabel = node.replicas === 1 ? '1 replica' : `${node.replicas} replicas`;
-  return `${name}: ${nodeCpu(node)} CPU, ${nodeMemoryMb(node)} MB, ${nodeDiskGb(node)} GB disk, ${replicasLabel}`;
+  const sourceLabel = node.resource_source ? `, source: ${node.resource_source}` : '';
+  return `${name}: ${nodeCpu(node)} CPU, ${nodeMemoryMb(node)} MB, ${nodeDiskGb(node)} GB disk, ${replicasLabel}${sourceLabel}`;
 }

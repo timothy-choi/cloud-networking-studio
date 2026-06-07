@@ -221,6 +221,28 @@ def create_topology_placement_constraint(
     return _constraint_response(row)
 
 
+@router.delete(
+    "/topologies/{topology_id}/placement-constraints/{constraint_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_topology_placement_constraint(
+    topology_id: UUID,
+    constraint_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    topology = _load_topology(db, user, topology_id)
+    require_topology_editor(db, user, topology.id)
+    deleted = placement_persist_svc.delete_constraint(
+        db,
+        topology_id=topology.id,
+        constraint_id=constraint_id,
+    )
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Placement constraint not found")
+    db.commit()
+
+
 @router.get(
     "/topologies/{topology_id}/multi-host-placement-plan",
     response_model=TopologyPlacementPlanResponse,

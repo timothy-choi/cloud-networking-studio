@@ -317,14 +317,17 @@ export function PlacementConstraintsSection({
   constraints,
   nodes,
   creating,
+  deletingId = null,
   readOnly = false,
   form,
   onChangeForm,
   onCreate,
+  onDelete,
 }: {
   constraints: PlacementConstraint[];
   nodes: string[];
   creating: boolean;
+  deletingId?: string | null;
   readOnly?: boolean;
   form: {
     constraint_type: PlacementConstraint['constraint_type'];
@@ -339,17 +342,30 @@ export function PlacementConstraintsSection({
     preferred_host: string;
   }) => void;
   onCreate: () => void;
+  onDelete: (constraintId: string) => void;
 }) {
   return (
     <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
       <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Placement constraints</h3>
       {constraints.length > 0 ? (
-        <ul className="mt-2 space-y-1 text-sm">
+        <ul className="mt-2 space-y-2 text-sm">
           {constraints.map((constraint) => (
-            <li key={constraint.id}>
-              <span className="font-mono">{constraint.constraint_type}</span>: {constraint.node_a}
-              {constraint.node_b ? ` / ${constraint.node_b}` : ''}
-              {constraint.preferred_host ? ` -> Host ${constraint.preferred_host}` : ''}
+            <li key={constraint.id} className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                <span className="font-mono">{constraint.constraint_type}</span>: {constraint.node_a}
+                {constraint.node_b ? ` / ${constraint.node_b}` : ''}
+                {constraint.preferred_host ? ` -> Host ${constraint.preferred_host}` : ''}
+              </span>
+              {!readOnly ? (
+                <button
+                  type="button"
+                  disabled={deletingId === constraint.id}
+                  onClick={() => onDelete(constraint.id)}
+                  className="rounded border border-zinc-300 px-2 py-0.5 text-xs text-red-700 dark:border-zinc-600 dark:text-red-300"
+                >
+                  {deletingId === constraint.id ? 'Removing…' : 'Remove'}
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>

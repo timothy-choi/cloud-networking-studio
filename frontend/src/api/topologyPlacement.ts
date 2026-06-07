@@ -237,6 +237,12 @@ export async function createPlacementConstraint(
   });
 }
 
+export async function deletePlacementConstraint(topologyId: string, constraintId: string): Promise<void> {
+  await apiFetch<void>(`/topologies/${topologyId}/placement-constraints/${constraintId}`, {
+    method: 'DELETE',
+  });
+}
+
 export function strategyStatusLabel(status: DeploymentStrategyStatus): string {
   if (status === 'available') return 'available';
   if (status === 'planning_only') return 'planning only';

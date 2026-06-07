@@ -246,6 +246,15 @@ def test_different_host_constraint_splits_nodes():
     assert plan["recommended_host_count"] == 2
 
 
+def test_small_topology_returns_one_host_without_constraints():
+    topo = _topology(
+        _node(name="cli-edge", config={"resource_cpu": 0.25, "resource_memory_mb": 256}),
+        _node(name="svc-origin", config={"resource_cpu": 0.5, "resource_memory_mb": 512}),
+    )
+    plan = placement_svc.build_placement_plan(topo, machine_type="e2-micro")  # type: ignore[arg-type]
+    assert plan["recommended_host_count"] == 1
+
+
 def test_same_host_constraint_keeps_nodes_together():
     topo = _topology(
         _node(name="worker-a", config={"resource_cpu": 0.25, "resource_memory_mb": 256}),
@@ -358,6 +367,119 @@ def test_estimate_response_includes_cpu_aliases():
     assert node["memory_mb"] == 1024
     assert node["disk_gb"] == 8.0
     assert node["resource_source"] == "explicit"
+
+
+def _placement_test_headers(client_strict):
+    email = f"place{uuid.uuid4().hex[:8]}@example.com"
+    reg = client_strict.post(
+        "/auth/register",
+        json={"email": email, "password": "password123", "display_name": "Place"},
+    )
+    headers = {"Authorization": f"Bearer {reg.json()['access_token']}"}
+    project_id = client_strict.get("/projects", headers=headers).json()[0]["id"]
+    topo = client_strict.post(
+        "/topologies",
+        headers=headers,
+        json={
+            "name": "placement-lab",
+            "runtime_target": "docker",
+            "networking_mode": "docker_bridge",
+            "project_id": project_id,
+        },
+    )
+    assert topo.status_code == 201, topo.text
+    return headers, topo.json()["id"]
+
+
+def _add_workload_node(client_strict, *, headers, topo_id: str, name: str, cpu: float, memory_mb: int):
+    node = client_strict.post(
+        f"/topologies/{topo_id}/nodes",
+        headers=headers,
+        json={
+            "name": name,
+            "node_type": "host",
+            "image": "nginx:latest",
+            "config": {
+                "resource_cpu": cpu,
+                "resource_memory_mb": memory_mb,
+                "resource_disk_gb": 5,
+                "replicas": 1,
+            },
+        },
+    )
+    assert node.status_code == 201, node.text
+
+
+def test_placement_constraint_crud_and_plan_host_count(client_strict, engine_db):
+    headers, topo_id = _placement_test_headers(client_strict)
+    _add_workload_node(client_strict, headers=headers, topo_id=topo_id, name="cli-edge", cpu=0.25, memory_mb=256)
+    _add_workload_node(client_strict, headers=headers, topo_id=topo_id, name="svc-origin", cpu=0.5, memory_mb=512)
+
+    listed = client_strict.get(f"/topologies/{topo_id}/placement-constraints", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"] == []
+
+    baseline_plan = client_strict.get(f"/topologies/{topo_id}/placement-plan", headers=headers)
+    assert baseline_plan.status_code == 200, baseline_plan.text
+    assert baseline_plan.json()["recommended_host_count"] == 1
+
+    baseline_strategy = client_strict.get(f"/topologies/{topo_id}/strategy-recommendation", headers=headers)
+    assert baseline_strategy.status_code == 200, baseline_strategy.text
+    assert baseline_strategy.json()["recommended_strategy"] == "docker-vm"
+
+    created = client_strict.post(
+        f"/topologies/{topo_id}/placement-constraints",
+        headers=headers,
+        json={
+            "constraint_type": "different_host",
+            "node_a": "cli-edge",
+            "node_b": "svc-origin",
+        },
+    )
+    assert created.status_code == 201, created.text
+    constraint_id = created.json()["id"]
+    assert created.json()["constraint_type"] == "different_host"
+
+    listed_after_create = client_strict.get(f"/topologies/{topo_id}/placement-constraints", headers=headers)
+    assert listed_after_create.status_code == 200, listed_after_create.text
+    assert len(listed_after_create.json()["items"]) == 1
+    assert listed_after_create.json()["items"][0]["node_a"] == "cli-edge"
+    assert listed_after_create.json()["items"][0]["node_b"] == "svc-origin"
+
+    constrained_plan = client_strict.get(f"/topologies/{topo_id}/placement-plan", headers=headers)
+    assert constrained_plan.status_code == 200, constrained_plan.text
+    assert constrained_plan.json()["recommended_host_count"] == 2
+
+    constrained_strategy = client_strict.get(f"/topologies/{topo_id}/strategy-recommendation", headers=headers)
+    assert constrained_strategy.status_code == 200, constrained_strategy.text
+    assert constrained_strategy.json()["recommended_strategy"] == "docker-multi-vm"
+
+    deleted = client_strict.delete(
+        f"/topologies/{topo_id}/placement-constraints/{constraint_id}",
+        headers=headers,
+    )
+    assert deleted.status_code == 204, deleted.text
+
+    listed_after_delete = client_strict.get(f"/topologies/{topo_id}/placement-constraints", headers=headers)
+    assert listed_after_delete.status_code == 200, listed_after_delete.text
+    assert listed_after_delete.json()["items"] == []
+
+    restored_plan = client_strict.get(f"/topologies/{topo_id}/placement-plan", headers=headers)
+    assert restored_plan.status_code == 200, restored_plan.text
+    assert restored_plan.json()["recommended_host_count"] == 1
+
+    restored_strategy = client_strict.get(f"/topologies/{topo_id}/strategy-recommendation", headers=headers)
+    assert restored_strategy.status_code == 200, restored_strategy.text
+    assert restored_strategy.json()["recommended_strategy"] == "docker-vm"
+
+
+def test_delete_placement_constraint_returns_404_for_unknown_id(client_strict, engine_db):
+    headers, topo_id = _placement_test_headers(client_strict)
+    missing = client_strict.delete(
+        f"/topologies/{topo_id}/placement-constraints/{uuid.uuid4()}",
+        headers=headers,
+    )
+    assert missing.status_code == 404, missing.text
 
 
 def test_placement_plan_api(client_strict, engine_db):

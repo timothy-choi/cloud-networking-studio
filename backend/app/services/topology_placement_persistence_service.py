@@ -60,6 +60,20 @@ def create_constraint(
     return row
 
 
+def delete_constraint(
+    db: Session,
+    *,
+    topology_id: UUID,
+    constraint_id: UUID,
+) -> TopologyPlacementConstraint | None:
+    row = db.get(TopologyPlacementConstraint, constraint_id)
+    if row is None or row.topology_id != topology_id:
+        return None
+    db.delete(row)
+    db.flush()
+    return row
+
+
 def save_plan(
     db: Session,
     *,

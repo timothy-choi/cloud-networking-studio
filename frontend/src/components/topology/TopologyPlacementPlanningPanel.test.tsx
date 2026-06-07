@@ -21,6 +21,7 @@ vi.mock('../../api/topologyPlacement', async (importOriginal) => {
     getTopologyCostCapacityAnalysis: vi.fn(() => new Promise(() => {})),
     listPlacementConstraints: vi.fn(() => Promise.resolve([])),
     createPlacementConstraint: vi.fn(),
+    deletePlacementConstraint: vi.fn(),
     getAiInfrastructureAdvice: vi.fn(() => new Promise(() => {})),
     generateInfrastructureDeployment: vi.fn(),
   };
@@ -320,13 +321,41 @@ describe('PlacementConstraintsSection', () => {
         form={{ constraint_type: 'preferred_host', node_a: 'worker-a', node_b: '', preferred_host: '2' }}
         onChangeForm={() => {}}
         onCreate={() => {}}
+        onDelete={() => {}}
       />,
     );
     expect(html).toContain('Placement constraints');
     expect(html).toContain('different_host');
     expect(html).toContain('worker-a / worker-b');
+    expect(html).toContain('Remove');
     expect(html).toContain('Preferred host');
     expect(html).toContain('Add constraint');
+  });
+
+  it('hides remove buttons in read-only mode', () => {
+    const html = renderToStaticMarkup(
+      <PlacementConstraintsSection
+        constraints={[
+          {
+            id: 'c1',
+            topology_id: 'topo-1',
+            constraint_type: 'different_host',
+            node_a: 'cli-edge',
+            node_b: 'svc-origin',
+            created_at: '2026-06-01T00:00:00Z',
+          },
+        ]}
+        nodes={['cli-edge', 'svc-origin']}
+        creating={false}
+        readOnly
+        form={{ constraint_type: 'different_host', node_a: '', node_b: '', preferred_host: '1' }}
+        onChangeForm={() => {}}
+        onCreate={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(html).toContain('cli-edge / svc-origin');
+    expect(html).not.toContain('Remove');
   });
 });
 

@@ -5,6 +5,7 @@ import { listCredentialProfiles, type CredentialProfile } from '../../api/creden
 import {
   generateInfrastructureDeployment,
   createPlacementConstraint,
+  deletePlacementConstraint,
   getAiInfrastructureAdvice,
   getTopologyCostCapacityAnalysis,
   getTopologyPlacementPlan,
@@ -59,6 +60,7 @@ export function TopologyPlacementPlanningPanel({
     preferred_host: string;
   }>({ constraint_type: 'different_host', node_a: '', node_b: '', preferred_host: '1' });
   const [constraintBusy, setConstraintBusy] = useState(false);
+  const [deletingConstraintId, setDeletingConstraintId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -135,6 +137,21 @@ export function TopologyPlacementPlanningPanel({
       setErr(formatApiError(e));
     } finally {
       setConstraintBusy(false);
+    }
+  }
+
+  async function onDeleteConstraint(constraintId: string) {
+    if (readOnly) return;
+    setDeletingConstraintId(constraintId);
+    setErr(null);
+    try {
+      await deletePlacementConstraint(topologyId, constraintId);
+      setConstraints((prev) => prev.filter((constraint) => constraint.id !== constraintId));
+      await loadPlan();
+    } catch (e) {
+      setErr(formatApiError(e));
+    } finally {
+      setDeletingConstraintId(null);
     }
   }
 
@@ -278,10 +295,12 @@ export function TopologyPlacementPlanningPanel({
             constraints={constraints}
             nodes={plan.nodes.map((node) => node.node_name)}
             creating={constraintBusy}
+            deletingId={deletingConstraintId}
             readOnly={readOnly}
             form={constraintForm}
             onChangeForm={setConstraintForm}
             onCreate={() => void onCreateConstraint()}
+            onDelete={(constraintId) => void onDeleteConstraint(constraintId)}
           />
           <DeploymentStrategySection
             recommendation={strategy}

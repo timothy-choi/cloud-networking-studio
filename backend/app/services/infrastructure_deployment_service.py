@@ -193,8 +193,7 @@ def _queue_host_configuration(
     deployment: InfrastructureDeployment,
     actor: User,
 ) -> None:
-    """Persist queue marker and start post-apply configuration in the background."""
-    from app.services.infra_configuration_runner import enqueue_host_configuration
+    """Persist queue marker for post-apply configuration (job started by API layer)."""
 
     deployment.events_json = append_event(
         deployment.events_json,
@@ -209,7 +208,6 @@ def _queue_host_configuration(
     deployment.status = "configuring"
     db.flush()
     _commit_deployment_state(db, deployment)
-    enqueue_host_configuration(deployment_id=deployment.id, actor_user_id=actor.id)
 
 
 def _append_configuration_progress(

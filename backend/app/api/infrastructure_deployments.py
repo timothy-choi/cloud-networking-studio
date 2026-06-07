@@ -224,6 +224,7 @@ def list_infrastructure_executions(
 def confirm_infrastructure_deployment(
     deployment_id: UUID,
     body: InfrastructureDeploymentConfirmRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> InfrastructureDeploymentResponse:

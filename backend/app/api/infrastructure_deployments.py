@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -26,6 +26,7 @@ from app.services import infra_deployment_phases as infra_phases
 from app.services.access_control import get_topology_for_user, require_topology_editor
 from app.services import infrastructure_deployment_service as infra_svc
 from app.services.infra_apply_safety import InfraApplySafetyError, InfraInvalidStateError
+from app.services import infra_configuration_runner as infra_config_runner
 from app.services.infra_template_registry import list_templates
 from app.runtime.infra_runner_client import InfraRunnerClientError
 
@@ -223,6 +224,7 @@ def list_infrastructure_executions(
 def confirm_infrastructure_deployment(
     deployment_id: UUID,
     body: InfrastructureDeploymentConfirmRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> InfrastructureDeploymentResponse:
@@ -275,7 +277,17 @@ def confirm_infrastructure_deployment(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
-    db.refresh(deployment)
+    if infra_config_runner.deployment_has_queued_configuration(deployment):
+        infra_config_runner.schedule_host_configuration(
+            deployment_id=deployment.id,
+            actor_user_id=user.id,
+            background_tasks=background_tasks,
+        )
+        if not infra_config_runner.configuration_enqueue_is_deferred():
+            db.commit()
+            db.refresh(deployment)
+    else:
+        db.refresh(deployment)
     if deployment.status == "failed":
         raise HTTPException(
             status_code=409,
@@ -294,6 +306,7 @@ def confirm_infrastructure_deployment(
 )
 def retry_infrastructure_configuration(
     deployment_id: UUID,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> InfrastructureDeploymentResponse:
@@ -306,7 +319,17 @@ def retry_infrastructure_configuration(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
-    db.refresh(deployment)
+    if infra_config_runner.deployment_has_queued_configuration(deployment):
+        infra_config_runner.schedule_host_configuration(
+            deployment_id=deployment.id,
+            actor_user_id=user.id,
+            background_tasks=background_tasks,
+        )
+        if not infra_config_runner.configuration_enqueue_is_deferred():
+            db.commit()
+            db.refresh(deployment)
+    else:
+        db.refresh(deployment)
     return _to_deployment(deployment)
 
 

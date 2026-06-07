@@ -113,10 +113,12 @@ def _resolve_resource_value(config: dict[str, Any], *keys: str) -> Any:
     }
     for key in keys:
         for candidate in aliases.get(key, (key,)):
-            if candidate in config and config[candidate] is not None:
-                return config[candidate]
             if candidate in resources and resources[candidate] is not None:
                 return resources[candidate]
+    for key in keys:
+        for candidate in aliases.get(key, (key,)):
+            if candidate in config and config[candidate] is not None:
+                return config[candidate]
     return None
 
 
@@ -346,10 +348,54 @@ def validate_and_normalize_resource_metadata(config: dict[str, Any] | None) -> d
     _parse_placement_constraints(out.get("placement_constraints"))
     runtime = extract_node_runtime_config(out)
     runtime_ports = tuple(sorted({p.port for p in runtime.ports}))
-    _parse_required_ports(out, runtime_ports)
+    parsed_ports = _parse_required_ports(out, runtime_ports)
+    if out.get("required_ports") is not None:
+        out["required_ports"] = list(parsed_ports)
 
     notes = out.get("notes") or out.get("description")
     if notes is not None and len(str(notes)) > 4096:
         raise NodeConfigValidationError("notes must be at most 4096 characters")
 
+    _persist_resource_config(out)
     return out or None
+
+
+def _persist_resource_config(out: dict[str, Any]) -> None:
+    """Write canonical nested ``resources`` block and legacy aliases on node config."""
+    cpu = _coerce_float(_resolve_resource_value(out, "resource_cpu"), default=_DEFAULT_CPU)
+    memory_mb = _coerce_int(
+        _resolve_resource_value(out, "resource_memory_mb"),
+        default=_DEFAULT_MEMORY_MB,
+        name="resource_memory_mb",
+    )
+    disk_gb = _coerce_float(_resolve_resource_value(out, "resource_disk_gb"), default=_DEFAULT_DISK_GB)
+    replicas = _coerce_int(
+        _resolve_resource_value(out, "replicas"),
+        default=_DEFAULT_REPLICAS,
+        name="replicas",
+    )
+
+    out["resource_cpu"] = cpu
+    out["resource_memory_mb"] = memory_mb
+    out["resource_disk_gb"] = disk_gb
+    out["cpu_request"] = cpu
+    out["memory_request_mb"] = memory_mb
+    out["disk_request_gb"] = disk_gb
+    out["replicas"] = replicas
+    out["resources"] = {
+        "cpu": cpu,
+        "memory_mb": memory_mb,
+        "disk_gb": disk_gb,
+        "replicas": replicas,
+    }
+
+    exposure = str(out.get("exposure") or "").strip().lower()
+    if exposure:
+        out["exposure"] = exposure
+
+    if "stateful" in out:
+        stateful_raw = out["stateful"]
+        if isinstance(stateful_raw, bool):
+            out["stateful"] = stateful_raw
+        else:
+            out["stateful"] = str(stateful_raw or "").lower() in ("1", "true", "yes")

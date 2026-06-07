@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 
 import {
+  mergeNodeResourceIntoConfig,
+  NODE_EXPOSURE_TYPES,
+  parseNodeResourceFields,
+  readNodeResourceFields,
+  validateNodeResourceFields,
+  type NodeResourceFields,
+} from '../../lib/nodeResourceConfig';
+import {
   mergeNodeRuntimeIntoConfig,
   readHealthCheckFromNode,
   readNodeRuntimeFields,
@@ -20,7 +28,6 @@ import type {
   TopologyNodeUpdate,
   TopologyResponse,
 } from '../../types/topology';
-import { EDITOR_POSITION_KEY } from '../../types/topology';
 
 export interface TopologyInspectorProps {
   topology: TopologyResponse | null;
@@ -34,60 +41,6 @@ export interface TopologyInspectorProps {
 }
 
 const NODE_TYPES = ['generic', 'host', 'router', 'switch', 'gateway'] as const;
-const EXPOSURE_TYPES = ['internal', 'private', 'public'] as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readConfigValue(config: Record<string, unknown> | null | undefined, keys: string[]): unknown {
-  const resources = isRecord(config?.resources) ? config.resources : {};
-  for (const key of keys) {
-    const value = config?.[key] ?? resources[key];
-    if (value !== undefined && value !== null && value !== '') return value;
-  }
-  return undefined;
-}
-
-function readNodeResourceFields(node: TopologyNodeResponse) {
-  const config = node.config ?? {};
-  const exposure = String(config.exposure ?? 'internal');
-  return {
-    cpu: String(readConfigValue(config, ['resource_cpu', 'cpu_request', 'cpu']) ?? 0.5),
-    memoryMb: String(readConfigValue(config, ['resource_memory_mb', 'memory_request_mb', 'memory_mb']) ?? 512),
-    diskGb: String(readConfigValue(config, ['resource_disk_gb', 'disk_request_gb', 'disk_gb']) ?? 5),
-    replicas: String(readConfigValue(config, ['replicas']) ?? 1),
-    exposure: (
-      EXPOSURE_TYPES.includes(exposure as (typeof EXPOSURE_TYPES)[number]) ? exposure : 'internal'
-    ) as (typeof EXPOSURE_TYPES)[number],
-    stateful: config.stateful === true || String(config.stateful ?? '').toLowerCase() === 'true',
-    requiredPorts: Array.isArray(config.required_ports) ? config.required_ports.join(', ') : '',
-  };
-}
-
-function parseResourceNumber(label: string, value: string, min: number, max: number, integer = false): number | null {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < min || parsed > max || (integer && !Number.isInteger(parsed))) {
-    alert(`${label} must be ${integer ? 'an integer ' : ''}between ${min} and ${max}.`);
-    return null;
-  }
-  return integer ? Math.trunc(parsed) : parsed;
-}
-
-function parseRequiredPorts(value: string): number[] | null {
-  const trimmed = value.trim();
-  if (!trimmed) return [];
-  const ports = trimmed
-    .split(/[,\s]+/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => (/^\d+$/.test(part) ? Number(part) : Number.NaN));
-  if (ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535)) {
-    alert('Required ports must be a comma-separated list of integers between 1 and 65535.');
-    return null;
-  }
-  return Array.from(new Set(ports)).sort((a, b) => a - b);
-}
 
 function TopologyMetaForm({
   topology,
@@ -179,44 +132,24 @@ function NodeEditForm({
       className="mt-2 space-y-2"
       onSubmit={async (e) => {
         e.preventDefault();
-        const validation = validateNodeRuntimeFields(runtime);
-        if (validation) {
-          alert(validation);
+        const runtimeValidation = validateNodeRuntimeFields(runtime);
+        if (runtimeValidation) {
+          alert(runtimeValidation);
           return;
         }
-        const cpu = parseResourceNumber('CPU', resourceFields.cpu, 0.001, 128);
-        const memoryMb = parseResourceNumber('Memory MB', resourceFields.memoryMb, 128, 1048576, true);
-        const diskGb = parseResourceNumber('Disk GB', resourceFields.diskGb, 1, 65536);
-        const replicas = parseResourceNumber('Replicas', resourceFields.replicas, 1, 100, true);
-        const requiredPorts = parseRequiredPorts(resourceFields.requiredPorts);
-        if (cpu == null || memoryMb == null || diskGb == null || replicas == null || requiredPorts == null) {
+        const resourceValidation = validateNodeResourceFields(resourceFields);
+        if (resourceValidation) {
+          alert(resourceValidation);
           return;
         }
-        const base = { ...(node.config ?? {}) };
-        const pos = base[EDITOR_POSITION_KEY];
-        const mergedConfig = mergeNodeRuntimeIntoConfig(
-          base,
-          runtime,
-          healthCheckToConfig(healthCheck),
+        const parsedResources = parseNodeResourceFields(resourceFields);
+        if (!parsedResources) {
+          return;
+        }
+        const mergedConfig = mergeNodeResourceIntoConfig(
+          mergeNodeRuntimeIntoConfig(node.config, runtime, healthCheckToConfig(healthCheck)),
+          parsedResources,
         );
-        const existingResources = isRecord(mergedConfig.resources) ? mergedConfig.resources : {};
-        mergedConfig.resources = {
-          ...existingResources,
-          cpu,
-          memory_mb: memoryMb,
-          disk_gb: diskGb,
-          replicas,
-        };
-        mergedConfig.resource_cpu = cpu;
-        mergedConfig.resource_memory_mb = memoryMb;
-        mergedConfig.resource_disk_gb = diskGb;
-        mergedConfig.replicas = replicas;
-        mergedConfig.exposure = resourceFields.exposure;
-        mergedConfig.stateful = resourceFields.stateful;
-        mergedConfig.required_ports = requiredPorts;
-        if (pos != null) {
-          mergedConfig[EDITOR_POSITION_KEY] = pos;
-        }
         setSaving(true);
         try {
           await onPatchNode({
@@ -335,11 +268,11 @@ function NodeEditForm({
             onChange={(ev) =>
               setResourceFields((r) => ({
                 ...r,
-                exposure: ev.target.value as (typeof EXPOSURE_TYPES)[number],
+                exposure: ev.target.value as NodeResourceFields['exposure'],
               }))
             }
           >
-            {EXPOSURE_TYPES.map((value) => (
+            {NODE_EXPOSURE_TYPES.map((value) => (
               <option key={value} value={value}>
                 {value}
               </option>

@@ -47,6 +47,7 @@ class NodeResourceMetadata:
     resource_memory_mb: int
     resource_disk_gb: float
     replicas: int
+    resource_source: str
     node_role: str
     exposure: str
     stateful: bool
@@ -63,6 +64,7 @@ class PlacementUnit:
     resource_cpu: float
     resource_memory_mb: int
     resource_disk_gb: float
+    resource_source: str
     node_role: str
     exposure: str
     stateful: bool
@@ -103,23 +105,38 @@ def _read_resource_block(config: dict[str, Any]) -> dict[str, Any]:
 
 def _resolve_resource_value(config: dict[str, Any], *keys: str) -> Any:
     resources = _read_resource_block(config)
-    for key in keys:
-        if key in config and config[key] is not None:
-            return config[key]
-        if key in resources and resources[key] is not None:
-            return resources[key]
-    legacy = {
-        "resource_cpu": ("cpu_request",),
-        "resource_memory_mb": ("memory_request_mb",),
-        "resource_disk_gb": ("disk_request_gb",),
+    aliases = {
+        "resource_cpu": ("resource_cpu", "cpu", "cpu_request"),
+        "resource_memory_mb": ("resource_memory_mb", "memory_mb", "memory_request_mb"),
+        "resource_disk_gb": ("resource_disk_gb", "disk_gb", "disk_request_gb"),
+        "replicas": ("replicas",),
     }
     for key in keys:
-        for legacy_key in legacy.get(key, ()):
-            if legacy_key in config and config[legacy_key] is not None:
-                return config[legacy_key]
-            if legacy_key in resources and resources[legacy_key] is not None:
-                return resources[legacy_key]
+        for candidate in aliases.get(key, (key,)):
+            if candidate in resources and resources[candidate] is not None:
+                return resources[candidate]
+    for key in keys:
+        for candidate in aliases.get(key, (key,)):
+            if candidate in config and config[candidate] is not None:
+                return config[candidate]
     return None
+
+
+def _has_explicit_resource_config(config: dict[str, Any]) -> bool:
+    resources = _read_resource_block(config)
+    explicit_keys = {
+        "resource_cpu",
+        "resource_memory_mb",
+        "resource_disk_gb",
+        "cpu_request",
+        "memory_request_mb",
+        "disk_request_gb",
+        "cpu",
+        "memory_mb",
+        "disk_gb",
+        "replicas",
+    }
+    return any(key in config for key in explicit_keys) or any(key in resources for key in explicit_keys)
 
 
 def _infer_defaults(node: TopologyNode) -> dict[str, float | int]:
@@ -249,6 +266,7 @@ def extract_node_resource_metadata(node: TopologyNode) -> NodeResourceMetadata |
         resource_memory_mb=memory_mb,
         resource_disk_gb=disk_gb,
         replicas=replicas,
+        resource_source="explicit" if _has_explicit_resource_config(config) else "default",
         node_role=node_role,
         exposure=exposure,
         stateful=stateful,
@@ -274,6 +292,7 @@ def expand_placement_units(topology) -> list[PlacementUnit]:
                     resource_cpu=meta.resource_cpu,
                     resource_memory_mb=meta.resource_memory_mb,
                     resource_disk_gb=meta.resource_disk_gb,
+                    resource_source=meta.resource_source,
                     node_role=meta.node_role,
                     exposure=meta.exposure,
                     stateful=meta.stateful,
@@ -329,10 +348,54 @@ def validate_and_normalize_resource_metadata(config: dict[str, Any] | None) -> d
     _parse_placement_constraints(out.get("placement_constraints"))
     runtime = extract_node_runtime_config(out)
     runtime_ports = tuple(sorted({p.port for p in runtime.ports}))
-    _parse_required_ports(out, runtime_ports)
+    parsed_ports = _parse_required_ports(out, runtime_ports)
+    if out.get("required_ports") is not None:
+        out["required_ports"] = list(parsed_ports)
 
     notes = out.get("notes") or out.get("description")
     if notes is not None and len(str(notes)) > 4096:
         raise NodeConfigValidationError("notes must be at most 4096 characters")
 
+    _persist_resource_config(out)
     return out or None
+
+
+def _persist_resource_config(out: dict[str, Any]) -> None:
+    """Write canonical nested ``resources`` block and legacy aliases on node config."""
+    cpu = _coerce_float(_resolve_resource_value(out, "resource_cpu"), default=_DEFAULT_CPU)
+    memory_mb = _coerce_int(
+        _resolve_resource_value(out, "resource_memory_mb"),
+        default=_DEFAULT_MEMORY_MB,
+        name="resource_memory_mb",
+    )
+    disk_gb = _coerce_float(_resolve_resource_value(out, "resource_disk_gb"), default=_DEFAULT_DISK_GB)
+    replicas = _coerce_int(
+        _resolve_resource_value(out, "replicas"),
+        default=_DEFAULT_REPLICAS,
+        name="replicas",
+    )
+
+    out["resource_cpu"] = cpu
+    out["resource_memory_mb"] = memory_mb
+    out["resource_disk_gb"] = disk_gb
+    out["cpu_request"] = cpu
+    out["memory_request_mb"] = memory_mb
+    out["disk_request_gb"] = disk_gb
+    out["replicas"] = replicas
+    out["resources"] = {
+        "cpu": cpu,
+        "memory_mb": memory_mb,
+        "disk_gb": disk_gb,
+        "replicas": replicas,
+    }
+
+    exposure = str(out.get("exposure") or "").strip().lower()
+    if exposure:
+        out["exposure"] = exposure
+
+    if "stateful" in out:
+        stateful_raw = out["stateful"]
+        if isinstance(stateful_raw, bool):
+            out["stateful"] = stateful_raw
+        else:
+            out["stateful"] = str(stateful_raw or "").lower() in ("1", "true", "yes")

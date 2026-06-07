@@ -17,6 +17,7 @@ class TopologyNodeResourceBreakdown(BaseModel):
     memory_request_mb: int
     disk_request_gb: float
     replicas: int
+    resource_source: str = "default"
 
 
 class TopologyResourceEstimateResponse(BaseModel):

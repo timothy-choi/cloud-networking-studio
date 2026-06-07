@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 
 import {
+  mergeNodeResourceIntoConfig,
+  NODE_EXPOSURE_TYPES,
+  parseNodeResourceFields,
+  readNodeResourceFields,
+  validateNodeResourceFields,
+  type NodeResourceFields,
+} from '../../lib/nodeResourceConfig';
+import {
   mergeNodeRuntimeIntoConfig,
   readHealthCheckFromNode,
   readNodeRuntimeFields,
@@ -20,7 +28,6 @@ import type {
   TopologyNodeUpdate,
   TopologyResponse,
 } from '../../types/topology';
-import { EDITOR_POSITION_KEY } from '../../types/topology';
 
 export interface TopologyInspectorProps {
   topology: TopologyResponse | null;
@@ -104,6 +111,7 @@ function NodeEditForm({
   const [image, setImage] = useState(node.image ?? '');
   const [ip, setIp] = useState(node.ip_address ?? '');
   const [runtime, setRuntime] = useState<NodeRuntimeFields>(() => readNodeRuntimeFields(node));
+  const [resourceFields, setResourceFields] = useState(() => readNodeResourceFields(node));
   const [healthCheck, setHealthCheck] = useState<HealthCheckFields>(() =>
     healthCheckFieldsFromRaw(readHealthCheckFromNode(node), node.image ?? ''),
   );
@@ -115,6 +123,7 @@ function NodeEditForm({
     setImage(node.image ?? '');
     setIp(node.ip_address ?? '');
     setRuntime(readNodeRuntimeFields(node));
+    setResourceFields(readNodeResourceFields(node));
     setHealthCheck(healthCheckFieldsFromRaw(readHealthCheckFromNode(node), node.image ?? ''));
   }, [node.id]);
 
@@ -123,21 +132,24 @@ function NodeEditForm({
       className="mt-2 space-y-2"
       onSubmit={async (e) => {
         e.preventDefault();
-        const validation = validateNodeRuntimeFields(runtime);
-        if (validation) {
-          alert(validation);
+        const runtimeValidation = validateNodeRuntimeFields(runtime);
+        if (runtimeValidation) {
+          alert(runtimeValidation);
           return;
         }
-        const base = { ...(node.config ?? {}) };
-        const pos = base[EDITOR_POSITION_KEY];
-        const mergedConfig = mergeNodeRuntimeIntoConfig(
-          base,
-          runtime,
-          healthCheckToConfig(healthCheck),
-        );
-        if (pos != null) {
-          mergedConfig[EDITOR_POSITION_KEY] = pos;
+        const resourceValidation = validateNodeResourceFields(resourceFields);
+        if (resourceValidation) {
+          alert(resourceValidation);
+          return;
         }
+        const parsedResources = parseNodeResourceFields(resourceFields);
+        if (!parsedResources) {
+          return;
+        }
+        const mergedConfig = mergeNodeResourceIntoConfig(
+          mergeNodeRuntimeIntoConfig(node.config, runtime, healthCheckToConfig(healthCheck)),
+          parsedResources,
+        );
         setSaving(true);
         try {
           await onPatchNode({
@@ -197,6 +209,94 @@ function NodeEditForm({
         />
       </label>
       <ImageCapabilityHints image={image} command={runtime.command} />
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block text-[11px] text-cns-field-label">
+          CPU
+          <input
+            type="number"
+            min="0.001"
+            max="128"
+            step="0.001"
+            className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+            value={resourceFields.cpu}
+            onChange={(ev) => setResourceFields((r) => ({ ...r, cpu: ev.target.value }))}
+          />
+        </label>
+        <label className="block text-[11px] text-cns-field-label">
+          Memory MB
+          <input
+            type="number"
+            min="128"
+            max="1048576"
+            step="1"
+            className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+            value={resourceFields.memoryMb}
+            onChange={(ev) => setResourceFields((r) => ({ ...r, memoryMb: ev.target.value }))}
+          />
+        </label>
+        <label className="block text-[11px] text-cns-field-label">
+          Disk GB
+          <input
+            type="number"
+            min="1"
+            max="65536"
+            step="0.1"
+            className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+            value={resourceFields.diskGb}
+            onChange={(ev) => setResourceFields((r) => ({ ...r, diskGb: ev.target.value }))}
+          />
+        </label>
+        <label className="block text-[11px] text-cns-field-label">
+          Replicas
+          <input
+            type="number"
+            min="1"
+            max="100"
+            step="1"
+            className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+            value={resourceFields.replicas}
+            onChange={(ev) => setResourceFields((r) => ({ ...r, replicas: ev.target.value }))}
+          />
+        </label>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block text-[11px] text-cns-field-label">
+          Exposure
+          <select
+            className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+            value={resourceFields.exposure}
+            onChange={(ev) =>
+              setResourceFields((r) => ({
+                ...r,
+                exposure: ev.target.value as NodeResourceFields['exposure'],
+              }))
+            }
+          >
+            {NODE_EXPOSURE_TYPES.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="mt-5 flex items-center gap-2 text-[11px] text-cns-field-label">
+          <input
+            type="checkbox"
+            checked={resourceFields.stateful}
+            onChange={(ev) => setResourceFields((r) => ({ ...r, stateful: ev.target.checked }))}
+          />
+          Stateful
+        </label>
+      </div>
+      <label className="block text-[11px] text-cns-field-label">
+        Required ports
+        <input
+          className="mt-0.5 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1.5 font-mono text-sm text-zinc-100"
+          value={resourceFields.requiredPorts}
+          onChange={(ev) => setResourceFields((r) => ({ ...r, requiredPorts: ev.target.value }))}
+          placeholder="80, 443"
+        />
+      </label>
       <label className="block text-[11px] text-cns-field-label">
         Command
         <input

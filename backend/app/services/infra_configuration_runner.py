@@ -6,6 +6,7 @@ import logging
 import os
 import threading
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.db.session import SessionLocal
@@ -13,6 +14,9 @@ from app.models.infrastructure_deployment import InfrastructureDeployment
 from app.models.user import User
 from app.services.audit_service import record_audit
 from app.services.infra_observability import append_event
+
+if TYPE_CHECKING:
+    from fastapi import BackgroundTasks
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +27,36 @@ _active_jobs: set[UUID] = set()
 def is_configuration_job_running(deployment_id: UUID) -> bool:
     with _lock:
         return deployment_id in _active_jobs
+
+
+def configuration_enqueue_is_deferred() -> bool:
+    """True when configuration should start after the HTTP response is sent."""
+    return os.environ.get("CNS_SYNC_INFRA_CONFIGURATION") != "1"
+
+
+def deployment_has_queued_configuration(deployment: InfrastructureDeployment) -> bool:
+    meta = deployment.state_metadata_json or {}
+    return deployment.status == "configuring" and meta.get("configuration_job_status") == "queued"
+
+
+def schedule_host_configuration(
+    *,
+    deployment_id: UUID,
+    actor_user_id: UUID,
+    background_tasks: BackgroundTasks | None = None,
+) -> None:
+    """Enqueue configuration inline (sync tests) or after the response (async default)."""
+    if configuration_enqueue_is_deferred():
+        if background_tasks is None:
+            raise ValueError("background_tasks required for deferred configuration enqueue")
+        background_tasks.add_task(
+            enqueue_host_configuration,
+            deployment_id=deployment_id,
+            actor_user_id=actor_user_id,
+        )
+        return
+
+    enqueue_host_configuration(deployment_id=deployment_id, actor_user_id=actor_user_id)
 
 
 def enqueue_host_configuration(*, deployment_id: UUID, actor_user_id: UUID) -> bool:

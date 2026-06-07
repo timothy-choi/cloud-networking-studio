@@ -4,13 +4,17 @@ import { Link } from 'react-router-dom';
 import { listCredentialProfiles, type CredentialProfile } from '../../api/credentialProfiles';
 import {
   generateInfrastructureDeployment,
+  createPlacementConstraint,
+  deletePlacementConstraint,
   getAiInfrastructureAdvice,
   getTopologyCostCapacityAnalysis,
   getTopologyPlacementPlan,
   getTopologyStrategyRecommendation,
   isStrategySelectable,
+  listPlacementConstraints,
   type AiInfrastructureAdvice,
   type CostCapacityAnalysis,
+  type PlacementConstraint,
   type StrategyRecommendation,
   type TopologyPlacementPlan,
 } from '../../api/topologyPlacement';
@@ -21,6 +25,7 @@ import {
   CostCapacitySection,
   DeploymentStrategySection,
   HostRecommendationSection,
+  PlacementConstraintsSection,
   PlacementPlanSection,
   PlacementWarningsSection,
   ResourceEstimateSection,
@@ -46,6 +51,16 @@ export function TopologyPlacementPlanningPanel({
   const [profiles, setProfiles] = useState<CredentialProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState('');
   const [machineType, setMachineType] = useState('');
+  const [placementMode, setPlacementMode] = useState<'first_fit' | 'best_fit' | 'balanced'>('first_fit');
+  const [constraints, setConstraints] = useState<PlacementConstraint[]>([]);
+  const [constraintForm, setConstraintForm] = useState<{
+    constraint_type: PlacementConstraint['constraint_type'];
+    node_a: string;
+    node_b: string;
+    preferred_host: string;
+  }>({ constraint_type: 'different_host', node_a: '', node_b: '', preferred_host: '1' });
+  const [constraintBusy, setConstraintBusy] = useState(false);
+  const [deletingConstraintId, setDeletingConstraintId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -60,6 +75,7 @@ export function TopologyPlacementPlanningPanel({
     try {
       const params = {
         provider: 'gcp' as const,
+        placement_mode: placementMode,
         ...(machineType.trim() ? { machine_type: machineType.trim() } : {}),
       };
       const [nextPlan, nextStrategy, nextCostCapacity] = await Promise.all([
@@ -80,7 +96,7 @@ export function TopologyPlacementPlanningPanel({
     } finally {
       setLoading(false);
     }
-  }, [topologyId, machineType]);
+  }, [topologyId, machineType, placementMode]);
 
   useEffect(() => {
     void loadPlan();
@@ -95,6 +111,49 @@ export function TopologyPlacementPlanningPanel({
       })
       .catch(() => setProfiles([]));
   }, [projectId]);
+
+  useEffect(() => {
+    void listPlacementConstraints(topologyId)
+      .then(setConstraints)
+      .catch(() => setConstraints([]));
+  }, [topologyId]);
+
+  async function onCreateConstraint() {
+    if (readOnly) return;
+    setConstraintBusy(true);
+    setErr(null);
+    try {
+      const created = await createPlacementConstraint(topologyId, {
+        constraint_type: constraintForm.constraint_type,
+        node_a: constraintForm.node_a.trim(),
+        ...(constraintForm.constraint_type !== 'preferred_host'
+          ? { node_b: constraintForm.node_b.trim() }
+          : { preferred_host: Number(constraintForm.preferred_host || 1) }),
+      });
+      setConstraints((prev) => [...prev, created]);
+      setConstraintForm({ constraint_type: 'different_host', node_a: '', node_b: '', preferred_host: '1' });
+      await loadPlan();
+    } catch (e) {
+      setErr(formatApiError(e));
+    } finally {
+      setConstraintBusy(false);
+    }
+  }
+
+  async function onDeleteConstraint(constraintId: string) {
+    if (readOnly) return;
+    setDeletingConstraintId(constraintId);
+    setErr(null);
+    try {
+      await deletePlacementConstraint(topologyId, constraintId);
+      setConstraints((prev) => prev.filter((constraint) => constraint.id !== constraintId));
+      await loadPlan();
+    } catch (e) {
+      setErr(formatApiError(e));
+    } finally {
+      setDeletingConstraintId(null);
+    }
+  }
 
   async function onGetAiAdvice() {
     setAiLoading(true);
@@ -140,6 +199,7 @@ export function TopologyPlacementPlanningPanel({
         provider: 'gcp',
         template_id: selectedStrategyId,
         credentials_ref: profile.credentials_ref,
+        placement_mode: placementMode,
         ...(machineType.trim() ? { machine_type: machineType.trim() } : {}),
       });
       setPlan(result.placement_plan);
@@ -199,6 +259,19 @@ export function TopologyPlacementPlanningPanel({
             disabled={readOnly}
           />
         </label>
+        <label className="text-xs text-cns-label">
+          Placement mode
+          <select
+            value={placementMode}
+            onChange={(e) => setPlacementMode(e.target.value as typeof placementMode)}
+            className="mt-1 block rounded border px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            disabled={readOnly}
+          >
+            <option value="first_fit">first_fit</option>
+            <option value="best_fit">best_fit</option>
+            <option value="balanced">balanced</option>
+          </select>
+        </label>
         <button
           type="button"
           disabled={loading || busy}
@@ -218,6 +291,17 @@ export function TopologyPlacementPlanningPanel({
           <ResourceEstimateSection plan={plan} />
           <HostRecommendationSection plan={plan} />
           <PlacementPlanSection plan={plan} />
+          <PlacementConstraintsSection
+            constraints={constraints}
+            nodes={plan.nodes.map((node) => node.node_name)}
+            creating={constraintBusy}
+            deletingId={deletingConstraintId}
+            readOnly={readOnly}
+            form={constraintForm}
+            onChangeForm={setConstraintForm}
+            onCreate={() => void onCreateConstraint()}
+            onDelete={(constraintId) => void onDeleteConstraint(constraintId)}
+          />
           <DeploymentStrategySection
             recommendation={strategy}
             selectedStrategyId={selectedStrategyId}

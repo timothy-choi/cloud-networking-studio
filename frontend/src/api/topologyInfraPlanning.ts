@@ -8,6 +8,7 @@ export interface TopologyNodeResourceBreakdown {
   memory_request_mb: number;
   disk_request_gb: number;
   replicas: number;
+  resource_source?: string;
 }
 
 export interface TopologyResourceEstimate {

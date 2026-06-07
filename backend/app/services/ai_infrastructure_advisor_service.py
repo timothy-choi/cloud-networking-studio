@@ -21,6 +21,7 @@ from app.services.infra_apply_safety import GCP_APPLY_MACHINE_TYPES
 from app.services import credential_profile_service as profile_svc
 from app.services import cost_capacity_advisor_service as cost_capacity_svc
 from app.services import deployment_strategy_recommendation_service as strategy_svc
+from app.services import topology_placement_persistence_service as placement_persist_svc
 from app.services import topology_placement_planner_service as placement_svc
 
 _log = logging.getLogger(__name__)
@@ -118,10 +119,14 @@ def build_advisor_context(
     credential_profile_id: str | None = None,
 ) -> dict[str, Any]:
     machine_type = (selected_machine_type or "").strip() or None
+    constraints = []
+    if db is not None and hasattr(db, "scalars") and topology.project_id:
+        constraints = placement_persist_svc.constraints_as_dicts(db, topology.id)
     plan = placement_svc.build_placement_plan(
         topology,
         provider=provider,
         machine_type=machine_type,
+        constraints=constraints,
     )
     strategy = strategy_svc.recommend_strategy_from_plan(plan)
     estimate = placement_svc.build_resource_estimate(topology)
@@ -170,6 +175,8 @@ def build_advisor_context(
                 "exposed_ports",
                 "suggested_template_id",
                 "nodes",
+                "placement_mode",
+                "constraints_used",
             )
             if k in plan
         },
@@ -196,6 +203,7 @@ def build_advisor_context(
         "constraints": {
             "apply_safe_machine_types": _APPLY_SAFE_MACHINE_TYPES,
             "max_hosts_apply": 1,
+            "placement_constraints": constraints,
         },
     }
     _assert_context_has_no_secrets(context)

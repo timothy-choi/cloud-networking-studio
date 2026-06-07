@@ -137,7 +137,9 @@ export function TopologyInfraPlanningPanel({
             <ul className="mt-3 space-y-1 text-xs text-cns-muted">
               {estimate.nodes.map((node: TopologyNodeResourceBreakdown) => (
                 <li key={node.node_id}>
-                  {node.name}: {node.cpu_request} CPU, {node.memory_request_mb}MB, {node.replicas} replica(s)
+                  {node.name}: {node.cpu_request} CPU, {node.memory_request_mb} MB, {node.disk_request_gb} GB disk,{' '}
+                  {node.replicas} replica(s)
+                  {node.resource_source ? `, source: ${node.resource_source}` : ''}
                 </li>
               ))}
             </ul>

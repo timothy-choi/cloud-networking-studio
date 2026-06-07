@@ -190,12 +190,16 @@ def build_strategy_recommendation(
     provider: str = "gcp",
     machine_type: str | None = None,
     host_count: int | None = None,
+    placement_mode: str = "first_fit",
+    constraints: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     plan = placement_svc.build_placement_plan(
         topology,
         provider=provider,
         machine_type=machine_type,
         host_count=host_count,
+        placement_mode=placement_mode,
+        constraints=constraints,
     )
     recommendation = recommend_strategy_from_plan(plan)
     recommendation["placement_plan"] = plan

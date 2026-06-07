@@ -7,6 +7,7 @@ export interface TopologyNodeResourceBreakdown {
   resource_cpu: number;
   resource_memory_mb: number;
   resource_disk_gb: number;
+  resource_source?: string;
   /** API aliases (same values as resource_*) */
   cpu?: number;
   memory_mb?: number;
@@ -25,6 +26,7 @@ export interface PlacementAssignedNode {
   resource_cpu: number;
   resource_memory_mb: number;
   resource_disk_gb: number;
+  resource_source?: string;
   node_role: string;
   exposure: string;
   stateful: boolean;
@@ -44,6 +46,11 @@ export interface PlacementHost {
   assigned_node_details?: PlacementAssignedNode[];
   estimated_cpu_used?: number;
   estimated_memory_used_mb?: number;
+  utilization?: {
+    cpu_utilization?: number;
+    memory_utilization?: number;
+    disk_utilization?: number;
+  };
 }
 
 export interface TopologyResourceEstimate {
@@ -58,14 +65,19 @@ export interface TopologyResourceEstimate {
 }
 
 export interface TopologyPlacementPlan extends TopologyResourceEstimate {
+  id?: string | null;
   provider: string;
+  placement_mode?: string;
   recommended_host_count: number;
+  host_count?: number;
   recommended_machine_type: string;
   machine_rationale: string;
   hosts: PlacementHost[];
+  placements?: PlacementHost[];
   warnings: string[];
   exposed_ports: number[];
   suggested_template_id: string;
+  constraints_used?: Array<Record<string, unknown>>;
 }
 
 export type DeploymentStrategyStatus = 'available' | 'planning_only' | 'future';
@@ -144,38 +156,91 @@ export async function getTopologyResourceEstimate(topologyId: string): Promise<T
 
 export async function getTopologyPlacementPlan(
   topologyId: string,
-  params?: { provider?: string; machine_type?: string; host_count?: number },
+  params?: { provider?: string; machine_type?: string; host_count?: number; placement_mode?: string },
 ): Promise<TopologyPlacementPlan> {
   const qs = new URLSearchParams();
   if (params?.provider) qs.set('provider', params.provider);
   if (params?.machine_type) qs.set('machine_type', params.machine_type);
   if (params?.host_count != null) qs.set('host_count', String(params.host_count));
+  if (params?.placement_mode) qs.set('placement_mode', params.placement_mode);
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
   return apiFetch<TopologyPlacementPlan>(`/topologies/${topologyId}/placement-plan${suffix}`);
 }
 
 export async function getTopologyStrategyRecommendation(
   topologyId: string,
-  params?: { provider?: string; machine_type?: string; host_count?: number },
+  params?: { provider?: string; machine_type?: string; host_count?: number; placement_mode?: string },
 ): Promise<StrategyRecommendation> {
   const qs = new URLSearchParams();
   if (params?.provider) qs.set('provider', params.provider);
   if (params?.machine_type) qs.set('machine_type', params.machine_type);
   if (params?.host_count != null) qs.set('host_count', String(params.host_count));
+  if (params?.placement_mode) qs.set('placement_mode', params.placement_mode);
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
   return apiFetch<StrategyRecommendation>(`/topologies/${topologyId}/strategy-recommendation${suffix}`);
 }
 
 export async function getTopologyCostCapacityAnalysis(
   topologyId: string,
-  params?: { provider?: string; machine_type?: string; host_count?: number },
+  params?: { provider?: string; machine_type?: string; host_count?: number; placement_mode?: string },
 ): Promise<CostCapacityAnalysis> {
   const qs = new URLSearchParams();
   if (params?.provider) qs.set('provider', params.provider);
   if (params?.machine_type) qs.set('machine_type', params.machine_type);
   if (params?.host_count != null) qs.set('host_count', String(params.host_count));
+  if (params?.placement_mode) qs.set('placement_mode', params.placement_mode);
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
   return apiFetch<CostCapacityAnalysis>(`/topologies/${topologyId}/cost-capacity-analysis${suffix}`);
+}
+
+export async function getTopologyMultiHostPlacementPlan(
+  topologyId: string,
+  params?: { provider?: string; machine_type?: string; host_count?: number; placement_mode?: string; persist?: boolean },
+): Promise<TopologyPlacementPlan> {
+  const qs = new URLSearchParams();
+  if (params?.provider) qs.set('provider', params.provider);
+  if (params?.machine_type) qs.set('machine_type', params.machine_type);
+  if (params?.host_count != null) qs.set('host_count', String(params.host_count));
+  if (params?.placement_mode) qs.set('placement_mode', params.placement_mode);
+  if (params?.persist != null) qs.set('persist', String(params.persist));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch<TopologyPlacementPlan>(`/topologies/${topologyId}/multi-host-placement-plan${suffix}`);
+}
+
+export interface PlacementConstraint {
+  id: string;
+  topology_id: string;
+  constraint_type: 'same_host' | 'different_host' | 'preferred_host';
+  node_a: string;
+  node_b?: string | null;
+  preferred_host?: number | null;
+  created_at: string;
+}
+
+export async function listPlacementConstraints(topologyId: string): Promise<PlacementConstraint[]> {
+  const res = await apiFetch<{ items: PlacementConstraint[] }>(`/topologies/${topologyId}/placement-constraints`);
+  return res.items;
+}
+
+export async function createPlacementConstraint(
+  topologyId: string,
+  body: {
+    constraint_type: PlacementConstraint['constraint_type'];
+    node_a: string;
+    node_b?: string | null;
+    preferred_host?: number | null;
+  },
+): Promise<PlacementConstraint> {
+  return apiFetch<PlacementConstraint>(`/topologies/${topologyId}/placement-constraints`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deletePlacementConstraint(topologyId: string, constraintId: string): Promise<void> {
+  await apiFetch<void>(`/topologies/${topologyId}/placement-constraints/${constraintId}`, {
+    method: 'DELETE',
+  });
 }
 
 export function strategyStatusLabel(status: DeploymentStrategyStatus): string {
@@ -234,6 +299,7 @@ export async function generateInfrastructureDeployment(
     template_id?: string;
     machine_type?: string;
     host_count?: number;
+    placement_mode?: string;
     credentials_ref?: string;
     name?: string;
     variables?: Record<string, unknown>;
@@ -271,5 +337,6 @@ export function formatHostUtilization(host: PlacementHost): { cpu: string; memor
 export function formatNodeResourceLine(node: TopologyNodeResourceBreakdown): string {
   const name = node.node_name?.trim() || 'unnamed node';
   const replicasLabel = node.replicas === 1 ? '1 replica' : `${node.replicas} replicas`;
-  return `${name}: ${nodeCpu(node)} CPU, ${nodeMemoryMb(node)} MB, ${nodeDiskGb(node)} GB disk, ${replicasLabel}`;
+  const sourceLabel = node.resource_source ? `, source: ${node.resource_source}` : '';
+  return `${name}: ${nodeCpu(node)} CPU, ${nodeMemoryMb(node)} MB, ${nodeDiskGb(node)} GB disk, ${replicasLabel}${sourceLabel}`;
 }

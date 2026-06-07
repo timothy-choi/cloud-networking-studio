@@ -75,6 +75,28 @@ def test_validate_and_normalize_ports():
     assert out["ports"][0]["port"] == 8080
 
 
+def test_validate_and_normalize_preferred_resource_config():
+    from app.services.node_runtime_config import validate_and_normalize_node_config
+
+    out = validate_and_normalize_node_config(
+        {
+            "resources": {"cpu": "1.5", "memory_mb": "1024", "disk_gb": "10", "replicas": "2"},
+            "exposure": "public",
+            "stateful": True,
+            "required_ports": [80, 443],
+        }
+    )
+    assert out is not None
+    assert out["resources"] == {"cpu": 1.5, "memory_mb": 1024, "disk_gb": 10.0, "replicas": 2}
+    assert out["resource_cpu"] == 1.5
+    assert out["resource_memory_mb"] == 1024
+    assert out["resource_disk_gb"] == 10.0
+    assert out["replicas"] == 2
+    assert out["exposure"] == "public"
+    assert out["stateful"] is True
+    assert out["required_ports"] == [80, 443]
+
+
 def test_runtime_metadata_includes_image_and_command():
     rc = extract_node_runtime_config({"role_label": "web", "command": "nginx"})
     meta = runtime_metadata_from_node(image="nginx:alpine", ip_address="10.0.0.2", runtime=rc)

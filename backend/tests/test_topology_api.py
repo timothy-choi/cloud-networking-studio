@@ -215,6 +215,13 @@ def test_patch_delete_nodes_and_links(client):
     assert pu_resources.json()["config"]["resources"]["disk_gb"] == 20.0
     assert pu_resources.json()["config"]["exposure"] == "public"
     assert pu_resources.json()["config"]["required_ports"] == [80, 443]
+    assert pu_resources.json()["config"]["editor_position"]["x"] == 50
+
+    listed = client.get(f"/topologies/{tid}/nodes")
+    assert listed.status_code == 200
+    node_a = next(n for n in listed.json() if n["id"] == id_a)
+    assert node_a["config"]["resources"]["cpu"] == 2.0
+    assert node_a["config"]["editor_position"]["y"] == 60
 
     nb = client.post(
         f"/topologies/{tid}/nodes",

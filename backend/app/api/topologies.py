@@ -50,17 +50,29 @@ def _maybe_autosave_topology_version(db: Session, topology_id: UUID, user: User)
 
 router = APIRouter(prefix="/topologies", tags=["topologies"])
 
+_CONFIG_NESTED_MERGE_KEYS = frozenset({"resources", "health_check", "editor_position"})
+
 
 def _merge_json_dict(
     base: dict[str, Any] | None,
     patch: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """Shallow-merge patch into base (used for node/link config)."""
+    """Merge patch into base; deep-merge known nested config keys."""
     if patch is None:
         return base
     if base is None:
         return dict(patch)
-    return {**base, **patch}
+    merged = dict(base)
+    for key, value in patch.items():
+        if (
+            key in _CONFIG_NESTED_MERGE_KEYS
+            and isinstance(value, dict)
+            and isinstance(merged.get(key), dict)
+        ):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged[key] = value
+    return merged
 
 
 def _validated_node_fields(
@@ -405,6 +417,8 @@ def patch_topology_node(
         data["config"] = next_config
     for key, val in data.items():
         setattr(node, key, val)
+    if "config" in data:
+        flag_modified(node, "config")
     _maybe_autosave_topology_version(db, topology_id, user)
     db.commit()
     db.refresh(node)

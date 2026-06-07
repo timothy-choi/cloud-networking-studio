@@ -113,10 +113,12 @@ def _resolve_resource_value(config: dict[str, Any], *keys: str) -> Any:
     }
     for key in keys:
         for candidate in aliases.get(key, (key,)):
-            if candidate in config and config[candidate] is not None:
-                return config[candidate]
             if candidate in resources and resources[candidate] is not None:
                 return resources[candidate]
+    for key in keys:
+        for candidate in aliases.get(key, (key,)):
+            if candidate in config and config[candidate] is not None:
+                return config[candidate]
     return None
 
 

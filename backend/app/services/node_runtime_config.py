@@ -518,7 +518,7 @@ def _validate_resource_requests(out: dict[str, Any]) -> None:
             if target:
                 normalized_resources[target] = value
         for key, value in normalized_resources.items():
-            out.setdefault(key, value)
+            out[key] = value
 
     cpu_key = "resource_cpu" if "resource_cpu" in out else "cpu_request"
     if cpu_key in out:

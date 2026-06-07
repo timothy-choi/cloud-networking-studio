@@ -68,6 +68,18 @@ def test_validate_persists_nested_resources_block():
     assert cfg["health_check"]["path"] == "/"
 
 
+def test_resolve_prefers_nested_resources_over_stale_top_level():
+    from app.services.node_resource_metadata import _resolve_resource_value
+
+    config = {
+        "resource_cpu": 0.5,
+        "resource_memory_mb": 512,
+        "resources": {"cpu": 2, "memory_mb": 2048, "disk_gb": 20, "replicas": 1},
+    }
+    assert _resolve_resource_value(config, "resource_cpu") == 2
+    assert _resolve_resource_value(config, "resource_memory_mb") == 2048
+
+
 def test_estimate_uses_saved_nested_resources():
     topo = _topology(
         _node(

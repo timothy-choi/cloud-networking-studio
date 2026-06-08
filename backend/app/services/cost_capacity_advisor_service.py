@@ -188,6 +188,7 @@ def build_cost_capacity_analysis(
     provider: str | None = None,
     machine_type: str | None = None,
     host_count: int | None = None,
+    runtime_strategy_id: str | None = None,
 ) -> dict[str, Any]:
     provider_key = _provider_key(provider or placement_plan.get("provider"))
     selected_machine_type = (machine_type or placement_plan.get("recommended_machine_type") or "").strip()
@@ -199,6 +200,16 @@ def build_cost_capacity_analysis(
     capacity = analyze_capacity(placement_plan)
     headroom = analyze_headroom(placement_plan)
     scaling_risk = assess_scaling_risk(capacity)
+
+    runtime_strategy = None
+    if runtime_strategy_id:
+        from app.services.runtime_strategy_plan_service import runtime_strategy_summary_for_cost
+
+        runtime_strategy = runtime_strategy_summary_for_cost(
+            strategy_id=runtime_strategy_id,
+            host_count=selected_host_count,
+        )
+
     return {
         "cost_estimate": estimate_monthly_cost(
             provider=provider_key,
@@ -216,4 +227,5 @@ def build_cost_capacity_analysis(
             placement_plan=placement_plan,
             scaling_risk=scaling_risk,
         ),
+        "runtime_strategy": runtime_strategy,
     }

@@ -9,12 +9,14 @@ import {
   getAiInfrastructureAdvice,
   getTopologyCostCapacityAnalysis,
   getTopologyPlacementPlan,
+  getTopologyRuntimeStrategyPlan,
   getTopologyStrategyRecommendation,
   isStrategySelectable,
   listPlacementConstraints,
   type AiInfrastructureAdvice,
   type CostCapacityAnalysis,
   type PlacementConstraint,
+  type RuntimeStrategyPlan,
   type StrategyRecommendation,
   type TopologyPlacementPlan,
 } from '../../api/topologyPlacement';
@@ -24,6 +26,7 @@ import { AiInfrastructureAdvisorSection } from './AiInfrastructureAdvisorSection
 import {
   CostCapacitySection,
   DeploymentStrategySection,
+  RuntimeStrategySection,
   HostRecommendationSection,
   PlacementConstraintsSection,
   PlacementPlanSection,
@@ -46,6 +49,7 @@ export function TopologyPlacementPlanningPanel({
 }: Props) {
   const [plan, setPlan] = useState<TopologyPlacementPlan | null>(null);
   const [strategy, setStrategy] = useState<StrategyRecommendation | null>(null);
+  const [runtimeStrategyPlan, setRuntimeStrategyPlan] = useState<RuntimeStrategyPlan | null>(null);
   const [costCapacity, setCostCapacity] = useState<CostCapacityAnalysis | null>(null);
   const [selectedStrategyId, setSelectedStrategyId] = useState('docker-vm');
   const [profiles, setProfiles] = useState<CredentialProfile[]>([]);
@@ -93,6 +97,7 @@ export function TopologyPlacementPlanningPanel({
       setPlan(null);
       setStrategy(null);
       setCostCapacity(null);
+      setRuntimeStrategyPlan(null);
     } finally {
       setLoading(false);
     }
@@ -229,6 +234,20 @@ export function TopologyPlacementPlanningPanel({
 
   const selectedStrategy = strategy?.strategies.find((s) => s.id === selectedStrategyId);
   const strategyNotAvailable = !selectedStrategy || !isStrategySelectable(selectedStrategy.status);
+  const runtimeStrategyBlocked = runtimeStrategyPlan ? !runtimeStrategyPlan.can_generate_infrastructure : false;
+
+  useEffect(() => {
+    if (!topologyId || !strategy) return;
+    const params = {
+      provider: 'gcp' as const,
+      placement_mode: placementMode,
+      selected_strategy: selectedStrategyId,
+      ...(machineType.trim() ? { machine_type: machineType.trim() } : {}),
+    };
+    void getTopologyRuntimeStrategyPlan(topologyId, params)
+      .then(setRuntimeStrategyPlan)
+      .catch(() => setRuntimeStrategyPlan(null));
+  }, [topologyId, selectedStrategyId, machineType, placementMode, strategy]);
 
   return (
     <div className="space-y-4">
@@ -308,6 +327,7 @@ export function TopologyPlacementPlanningPanel({
             onSelectStrategy={setSelectedStrategyId}
             readOnly={readOnly}
           />
+          <RuntimeStrategySection plan={runtimeStrategyPlan} />
           <CostCapacitySection analysis={costCapacity} />
           <AiInfrastructureAdvisorSection
             advice={aiAdvice}
@@ -350,7 +370,7 @@ export function TopologyPlacementPlanningPanel({
                   </label>
                   <button
                     type="button"
-                    disabled={busy || hasCapacityWarning || strategyNotAvailable}
+                    disabled={busy || hasCapacityWarning || strategyNotAvailable || runtimeStrategyBlocked}
                     onClick={() => void onGenerate()}
                     className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                   >

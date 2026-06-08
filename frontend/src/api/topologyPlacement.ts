@@ -105,6 +105,59 @@ export interface StrategyRecommendation {
   recommended_strategy_detail?: DeploymentStrategy | null;
 }
 
+export type RuntimeStrategyStatus = 'available' | 'planning_only' | 'future';
+export type RuntimeHostModel = 'single_host' | 'multi_host' | 'cluster';
+
+export interface RuntimeStrategy {
+  id: string;
+  display_name: string;
+  status: RuntimeStrategyStatus;
+  runtime_provider: string;
+  host_model: RuntimeHostModel;
+  deployment_model: string;
+  supports_multi_host: boolean;
+  supports_runtime_target_generation: boolean;
+  supports_external_deployment: boolean;
+  description: string;
+}
+
+export interface RuntimeRequirementItem {
+  key: string;
+  label: string;
+  description: string;
+  required: boolean;
+}
+
+export interface RuntimeStrategyCapabilities {
+  runtime_target_generation: boolean;
+  external_deployment: boolean;
+  multi_host: boolean;
+}
+
+export interface RuntimeStrategyPlan {
+  recommended_runtime_strategy: string;
+  selected_runtime_strategy: string;
+  runtime_strategy: RuntimeStrategy;
+  capabilities: RuntimeStrategyCapabilities;
+  runtime_target_requirements: RuntimeRequirementItem[];
+  deployment_requirements: RuntimeRequirementItem[];
+  unsupported_features: string[];
+  can_generate_infrastructure: boolean;
+  generation_block_reason?: string | null;
+  host_count: number;
+  placement_constraints_count: number;
+}
+
+export interface RuntimeStrategyCostSummary {
+  id: string;
+  display_name: string;
+  status: RuntimeStrategyStatus;
+  runtime_provider: string;
+  host_model: RuntimeHostModel;
+  deployment_model: string;
+  host_count: number;
+}
+
 export interface CostCapacityAnalysis {
   cost_estimate: {
     provider: string;
@@ -137,6 +190,7 @@ export interface CostCapacityAnalysis {
     cheaper_alternative?: string | null;
     safer_alternative?: string | null;
   };
+  runtime_strategy?: RuntimeStrategyCostSummary | null;
 }
 
 export interface GenerateInfrastructureDeploymentResponse {
@@ -241,6 +295,19 @@ export async function deletePlacementConstraint(topologyId: string, constraintId
   await apiFetch<void>(`/topologies/${topologyId}/placement-constraints/${constraintId}`, {
     method: 'DELETE',
   });
+}
+
+export function runtimeHostModelLabel(hostModel: RuntimeHostModel): string {
+  if (hostModel === 'single_host') return 'single host';
+  if (hostModel === 'multi_host') return 'multi host';
+  return 'cluster';
+}
+
+export function runtimeDeploymentModelLabel(deploymentModel: string): string {
+  if (deploymentModel === 'docker_compose') return 'Docker Compose';
+  if (deploymentModel === 'multi_host_compose') return 'Multi-host Compose';
+  if (deploymentModel === 'manifests_or_helm') return 'Manifests or Helm';
+  return deploymentModel.replaceAll('_', ' ');
 }
 
 export function strategyStatusLabel(status: DeploymentStrategyStatus): string {

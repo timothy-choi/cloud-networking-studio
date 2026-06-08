@@ -1,8 +1,19 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-import { formatNodeResourceLine, formatHostUtilization, isStrategySelectable } from '../../api/topologyPlacement';
-import type { CostCapacityAnalysis, StrategyRecommendation, TopologyPlacementPlan } from '../../api/topologyPlacement';
+import {
+  formatNodeResourceLine,
+  formatHostUtilization,
+  isStrategySelectable,
+  runtimeDeploymentModelLabel,
+  runtimeHostModelLabel,
+} from '../../api/topologyPlacement';
+import type {
+  CostCapacityAnalysis,
+  RuntimeStrategyPlan,
+  StrategyRecommendation,
+  TopologyPlacementPlan,
+} from '../../api/topologyPlacement';
 import {
   CostCapacitySection,
   DeploymentStrategySection,
@@ -10,6 +21,7 @@ import {
   PlacementPlanSection,
   PlacementWarningsSection,
   ResourceEstimateSection,
+  RuntimeStrategySection,
 } from './TopologyPlacementPlanSections';
 
 vi.mock('../../api/topologyPlacement', async (importOriginal) => {
@@ -19,6 +31,7 @@ vi.mock('../../api/topologyPlacement', async (importOriginal) => {
     getTopologyPlacementPlan: vi.fn(() => new Promise(() => {})),
     getTopologyStrategyRecommendation: vi.fn(() => new Promise(() => {})),
     getTopologyCostCapacityAnalysis: vi.fn(() => new Promise(() => {})),
+    getTopologyRuntimeStrategyPlan: vi.fn(() => new Promise(() => {})),
     listPlacementConstraints: vi.fn(() => Promise.resolve([])),
     createPlacementConstraint: vi.fn(),
     deletePlacementConstraint: vi.fn(),
@@ -148,6 +161,66 @@ const sampleStrategy: StrategyRecommendation = {
       template_id: 'k8s-cluster',
     },
   ],
+};
+
+const sampleRuntimeStrategyPlan: RuntimeStrategyPlan = {
+  recommended_runtime_strategy: 'docker-vm',
+  selected_runtime_strategy: 'docker-vm',
+  runtime_strategy: {
+    id: 'docker-vm',
+    display_name: 'Docker VM',
+    status: 'available',
+    runtime_provider: 'remote_docker',
+    host_model: 'single_host',
+    deployment_model: 'docker_compose',
+    supports_multi_host: false,
+    supports_runtime_target_generation: true,
+    supports_external_deployment: true,
+    description: 'Single remote Docker host.',
+  },
+  capabilities: {
+    runtime_target_generation: true,
+    external_deployment: true,
+    multi_host: false,
+  },
+  runtime_target_requirements: [
+    { key: 'ssh_credential', label: 'SSH credential', description: 'SSH credential profile for host access', required: true },
+    { key: 'docker', label: 'Docker', description: 'Docker engine installed on the remote host', required: true },
+    { key: 'docker_compose', label: 'Docker Compose', description: 'Docker Compose available on the remote host', required: true },
+    { key: 'remote_workdir', label: 'remote_workdir', description: 'Writable remote_workdir on the target host', required: true },
+  ],
+  deployment_requirements: [],
+  unsupported_features: [],
+  can_generate_infrastructure: true,
+  host_count: 1,
+  placement_constraints_count: 0,
+};
+
+const sampleRuntimeStrategyPlanBlocked: RuntimeStrategyPlan = {
+  ...sampleRuntimeStrategyPlan,
+  selected_runtime_strategy: 'docker-multi-vm',
+  runtime_strategy: {
+    ...sampleRuntimeStrategyPlan.runtime_strategy,
+    id: 'docker-multi-vm',
+    display_name: 'Docker Multi-VM',
+    status: 'planning_only',
+    runtime_provider: 'remote_docker_cluster',
+    host_model: 'multi_host',
+    deployment_model: 'multi_host_compose',
+    supports_multi_host: true,
+    supports_runtime_target_generation: false,
+    supports_external_deployment: false,
+    description: 'Planning only.',
+  },
+  capabilities: {
+    runtime_target_generation: false,
+    external_deployment: false,
+    multi_host: true,
+  },
+  unsupported_features: ['Multi-host infrastructure apply', 'Runtime target generation for multiple hosts'],
+  can_generate_infrastructure: false,
+  generation_block_reason: 'Runtime strategy is planning-only and cannot generate infrastructure yet.',
+  host_count: 2,
 };
 
 const sampleCostCapacity: CostCapacityAnalysis = {
@@ -368,6 +441,35 @@ describe('PlacementWarningsSection', () => {
   it('shows none when there are no warnings', () => {
     const html = renderToStaticMarkup(<PlacementWarningsSection warnings={[]} />);
     expect(html).toContain('None');
+  });
+});
+
+describe('runtime strategy helpers', () => {
+  it('formats host and deployment model labels', () => {
+    expect(runtimeHostModelLabel('single_host')).toBe('single host');
+    expect(runtimeDeploymentModelLabel('docker_compose')).toBe('Docker Compose');
+  });
+});
+
+describe('RuntimeStrategySection', () => {
+  it('renders runtime strategy capabilities and requirements', () => {
+    const html = renderToStaticMarkup(<RuntimeStrategySection plan={sampleRuntimeStrategyPlan} />);
+    expect(html).toContain('Runtime strategy');
+    expect(html).toContain('docker-vm');
+    expect(html).toContain('remote_docker');
+    expect(html).toContain('single host');
+    expect(html).toContain('Docker Compose');
+    expect(html).toContain('SSH credential');
+    expect(html).toContain('Runtime target generation');
+    expect(html).toContain('External deployment');
+  });
+
+  it('renders unsupported features and block reason for planning-only strategies', () => {
+    const html = renderToStaticMarkup(<RuntimeStrategySection plan={sampleRuntimeStrategyPlanBlocked} />);
+    expect(html).toContain('docker-multi-vm');
+    expect(html).toContain('planning only');
+    expect(html).toContain('Multi-host infrastructure apply');
+    expect(html).toContain('planning-only and cannot generate infrastructure yet');
   });
 });
 

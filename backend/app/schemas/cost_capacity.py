@@ -43,9 +43,20 @@ class CostCapacityAlternativesResponse(BaseModel):
     safer_alternative: str | None = None
 
 
+class RuntimeStrategyCostSummary(BaseModel):
+    id: str
+    display_name: str
+    status: str
+    runtime_provider: str
+    host_model: str
+    deployment_model: str
+    host_count: int
+
+
 class CostCapacityAnalysisResponse(BaseModel):
     cost_estimate: CostEstimateResponse
     capacity: CapacityAnalysisResponse
     headroom: HeadroomAnalysisResponse
     scaling_risk: ScalingRiskResponse
     alternatives: CostCapacityAlternativesResponse
+    runtime_strategy: RuntimeStrategyCostSummary | None = None

@@ -88,6 +88,7 @@ def test_generate_docker_vm_runtime_package(client_strict, engine_db):
     assert body["status"] == "generated"
     assert body["planning_only"] is False
     assert "docker-compose.yml" in body["files"]
+    assert ".env.example" in body["files"]
     assert "deployment-manifest.json" in body["files"]
     assert "host-placement.json" in body["files"]
     assert "README.md" in body["files"]
@@ -106,7 +107,16 @@ def test_generate_docker_vm_runtime_package(client_strict, engine_db):
     assert "image: nginx:alpine" in compose
     assert "healthcheck:" in compose
     assert "cns-net:" in compose
-    assert "10.50.0.0/24" in compose
+    assert "CNS_RUNTIME_SUBNET" in compose
+    assert "${CNS_RUNTIME_SUBNET:-10.250.0.0/24}" in compose
+    assert "10.50.0.0/24" not in compose
+
+    env_example = _read_zip_member(download.content, ".env.example")
+    assert "CNS_RUNTIME_SUBNET=10.250.0.0/24" in env_example
+
+    readme = _read_zip_member(download.content, "README.md")
+    assert "cp .env.example .env" in readme
+    assert "CNS_RUNTIME_SUBNET" in readme
 
     manifest = json.loads(_read_zip_member(download.content, "deployment-manifest.json"))
     assert manifest["topology_id"] == topo_id
@@ -265,6 +275,30 @@ def test_missing_images_returns_validation_error(client_strict, engine_db):
     )
     assert response.status_code == 400
     assert "images" in response.json()["detail"].lower()
+
+
+def test_docker_compose_uses_configurable_runtime_subnet_unit():
+    from types import SimpleNamespace
+
+    topo = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="subnet-lab",
+        nodes=[
+            SimpleNamespace(
+                id=uuid.uuid4(),
+                name="web",
+                node_type=SimpleNamespace(value="host"),
+                image="nginx:alpine",
+                ip_address=None,
+                config={"resource_cpu": 0.5, "resource_memory_mb": 512, "resource_disk_gb": 5},
+            ),
+        ],
+        links=[],
+    )
+    compose = package_svc.generate_docker_compose(topo)  # type: ignore[arg-type]
+    assert "${CNS_RUNTIME_SUBNET:-10.250.0.0/24}" in compose
+    assert "10.50.0.0/24" not in compose
+    assert "10.250.0.10" in compose
 
 
 def test_compose_service_name_sanitization_unit():

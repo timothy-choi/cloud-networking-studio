@@ -107,7 +107,16 @@ def test_generate_docker_vm_runtime_package(client_strict, engine_db):
     assert "image: nginx:alpine" in compose
     assert "healthcheck:" in compose
     assert "cns-net:" in compose
-    assert "10.50.0.0/24" in compose
+    assert "CNS_RUNTIME_SUBNET" in compose
+    assert "${CNS_RUNTIME_SUBNET:-10.250.0.0/24}" in compose
+    assert "10.50.0.0/24" not in compose
+
+    env_example = _read_zip_member(download.content, ".env.example")
+    assert "CNS_RUNTIME_SUBNET=10.250.0.0/24" in env_example
+
+    readme = _read_zip_member(download.content, "README.md")
+    assert "cp .env.example .env" in readme
+    assert "CNS_RUNTIME_SUBNET" in readme
 
     manifest = json.loads(_read_zip_member(download.content, "deployment-manifest.json"))
     assert manifest["topology_id"] == topo_id

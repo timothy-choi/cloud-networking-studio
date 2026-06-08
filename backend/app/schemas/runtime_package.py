@@ -21,3 +21,16 @@ class RuntimePackageGenerateResponse(BaseModel):
     download_url: str
     planning_only: bool = False
     limitations: list[str] = Field(default_factory=list)
+
+
+class RuntimePackageImportResponse(BaseModel):
+    topology_id: str
+    project_id: str
+    name: str
+    strategy_id: str
+    node_count: int
+    link_count: int
+    placement_plan_id: str | None = None
+    files_imported: list[str]
+    warnings: list[str] = Field(default_factory=list)
+    planning_only: bool = False

@@ -7,6 +7,7 @@ import { listProjects } from '../api/projects';
 import type { ProjectResponse } from '../api/projects';
 import { createDemoTopology, deleteTopology, listTopologies } from '../api/topologies';
 import { CreateBlankTopologyModal } from '../components/CreateBlankTopologyModal';
+import { RuntimePackageImportSection } from '../components/topology/TopologyPlacementPlanSections';
 import { CreateProjectModal } from '../components/CreateProjectModal';
 import { OnboardingChecklist } from '../components/OnboardingChecklist';
 import { ProjectMembersPanel } from '../components/ProjectMembersPanel';
@@ -464,6 +465,15 @@ export function DashboardPage() {
           >
             {templateLoading ? 'Creating…' : 'Create from template'}
           </button>
+          <RuntimePackageImportSection
+            projectId={selectedProjectId}
+            readOnly={viewerInProject}
+            compact
+            onImported={(result) => {
+              void refresh();
+              navigate(`/topologies/${result.topology_id}`);
+            }}
+          />
           <button
             type="button"
             onClick={() => void refresh()}

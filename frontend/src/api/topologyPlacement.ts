@@ -1,4 +1,4 @@
-import { apiFetch, apiFetchBlob } from './client';
+import { ApiError, apiFetch, apiFetchBlob, getStoredAccessToken, resolveApiUrl } from './client';
 
 export interface TopologyNodeResourceBreakdown {
   node_id: string;
@@ -408,6 +408,46 @@ export async function generateRuntimePackage(
     method: 'POST',
     body: JSON.stringify(body),
   });
+}
+
+export interface RuntimePackageImportResponse {
+  topology_id: string;
+  project_id: string;
+  name: string;
+  strategy_id: string;
+  node_count: number;
+  link_count: number;
+  placement_plan_id?: string | null;
+  files_imported: string[];
+  warnings: string[];
+  planning_only: boolean;
+}
+
+export async function importRuntimePackage(
+  file: File,
+  params?: { project_id?: string; name?: string },
+): Promise<RuntimePackageImportResponse> {
+  const form = new FormData();
+  form.append('file', file);
+  if (params?.project_id) form.append('project_id', params.project_id);
+  if (params?.name?.trim()) form.append('name', params.name.trim());
+  const token = getStoredAccessToken();
+  const url = resolveApiUrl('/runtime-packages/import');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!res.ok) {
+    let detail: unknown = await res.text();
+    try {
+      detail = JSON.parse(String(detail));
+    } catch {
+      /* plain text */
+    }
+    throw new ApiError(res.status, res.statusText, detail, null, url);
+  }
+  return (await res.json()) as RuntimePackageImportResponse;
 }
 
 export async function downloadRuntimePackage(packageId: string): Promise<void> {

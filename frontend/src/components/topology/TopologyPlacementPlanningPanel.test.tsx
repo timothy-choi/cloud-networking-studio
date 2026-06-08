@@ -22,6 +22,7 @@ import {
   PlacementWarningsSection,
   ResourceEstimateSection,
   RuntimePackageExportSection,
+  RuntimePackageImportSection,
   RuntimeStrategySection,
 } from './TopologyPlacementPlanSections';
 
@@ -449,6 +450,17 @@ describe('runtime strategy helpers', () => {
   it('formats host and deployment model labels', () => {
     expect(runtimeHostModelLabel('single_host')).toBe('single host');
     expect(runtimeDeploymentModelLabel('docker_compose')).toBe('Docker Compose');
+  });
+});
+
+describe('RuntimePackageImportSection', () => {
+  it('renders import runtime package button', () => {
+    const html = renderToStaticMarkup(
+      <RuntimePackageImportSection projectId="proj-1" onImported={() => {}} />,
+    );
+    expect(html).toContain('Runtime package import');
+    expect(html).toContain('Import Runtime Package');
+    expect(html).toContain('parsed only');
   });
 });
 

@@ -21,6 +21,7 @@ from app.services.infra_apply_safety import GCP_APPLY_MACHINE_TYPES
 from app.services import credential_profile_service as profile_svc
 from app.services import cost_capacity_advisor_service as cost_capacity_svc
 from app.services import deployment_strategy_recommendation_service as strategy_svc
+from app.services import runtime_strategy_plan_service as runtime_strategy_svc
 from app.services import topology_placement_persistence_service as placement_persist_svc
 from app.services import topology_placement_planner_service as placement_svc
 
@@ -129,12 +130,20 @@ def build_advisor_context(
         constraints=constraints,
     )
     strategy = strategy_svc.recommend_strategy_from_plan(plan)
+    selected = (selected_strategy or strategy.get("recommended_strategy") or "docker-vm").strip()
+    runtime_strategy_plan = runtime_strategy_svc.build_runtime_strategy_plan(
+        placement_plan=plan,
+        strategy_recommendation=strategy,
+        constraints=constraints,
+        selected_strategy_id=selected,
+    )
     estimate = placement_svc.build_resource_estimate(topology)
     cost_capacity = cost_capacity_svc.build_cost_capacity_analysis(
         plan,
         provider=provider,
         machine_type=machine_type or plan.get("recommended_machine_type"),
         host_count=plan.get("recommended_host_count"),
+        runtime_strategy_id=selected,
     )
 
     credential_summary = None
@@ -191,6 +200,23 @@ def build_advisor_context(
             "reasons": strategy.get("reasons"),
             "warnings": strategy.get("warnings"),
             "evaluation": strategy.get("evaluation"),
+        },
+        "runtime_strategy_plan": {
+            k: runtime_strategy_plan[k]
+            for k in (
+                "recommended_runtime_strategy",
+                "selected_runtime_strategy",
+                "runtime_strategy",
+                "capabilities",
+                "runtime_target_requirements",
+                "deployment_requirements",
+                "unsupported_features",
+                "can_generate_infrastructure",
+                "generation_block_reason",
+                "host_count",
+                "placement_constraints_count",
+            )
+            if k in runtime_strategy_plan
         },
         "cost_capacity_analysis": cost_capacity,
         "selected": {

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -18,6 +18,13 @@ from app.schemas.ai_infrastructure_advice import (
 )
 from app.schemas.cost_capacity import CostCapacityAnalysisResponse
 from app.schemas.deployment_strategy import StrategyRecommendationResponse
+from app.schemas.runtime_strategy import (
+    RuntimeRequirementItem,
+    RuntimeStrategyCapabilities,
+    RuntimeStrategyListResponse,
+    RuntimeStrategyPlanResponse,
+    RuntimeStrategyResponse,
+)
 from app.schemas.topology_placement import (
     GenerateInfrastructureDeploymentRequest,
     GenerateInfrastructureDeploymentResponse,
@@ -31,8 +38,9 @@ from app.schemas.topology_placement import (
     TopologyResourceEstimateResponse,
 )
 from app.services.access_control import get_topology_for_user, require_topology_editor
-from app.services.deployment_strategy_registry import assert_strategy_available
 from app.services import deployment_strategy_recommendation_service as strategy_svc
+from app.services.runtime_strategy_registry import assert_runtime_strategy_for_generation, list_runtime_strategies, runtime_strategy_to_dict
+from app.services import runtime_strategy_plan_service as runtime_strategy_svc
 from app.services import ai_infrastructure_advisor_service as advisor_svc
 from app.services import cost_capacity_advisor_service as cost_capacity_svc
 from app.services import infrastructure_deployment_service as infra_svc
@@ -119,6 +127,63 @@ def _placement_response(raw: dict) -> TopologyPlacementPlanResponse:
         nodes=[TopologyNodeResourceBreakdown(**node) for node in raw.get("nodes") or []],
         constraints_used=raw.get("constraints_used") or [],
     )
+
+
+@router.get("/runtime-strategies", response_model=RuntimeStrategyListResponse)
+def list_runtime_strategies_endpoint() -> RuntimeStrategyListResponse:
+    return RuntimeStrategyListResponse(
+        items=[RuntimeStrategyResponse(**runtime_strategy_to_dict(row)) for row in list_runtime_strategies()]
+    )
+
+
+def _runtime_strategy_plan_response(raw: dict) -> RuntimeStrategyPlanResponse:
+    strategy = raw.get("runtime_strategy") or {}
+    capabilities = raw.get("capabilities") or {}
+    return RuntimeStrategyPlanResponse(
+        recommended_runtime_strategy=raw["recommended_runtime_strategy"],
+        selected_runtime_strategy=raw["selected_runtime_strategy"],
+        runtime_strategy=RuntimeStrategyResponse(**strategy),
+        capabilities=RuntimeStrategyCapabilities(**capabilities),
+        runtime_target_requirements=[
+            RuntimeRequirementItem(**item) for item in (raw.get("runtime_target_requirements") or [])
+        ],
+        deployment_requirements=[RuntimeRequirementItem(**item) for item in (raw.get("deployment_requirements") or [])],
+        unsupported_features=raw.get("unsupported_features") or [],
+        can_generate_infrastructure=bool(raw.get("can_generate_infrastructure")),
+        generation_block_reason=raw.get("generation_block_reason"),
+        host_count=int(raw.get("host_count") or 0),
+        placement_constraints_count=int(raw.get("placement_constraints_count") or 0),
+    )
+
+
+@router.get(
+    "/topologies/{topology_id}/runtime-strategy-plan",
+    response_model=RuntimeStrategyPlanResponse,
+)
+def get_topology_runtime_strategy_plan(
+    topology_id: UUID,
+    provider: str = "gcp",
+    machine_type: str | None = None,
+    host_count: int | None = None,
+    placement_mode: str = "first_fit",
+    selected_strategy: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimeStrategyPlanResponse:
+    topology = _load_topology(db, user, topology_id)
+    try:
+        raw = runtime_strategy_svc.build_runtime_strategy_plan_for_topology(
+            topology,
+            db=db,
+            provider=provider,
+            machine_type=machine_type,
+            host_count=host_count,
+            placement_mode=placement_mode,
+            selected_strategy_id=selected_strategy,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _runtime_strategy_plan_response(raw)
 
 
 @router.get(
@@ -224,13 +289,14 @@ def create_topology_placement_constraint(
 @router.delete(
     "/topologies/{topology_id}/placement-constraints/{constraint_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
 )
 def delete_topology_placement_constraint(
     topology_id: UUID,
     constraint_id: UUID,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> None:
+) -> Response:
     topology = _load_topology(db, user, topology_id)
     require_topology_editor(db, user, topology.id)
     deleted = placement_persist_svc.delete_constraint(
@@ -241,6 +307,7 @@ def delete_topology_placement_constraint(
     if deleted is None:
         raise HTTPException(status_code=404, detail="Placement constraint not found")
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -345,11 +412,20 @@ def get_topology_cost_capacity_analysis(
             placement_mode=placement_mode,
             constraints=placement_persist_svc.constraints_as_dicts(db, topology_id),
         )
+        strategy_rec = strategy_svc.build_strategy_recommendation(
+            topology,
+            provider=provider,
+            machine_type=machine_type,
+            host_count=host_count,
+            placement_mode=placement_mode,
+            constraints=placement_persist_svc.constraints_as_dicts(db, topology_id),
+        )
         analysis = cost_capacity_svc.build_cost_capacity_analysis(
             plan,
             provider=provider,
             machine_type=machine_type,
             host_count=host_count,
+            runtime_strategy_id=strategy_rec.get("recommended_strategy"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -414,7 +490,6 @@ def generate_infrastructure_deployment(
     topology = _load_topology(db, user, topology_id)
     try:
         strategy_id = (body.template_id or "docker-vm").strip()
-        assert_strategy_available(strategy_id)
         template_id = strategy_svc.resolve_template_id_for_strategy(strategy_id)
         draft = placement_svc.build_generate_deployment_payload(
             topology,
@@ -429,6 +504,9 @@ def generate_infrastructure_deployment(
             credentials_ref=body.credentials_ref,
             name=body.name,
         )
+        plan = draft["placement_plan"]
+        plan_host_count = len(plan.get("hosts") or []) or int(plan.get("recommended_host_count") or 1)
+        assert_runtime_strategy_for_generation(strategy_id, host_count=plan_host_count)
         capacity = draft["capacity_check"]
         if capacity["status"] == "insufficient_capacity":
             raise ValueError(
@@ -444,7 +522,6 @@ def generate_infrastructure_deployment(
             variables=draft["variables"],
             credentials_ref=draft.get("credentials_ref"),
         )
-        plan = draft["placement_plan"]
         saved_plan = placement_persist_svc.save_plan(
             db,
             topology_id=topology.id,
@@ -461,6 +538,7 @@ def generate_infrastructure_deployment(
             "topology_capacity": capacity,
             "generated_from_topology": True,
             "deployment_strategy": strategy_id,
+            "runtime_strategy": strategy_id,
             "exposed_ports": plan.get("exposed_ports") or [],
             "recommended_disk_gb": plan.get("total_disk_gb"),
         }

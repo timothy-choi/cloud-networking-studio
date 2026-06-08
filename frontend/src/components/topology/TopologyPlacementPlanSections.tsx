@@ -2,10 +2,13 @@ import {
   formatHostUtilization,
   formatNodeResourceLine,
   isStrategySelectable,
+  runtimeDeploymentModelLabel,
+  runtimeHostModelLabel,
   strategyStatusLabel,
   type CostCapacityAnalysis,
   type DeploymentStrategy,
   type PlacementConstraint,
+  type RuntimeStrategyPlan,
   type StrategyRecommendation,
   type TopologyPlacementPlan,
 } from '../../api/topologyPlacement';
@@ -146,6 +149,89 @@ export function PlacementWarningsSection({ warnings }: { warnings: string[] }) {
 
 function strategyById(strategies: DeploymentStrategy[], id: string): DeploymentStrategy | undefined {
   return strategies.find((s) => s.id === id);
+}
+
+export function RuntimeStrategySection({ plan }: { plan: RuntimeStrategyPlan | null }) {
+  if (!plan) {
+    return (
+      <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Runtime strategy</h3>
+        <p className="mt-2 text-sm text-cns-muted">Loading runtime strategy plan…</p>
+      </section>
+    );
+  }
+
+  const strategy = plan.runtime_strategy;
+  const supported: string[] = [];
+  if (plan.capabilities.runtime_target_generation) supported.push('Runtime target generation');
+  if (plan.capabilities.external_deployment) supported.push('External deployment');
+  if (plan.capabilities.multi_host) supported.push('Multi-host placement');
+
+  return (
+    <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+      <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Runtime strategy</h3>
+      <p className="mt-2 text-sm">
+        <span className="font-mono font-medium">{plan.selected_runtime_strategy}</span>
+        <span className="ml-2 text-xs text-cns-muted">({strategyStatusLabel(strategy.status)})</span>
+      </p>
+      <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+        <div>
+          <dt className="text-xs text-cns-muted">Runtime provider</dt>
+          <dd className="font-mono">{strategy.runtime_provider}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-cns-muted">Host model</dt>
+          <dd>{runtimeHostModelLabel(strategy.host_model)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-cns-muted">Deployment model</dt>
+          <dd>{runtimeDeploymentModelLabel(strategy.deployment_model)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-cns-muted">Placement hosts</dt>
+          <dd>{plan.host_count}</dd>
+        </div>
+      </dl>
+
+      <div className="mt-3">
+        <p className="text-xs font-medium text-cns-label">Requirements</p>
+        <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm">
+          {plan.runtime_target_requirements.map((item) => (
+            <li key={item.key}>
+              {item.label}
+              {!item.required ? ' (optional)' : ''}: {item.description}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {supported.length > 0 ? (
+        <div className="mt-3">
+          <p className="text-xs font-medium text-cns-label">Supported</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm">
+            {supported.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {plan.unsupported_features.length > 0 ? (
+        <div className="mt-3">
+          <p className="text-xs font-medium text-cns-label">Unsupported features</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-amber-900 dark:text-amber-200">
+            {plan.unsupported_features.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {!plan.can_generate_infrastructure && plan.generation_block_reason ? (
+        <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">{plan.generation_block_reason}</p>
+      ) : null}
+    </section>
+  );
 }
 
 export function DeploymentStrategySection({

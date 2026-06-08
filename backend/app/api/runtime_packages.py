@@ -1,18 +1,54 @@
-"""Runtime package download routes (Step 65)."""
+"""Runtime package download and import routes (Steps 65–66)."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
+from app.schemas.runtime_package import RuntimePackageImportResponse
 from app.services.access_control import get_topology_for_user
 from app.services import runtime_package_export_service as package_svc
+from app.services import runtime_package_import_service as import_svc
 
 router = APIRouter(prefix="/runtime-packages", tags=["runtime-packages"])
+
+
+@router.post(
+    "/import",
+    response_model=RuntimePackageImportResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Import a runtime deployment package ZIP and recreate topology metadata",
+)
+async def import_runtime_package(
+    file: UploadFile = File(..., description="Runtime package ZIP exported from CNS"),
+    project_id: UUID | None = Form(default=None),
+    name: str | None = Form(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimePackageImportResponse:
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Upload a .zip runtime package file.")
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    try:
+        raw = import_svc.import_runtime_package(
+            db,
+            user=user,
+            zip_bytes=payload,
+            project_id=project_id,
+            name=name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return RuntimePackageImportResponse(**raw)
 
 
 @router.get(

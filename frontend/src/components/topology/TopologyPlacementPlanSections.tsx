@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { formatApiError } from '../../api/client';
 import {
@@ -6,6 +6,7 @@ import {
   formatHostUtilization,
   formatNodeResourceLine,
   generateRuntimePackage,
+  importRuntimePackage,
   isStrategySelectable,
   runtimeDeploymentModelLabel,
   runtimeHostModelLabel,
@@ -14,6 +15,7 @@ import {
   type DeploymentStrategy,
   type PlacementConstraint,
   type RuntimePackageGenerateResponse,
+  type RuntimePackageImportResponse,
   type RuntimeStrategyPlan,
   type StrategyRecommendation,
   type TopologyPlacementPlan,
@@ -363,6 +365,104 @@ export function RuntimePackageExportSection({
           ) : null}
         </div>
       ) : null}
+    </section>
+  );
+}
+
+export function RuntimePackageImportSection({
+  projectId,
+  readOnly = false,
+  onImported,
+  compact = false,
+}: {
+  projectId: string | null;
+  readOnly?: boolean;
+  onImported: (result: RuntimePackageImportResponse) => void;
+  compact?: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<RuntimePackageImportResponse | null>(null);
+
+  async function onFileSelected(file: File | undefined) {
+    if (!file || !projectId) return;
+    setLoading(true);
+    setErr(null);
+    try {
+      const imported = await importRuntimePackage(file, { project_id: projectId });
+      setResult(imported);
+      onImported(imported);
+    } catch (e) {
+      setErr(formatApiError(e));
+      setResult(null);
+    } finally {
+      setLoading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  }
+
+  const content = (
+    <>
+      <p className={compact ? 'text-xs text-cns-muted' : 'mt-2 text-sm text-cns-muted'}>
+        Upload a previously exported runtime package ZIP to recreate topology nodes, placement metadata, and
+        constraints. Files are parsed only — nothing is executed.
+      </p>
+      {!readOnly ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".zip,application/zip"
+            className="hidden"
+            onChange={(e) => void onFileSelected(e.target.files?.[0])}
+          />
+          <button
+            type="button"
+            disabled={loading || !projectId}
+            onClick={() => inputRef.current?.click()}
+            className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium dark:border-zinc-600"
+          >
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                <Spinner /> Importing…
+              </span>
+            ) : (
+              'Import Runtime Package'
+            )}
+          </button>
+        </div>
+      ) : null}
+      {err ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{err}</p> : null}
+      {result ? (
+        <div className="mt-3 text-sm">
+          <p>
+            Imported <span className="font-mono font-medium">{result.name}</span> with {result.node_count} node
+            {result.node_count === 1 ? '' : 's'}.
+          </p>
+          {result.planning_only ? (
+            <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">Planning-only package — not directly runnable.</p>
+          ) : null}
+          {result.warnings.length > 0 ? (
+            <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-amber-900 dark:text-amber-200">
+              {result.warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
+
+  if (compact) {
+    return <div>{content}</div>;
+  }
+
+  return (
+    <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+      <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Runtime package import</h3>
+      {content}
     </section>
   );
 }

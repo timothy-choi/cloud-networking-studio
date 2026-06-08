@@ -355,9 +355,13 @@ def generate_env_example(topology: Topology) -> str:
     slug = _topology_slug(topology.name)
     lines = [
         "# Copy to .env and adjust values before running docker compose.",
+        "#   cp .env.example .env",
         f"COMPOSE_PROJECT_NAME=cns-{slug}",
         f"CNS_TOPOLOGY_ID={topology.id}",
         f"CNS_TOPOLOGY_NAME={topology.name}",
+        f"CNS_RUNTIME_SUBNET={_DEFAULT_SUBNET}",
+        "# Change CNS_RUNTIME_SUBNET if Docker reports overlapping address space.",
+        "# Static ipv4_address values in docker-compose.yml target the default subnet above.",
         "",
     ]
     for node in _workload_nodes(topology):

@@ -471,6 +471,12 @@ describe('RuntimeStrategySection', () => {
     expect(html).toContain('Multi-host infrastructure apply');
     expect(html).toContain('planning-only and cannot generate infrastructure yet');
   });
+
+  it('renders loading fallback when plan is null', () => {
+    const html = renderToStaticMarkup(<RuntimeStrategySection plan={null} />);
+    expect(html).toContain('Runtime strategy');
+    expect(html).toContain('Loading runtime strategy plan');
+  });
 });
 
 describe('DeploymentStrategySection', () => {

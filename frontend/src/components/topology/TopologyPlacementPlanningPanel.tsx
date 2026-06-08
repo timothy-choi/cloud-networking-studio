@@ -234,7 +234,8 @@ export function TopologyPlacementPlanningPanel({
 
   const selectedStrategy = strategy?.strategies.find((s) => s.id === selectedStrategyId);
   const strategyNotAvailable = !selectedStrategy || !isStrategySelectable(selectedStrategy.status);
-  const runtimeStrategyBlocked = runtimeStrategyPlan ? !runtimeStrategyPlan.can_generate_infrastructure : false;
+  const runtimeStrategyBlocked =
+    runtimeStrategyPlan == null || !runtimeStrategyPlan.can_generate_infrastructure;
 
   useEffect(() => {
     if (!topologyId || !strategy) return;

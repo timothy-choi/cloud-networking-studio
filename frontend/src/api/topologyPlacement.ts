@@ -234,6 +234,31 @@ export async function getTopologyStrategyRecommendation(
   return apiFetch<StrategyRecommendation>(`/topologies/${topologyId}/strategy-recommendation${suffix}`);
 }
 
+export async function listRuntimeStrategies(): Promise<RuntimeStrategy[]> {
+  const res = await apiFetch<{ items: RuntimeStrategy[] }>('/runtime-strategies');
+  return res.items;
+}
+
+export async function getTopologyRuntimeStrategyPlan(
+  topologyId: string,
+  params?: {
+    provider?: string;
+    machine_type?: string;
+    host_count?: number;
+    placement_mode?: string;
+    selected_strategy?: string;
+  },
+): Promise<RuntimeStrategyPlan> {
+  const qs = new URLSearchParams();
+  if (params?.provider) qs.set('provider', params.provider);
+  if (params?.machine_type) qs.set('machine_type', params.machine_type);
+  if (params?.host_count != null) qs.set('host_count', String(params.host_count));
+  if (params?.placement_mode) qs.set('placement_mode', params.placement_mode);
+  if (params?.selected_strategy) qs.set('selected_strategy', params.selected_strategy);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch<RuntimeStrategyPlan>(`/topologies/${topologyId}/runtime-strategy-plan${suffix}`);
+}
+
 export async function getTopologyCostCapacityAnalysis(
   topologyId: string,
   params?: { provider?: string; machine_type?: string; host_count?: number; placement_mode?: string },

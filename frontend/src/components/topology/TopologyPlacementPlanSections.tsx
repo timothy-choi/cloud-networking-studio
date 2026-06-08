@@ -151,7 +151,16 @@ function strategyById(strategies: DeploymentStrategy[], id: string): DeploymentS
   return strategies.find((s) => s.id === id);
 }
 
-export function RuntimeStrategySection({ plan }: { plan: RuntimeStrategyPlan }) {
+export function RuntimeStrategySection({ plan }: { plan: RuntimeStrategyPlan | null }) {
+  if (!plan) {
+    return (
+      <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Runtime strategy</h3>
+        <p className="mt-2 text-sm text-cns-muted">Loading runtime strategy plan…</p>
+      </section>
+    );
+  }
+
   const strategy = plan.runtime_strategy;
   const supported: string[] = [];
   if (plan.capabilities.runtime_target_generation) supported.push('Runtime target generation');

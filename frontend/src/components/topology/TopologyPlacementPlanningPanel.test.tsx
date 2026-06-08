@@ -21,6 +21,7 @@ import {
   PlacementPlanSection,
   PlacementWarningsSection,
   ResourceEstimateSection,
+  RuntimePackageExportSection,
   RuntimeStrategySection,
 } from './TopologyPlacementPlanSections';
 
@@ -448,6 +449,33 @@ describe('runtime strategy helpers', () => {
   it('formats host and deployment model labels', () => {
     expect(runtimeHostModelLabel('single_host')).toBe('single host');
     expect(runtimeDeploymentModelLabel('docker_compose')).toBe('Docker Compose');
+  });
+});
+
+describe('RuntimePackageExportSection', () => {
+  it('renders export section with generate runtime package button', () => {
+    const html = renderToStaticMarkup(
+      <RuntimePackageExportSection
+        topologyId="topo-1"
+        strategyId="docker-vm"
+        runtimePlan={sampleRuntimeStrategyPlan}
+      />,
+    );
+    expect(html).toContain('Runtime package export');
+    expect(html).toContain('Generate Runtime Package');
+    expect(html).not.toContain('not directly runnable');
+  });
+
+  it('renders planning-only warning and alternate button label', () => {
+    const html = renderToStaticMarkup(
+      <RuntimePackageExportSection
+        topologyId="topo-1"
+        strategyId="docker-multi-vm"
+        runtimePlan={sampleRuntimeStrategyPlanBlocked}
+      />,
+    );
+    expect(html).toContain('Generate Planning Package');
+    expect(html).toContain('not directly runnable');
   });
 });
 

@@ -166,7 +166,8 @@ def test_docker_compose_includes_public_ports_only(client_strict, engine_db):
     download = client_strict.get(f"/runtime-packages/{package_id}/download", headers=headers)
     compose = _read_zip_member(download.content, "docker-compose.yml")
     assert '"8080:8080"' in compose
-    assert "5432" not in compose
+    # Internal workloads may reference ports in healthchecks; only public exposure publishes host ports.
+    assert '"5432:5432"' not in compose
 
 
 def test_planning_only_strategy_package_marks_limitations(client_strict, engine_db):

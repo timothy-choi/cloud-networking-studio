@@ -26,6 +26,7 @@ import { AiInfrastructureAdvisorSection } from './AiInfrastructureAdvisorSection
 import {
   CostCapacitySection,
   DeploymentStrategySection,
+  RuntimePackageExportSection,
   RuntimeStrategySection,
   HostRecommendationSection,
   PlacementConstraintsSection,
@@ -329,6 +330,15 @@ export function TopologyPlacementPlanningPanel({
             readOnly={readOnly}
           />
           <RuntimeStrategySection plan={runtimeStrategyPlan} />
+          <RuntimePackageExportSection
+            topologyId={topologyId}
+            strategyId={selectedStrategyId}
+            provider="gcp"
+            machineType={machineType}
+            placementMode={placementMode}
+            runtimePlan={runtimeStrategyPlan}
+            readOnly={readOnly}
+          />
           <CostCapacitySection analysis={costCapacity} />
           <AiInfrastructureAdvisorSection
             advice={aiAdvice}

@@ -18,6 +18,10 @@ from app.schemas.ai_infrastructure_advice import (
 )
 from app.schemas.cost_capacity import CostCapacityAnalysisResponse
 from app.schemas.deployment_strategy import StrategyRecommendationResponse
+from app.schemas.runtime_package import (
+    RuntimePackageGenerateRequest,
+    RuntimePackageGenerateResponse,
+)
 from app.schemas.runtime_strategy import (
     RuntimeRequirementItem,
     RuntimeStrategyCapabilities,
@@ -44,6 +48,7 @@ from app.services import runtime_strategy_plan_service as runtime_strategy_svc
 from app.services import ai_infrastructure_advisor_service as advisor_svc
 from app.services import cost_capacity_advisor_service as cost_capacity_svc
 from app.services import infrastructure_deployment_service as infra_svc
+from app.services import runtime_package_export_service as runtime_package_svc
 from app.services import topology_placement_persistence_service as placement_persist_svc
 from app.services import topology_placement_planner_service as placement_svc
 from app.services.infra_observability import append_event
@@ -473,6 +478,34 @@ def post_topology_ai_infrastructure_advice(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _advice_response(raw)
+
+
+@router.post(
+    "/topologies/{topology_id}/runtime-package",
+    response_model=RuntimePackageGenerateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def generate_topology_runtime_package(
+    topology_id: UUID,
+    body: RuntimePackageGenerateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RuntimePackageGenerateResponse:
+    topology = _load_topology(db, user, topology_id)
+    try:
+        raw = runtime_package_svc.generate_runtime_package(
+            topology,
+            db=db,
+            strategy_id=body.strategy_id,
+            provider=body.provider,
+            machine_type=body.machine_type,
+            placement_mode=body.placement_mode,
+            host_count=body.host_count,
+            user_id=user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RuntimePackageGenerateResponse(**raw)
 
 
 @router.post(

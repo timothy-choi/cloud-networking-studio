@@ -19,6 +19,7 @@ from app.api.onboarding import router as onboarding_router
 from app.api.project_invitations import router as project_invitations_router
 from app.api.projects import router as projects_router
 from app.api.runtime import router as runtime_router
+from app.api.runtime_packages import router as runtime_packages_router
 from app.api.terminal import router as terminal_router
 from app.api.templates import router as templates_router
 from app.api.topologies import router as topologies_router
@@ -153,6 +154,7 @@ app.include_router(topologies_router)
 app.include_router(topology_versions_router)
 app.include_router(deployment_profiles_router)
 app.include_router(topology_placement_router)
+app.include_router(runtime_packages_router)
 app.include_router(credential_profiles_router)
 app.include_router(deployment_targets_router)
 app.include_router(external_deployment_jobs_router)

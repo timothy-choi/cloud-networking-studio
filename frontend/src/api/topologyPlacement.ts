@@ -1,4 +1,4 @@
-import { apiFetch } from './client';
+import { apiFetch, apiFetchBlob } from './client';
 
 export interface TopologyNodeResourceBreakdown {
   node_id: string;
@@ -382,6 +382,42 @@ export const APPLY_SAFE_MACHINE_TYPES = ['e2-micro', 'e2-small', 'e2-medium'] as
 
 export function isApplySafeMachineType(machineType: string): boolean {
   return (APPLY_SAFE_MACHINE_TYPES as readonly string[]).includes(machineType.trim());
+}
+
+export interface RuntimePackageGenerateResponse {
+  package_id: string;
+  strategy_id: string;
+  status: string;
+  files: string[];
+  download_url: string;
+  planning_only: boolean;
+  limitations: string[];
+}
+
+export async function generateRuntimePackage(
+  topologyId: string,
+  body: {
+    strategy_id: string;
+    provider?: string;
+    machine_type?: string;
+    placement_mode?: string;
+    host_count?: number;
+  },
+): Promise<RuntimePackageGenerateResponse> {
+  return apiFetch<RuntimePackageGenerateResponse>(`/topologies/${topologyId}/runtime-package`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function downloadRuntimePackage(packageId: string): Promise<void> {
+  const blob = await apiFetchBlob(`/runtime-packages/${packageId}/download`);
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = href;
+  anchor.download = `cns-runtime-package-${packageId.slice(0, 8)}.zip`;
+  anchor.click();
+  URL.revokeObjectURL(href);
 }
 
 export async function generateInfrastructureDeployment(

@@ -1,6 +1,11 @@
+import { useEffect, useState } from 'react';
+
+import { formatApiError } from '../../api/client';
 import {
+  downloadRuntimePackage,
   formatHostUtilization,
   formatNodeResourceLine,
+  generateRuntimePackage,
   isStrategySelectable,
   runtimeDeploymentModelLabel,
   runtimeHostModelLabel,
@@ -8,10 +13,12 @@ import {
   type CostCapacityAnalysis,
   type DeploymentStrategy,
   type PlacementConstraint,
+  type RuntimePackageGenerateResponse,
   type RuntimeStrategyPlan,
   type StrategyRecommendation,
   type TopologyPlacementPlan,
 } from '../../api/topologyPlacement';
+import { Spinner } from '../Spinner';
 
 export function ResourceEstimateSection({ plan }: { plan: TopologyPlacementPlan }) {
   return (
@@ -229,6 +236,132 @@ export function RuntimeStrategySection({ plan }: { plan: RuntimeStrategyPlan | n
 
       {!plan.can_generate_infrastructure && plan.generation_block_reason ? (
         <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">{plan.generation_block_reason}</p>
+      ) : null}
+    </section>
+  );
+}
+
+export function RuntimePackageExportSection({
+  topologyId,
+  strategyId,
+  provider = 'gcp',
+  machineType,
+  placementMode = 'first_fit',
+  runtimePlan,
+  readOnly = false,
+}: {
+  topologyId: string;
+  strategyId: string;
+  provider?: string;
+  machineType?: string;
+  placementMode?: string;
+  runtimePlan: RuntimeStrategyPlan | null;
+  readOnly?: boolean;
+}) {
+  const [pkg, setPkg] = useState<RuntimePackageGenerateResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPkg(null);
+    setErr(null);
+  }, [strategyId, topologyId, machineType, placementMode]);
+
+  const planningOnly = runtimePlan?.runtime_strategy.status !== 'available';
+  const buttonLabel = planningOnly ? 'Generate Planning Package' : 'Generate Runtime Package';
+
+  async function onGenerate() {
+    setLoading(true);
+    setErr(null);
+    try {
+      const result = await generateRuntimePackage(topologyId, {
+        strategy_id: strategyId,
+        provider,
+        placement_mode: placementMode,
+        ...(machineType?.trim() ? { machine_type: machineType.trim() } : {}),
+      });
+      setPkg(result);
+    } catch (e) {
+      setErr(formatApiError(e));
+      setPkg(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onDownload() {
+    if (!pkg) return;
+    setErr(null);
+    try {
+      await downloadRuntimePackage(pkg.package_id);
+    } catch (e) {
+      setErr(formatApiError(e));
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+      <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Runtime package export</h3>
+      <p className="mt-2 text-sm text-cns-muted">
+        Generate a downloadable deployment package for{' '}
+        <span className="font-mono font-medium">{strategyId}</span>.
+      </p>
+
+      {planningOnly ? (
+        <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+          Planning-only strategy — package includes placement artifacts and README but is not directly runnable.
+        </p>
+      ) : null}
+
+      {!readOnly ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={loading || !runtimePlan}
+            onClick={() => void onGenerate()}
+            className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+          >
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                <Spinner /> Generating…
+              </span>
+            ) : (
+              buttonLabel
+            )}
+          </button>
+          {pkg ? (
+            <button
+              type="button"
+              onClick={() => void onDownload()}
+              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-600"
+            >
+              Download ZIP
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {err ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{err}</p> : null}
+
+      {pkg ? (
+        <div className="mt-3">
+          <p className="text-xs font-medium text-cns-label">
+            Generated package ({pkg.status}
+            {pkg.planning_only ? ', planning only' : ''})
+          </p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 font-mono text-xs">
+            {pkg.files.map((file) => (
+              <li key={file}>{file}</li>
+            ))}
+          </ul>
+          {pkg.limitations.length > 0 ? (
+            <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-amber-900 dark:text-amber-200">
+              {pkg.limitations.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

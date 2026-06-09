@@ -1,6 +1,18 @@
 variable "deployment_name" {
   type        = string
-  description = "CNS infrastructure deployment name (used for labeling)."
+  description = "CNS infrastructure deployment name (used for labeling; sanitized by CNS)."
+}
+
+variable "cns_template" {
+  type        = string
+  description = "CNS template id label value (sanitized by CNS)."
+  default     = "docker-vm"
+}
+
+variable "cns_provider" {
+  type        = string
+  description = "CNS provider label value (sanitized by CNS)."
+  default     = "gcp"
 }
 
 variable "project_id" {

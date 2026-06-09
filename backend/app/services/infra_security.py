@@ -29,6 +29,7 @@ _REGION_PATTERN = re.compile(r"^[a-z0-9][a-z0-9\-]{0,31}$")
 _MACHINE_TYPE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9\-\.]{0,63}$")
 _GCP_PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9\-]{4,28}[a-z0-9]$")
 _INSTANCE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9\-]{0,61}[a-z0-9]$")
+_GCP_LABEL_VALUE_PATTERN = re.compile(r"^[a-z](?:[a-z0-9_-]{0,61}[a-z0-9])?$")
 
 _TEMPLATE_VAR_ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
     ("local-mock", "local"): frozenset({"region", "vm_count", "deployment_name", "ssh_user"}),
@@ -52,6 +53,8 @@ _TEMPLATE_VAR_ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             "tags",
             "vm_count",
             "deployment_name",
+            "cns_template",
+            "cns_provider",
         }
     ),
     (
@@ -76,6 +79,52 @@ _TEMPLATE_VAR_ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
 }
 
 REAL_CLOUD_PROVIDERS = frozenset({"gcp", "aws"})
+
+
+def sanitize_gcp_label_value(value: str, *, max_length: int = 63) -> str:
+    """Normalize a human-readable name for GCP resource label values."""
+    text = (value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9_-]+", "-", text)
+    text = re.sub(r"-+", "-", text).strip("-_")
+    if not text:
+        text = "cns-deployment"
+    if not text[0].isalpha():
+        text = f"c-{text}"
+    text = text[:max_length].rstrip("-_")
+    if not text:
+        return "cns-deployment"
+    if not text[0].isalpha():
+        text = f"c-{text}"[:max_length].rstrip("-_")
+    if not text or not text[-1].isalnum():
+        text = text.rstrip("-_") or "cns-deployment"
+    if not _GCP_LABEL_VALUE_PATTERN.match(text):
+        return "cns-deployment"
+    return text
+
+
+def sanitize_gcp_resource_name(value: str, *, prefix: str = "cns-", max_length: int = 62) -> str:
+    """Normalize a human-readable name for GCP compute/firewall resource identifiers."""
+    base = sanitize_gcp_label_value(value, max_length=max_length)
+    if not base.startswith(prefix):
+        base = f"{prefix}{base}"[:max_length].rstrip("-")
+    if not _INSTANCE_NAME_PATTERN.match(base):
+        fallback = f"{prefix}stack"[:max_length]
+        return fallback if _INSTANCE_NAME_PATTERN.match(fallback) else "cns-stack"
+    return base
+
+
+def gcp_terraform_label_variables(
+    *,
+    deployment_name: str,
+    template_id: str,
+    provider: str,
+) -> dict[str, str]:
+    """Sanitized Terraform variables used for GCP resource labels."""
+    return {
+        "deployment_name": sanitize_gcp_label_value(deployment_name),
+        "cns_template": sanitize_gcp_label_value(template_id),
+        "cns_provider": sanitize_gcp_label_value(provider),
+    }
 
 
 def sanitize_variables(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -161,6 +210,17 @@ def _validate_gcp_docker_vm(variables: dict[str, Any]) -> None:
         tag = tag.strip()
         if tag and not re.match(r"^[a-z][a-z0-9\-]{0,62}$", tag):
             raise ValueError("tags must be comma-separated lowercase identifiers")
+
+    deployment_name = sanitize_gcp_label_value(str(variables.get("deployment_name") or ""))
+    if not _GCP_LABEL_VALUE_PATTERN.match(deployment_name):
+        raise ValueError("deployment_name must be a valid GCP label value")
+
+    for label_key in ("cns_template", "cns_provider"):
+        raw = str(variables.get(label_key) or "").strip()
+        if not raw:
+            continue
+        if not _GCP_LABEL_VALUE_PATTERN.match(sanitize_gcp_label_value(raw)):
+            raise ValueError(f"{label_key} must be a valid GCP label value")
 
 
 def _validate_aws_docker_vm(variables: dict[str, Any]) -> None:

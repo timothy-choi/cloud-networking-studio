@@ -563,9 +563,10 @@ def _default_deployment_variables(
     *,
     overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    name_slug = re.sub(r"[^a-z0-9-]+", "-", topology.name.lower()).strip("-") or "cns-stack"
-    if not name_slug.startswith("cns-"):
-        name_slug = f"cns-{name_slug[:48]}"
+    from app.services.infra_security import gcp_terraform_label_variables, sanitize_gcp_resource_name
+
+    name_slug = sanitize_gcp_resource_name(topology.name)
+    provider_key = str(plan.get("provider") or _PROVIDER).strip().lower()
     vm_count = min(
         max(1, int(plan.get("recommended_host_count") or 1)),
         GCP_APPLY_MAX_INSTANCES,
@@ -583,7 +584,11 @@ def _default_deployment_variables(
         "allowed_app_cidr": "203.0.113.0/24",
         "tags": "cns-docker-vm",
         "vm_count": vm_count,
-        "deployment_name": topology.name,
+        **gcp_terraform_label_variables(
+            deployment_name=topology.name,
+            template_id=_TEMPLATE_ID,
+            provider=provider_key,
+        ),
     }
     if overrides:
         base.update(overrides)

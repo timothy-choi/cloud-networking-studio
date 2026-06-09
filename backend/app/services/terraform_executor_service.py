@@ -14,7 +14,7 @@ from app.models.infrastructure_deployment import InfrastructureDeployment
 from app.models.infrastructure_execution import InfrastructureExecution
 from app.runtime.infra_runner_client import InfraRunnerClientError, get_infra_runner_client
 from app.services.infra_apply_safety import is_gcp_docker_vm_apply_eligible
-from app.services.infra_security import is_real_cloud_provider, redact_logs
+from app.services.infra_security import gcp_terraform_label_variables, is_real_cloud_provider, redact_logs
 from app.services.infra_template_registry import assert_template_on_disk, get_template, resolve_terraform_dir
 from app.services.remote_ssh_public_key_service import resolve_remote_docker_ssh_public_key
 from app.services.terraform_credentials_service import (
@@ -58,7 +58,11 @@ def _base_payload(
         "variables": _stringify_variables(
             {
                 **(deployment.variables_json or {}),
-                "deployment_name": deployment.name,
+                **gcp_terraform_label_variables(
+                    deployment_name=deployment.name,
+                    template_id=deployment.template_id,
+                    provider=deployment.provider,
+                ),
                 **_gcp_docker_vm_extra_variables(deployment),
             }
         ),

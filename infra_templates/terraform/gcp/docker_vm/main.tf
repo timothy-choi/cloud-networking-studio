@@ -56,8 +56,8 @@ resource "google_compute_instance" "docker_vm" {
 
   labels = {
     cns_deployment = var.deployment_name
-    cns_template   = "docker-vm"
-    cns_provider   = "gcp"
+    cns_template   = var.cns_template
+    cns_provider   = var.cns_provider
   }
 
   boot_disk {

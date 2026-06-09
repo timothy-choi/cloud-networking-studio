@@ -280,14 +280,18 @@ def _default_deployment_variables(
     machine_type: str,
     overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    name_slug = re.sub(r"[^a-z0-9-]+", "-", topology.name.lower()).strip("-") or "cns-stack"
-    if not name_slug.startswith("cns-"):
-        name_slug = f"cns-{name_slug[:48]}"
+    from app.services.infra_security import gcp_terraform_label_variables, sanitize_gcp_resource_name
+
+    name_slug = sanitize_gcp_resource_name(topology.name)
     vm_count = 1
     base: dict[str, Any] = {
         "region": "us-central1",
         "vm_count": vm_count,
-        "deployment_name": topology.name,
+        **gcp_terraform_label_variables(
+            deployment_name=topology.name,
+            template_id="docker-vm",
+            provider=provider,
+        ),
     }
     if provider == "gcp":
         base.update(

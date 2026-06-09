@@ -66,7 +66,12 @@ def _zip_bytes(files: dict[str, str]) -> bytes:
     return buf.getvalue()
 
 
-def test_export_import_round_trip(client_strict, engine_db):
+def test_export_import_round_trip(client_strict, monkeypatch, engine_db, tmp_path):
+    from tests.test_infrastructure_deployments_57e import _gcp_credentials, _patch_gcp_ssh_gates
+
+    _patch_gcp_ssh_gates(monkeypatch)
+    _gcp_credentials(monkeypatch, tmp_path)
+
     headers, project_id = _register_and_headers(client_strict)
     topo_id = _create_topology_with_nodes(client_strict, headers, project_id)
 
@@ -103,6 +108,46 @@ def test_export_import_round_trip(client_strict, engine_db):
     plan = client_strict.get(f"/topologies/{new_topo_id}/placement-plan", headers=headers)
     assert plan.status_code == 200
     assert plan.json()["workload_node_count"] == 2
+
+    topo = client_strict.get(f"/topologies/{new_topo_id}", headers=headers).json()
+    assert topo["name"].endswith("(imported)")
+
+    profile = client_strict.post(
+        f"/projects/{project_id}/credential-profiles",
+        headers=headers,
+        json={
+            "name": "GCP",
+            "provider": "gcp",
+            "credential_type": "gcp_service_account_json",
+            "secret": json.dumps(
+                {
+                    "type": "service_account",
+                    "project_id": "my-gcp-project",
+                    "private_key": "-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----\n",
+                    "client_email": "demo@test.iam.gserviceaccount.com",
+                }
+            ),
+        },
+    )
+    assert profile.status_code == 201, profile.text
+    cred_ref = profile.json()["credentials_ref"]
+
+    generated_infra = client_strict.post(
+        f"/topologies/{new_topo_id}/generate-infrastructure-deployment",
+        headers=headers,
+        json={
+            "provider": "gcp",
+            "machine_type": "e2-micro",
+            "template_id": "docker-vm",
+            "credentials_ref": cred_ref,
+        },
+    )
+    assert generated_infra.status_code == 201, generated_infra.text
+    infra_body = generated_infra.json()
+    assert infra_body["deployment"]["name"].endswith("(imported)-infra")
+    assert infra_body["deployment"]["variables_json"]["deployment_name"] == "import-source-lab-imported"
+    assert infra_body["deployment"]["variables_json"]["instance_name"].startswith("cns-")
+    assert infra_body["deployment"]["variables_json"]["project_id"] == "my-gcp-project"
 
 
 def test_import_rejects_missing_manifest(client_strict, engine_db):

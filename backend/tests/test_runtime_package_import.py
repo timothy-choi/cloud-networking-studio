@@ -205,6 +205,43 @@ def test_import_rejects_invalid_compose(client_strict, engine_db):
     assert "services" in response.json()["detail"].lower()
 
 
+def test_resolve_compose_env_subnet_default():
+    assert import_svc.resolve_compose_env_default("${CNS_RUNTIME_SUBNET:-10.250.0.0/24}") == "10.250.0.0/24"
+    assert import_svc.normalize_import_cidr("${CNS_RUNTIME_SUBNET:-10.250.0.0/24}") == "10.250.0.0/24"
+    assert import_svc.normalize_import_cidr("${UNRESOLVED}") is None
+
+
+def test_resolve_import_subnet_prefers_manifest_over_compose():
+    compose = import_svc.parse_docker_compose(
+        """services:
+  web:
+    image: nginx:alpine
+networks:
+  cns-net:
+    ipam:
+      config:
+        - subnet: ${CNS_RUNTIME_SUBNET:-10.250.0.0/24}
+"""
+    )
+    manifest = {"links": [{"network_name": "lab", "cidr": "10.60.0.0/24"}]}
+    assert import_svc.resolve_import_subnet(manifest, compose) == "10.60.0.0/24"
+
+
+def test_resolve_import_subnet_falls_back_to_compose_default():
+    compose = import_svc.parse_docker_compose(
+        """services:
+  web:
+    image: nginx:alpine
+networks:
+  cns-net:
+    ipam:
+      config:
+        - subnet: ${CNS_RUNTIME_SUBNET:-10.250.0.0/24}
+"""
+    )
+    assert import_svc.resolve_import_subnet({"link_count": 1}, compose) == "10.250.0.0/24"
+
+
 def test_parse_docker_compose_extracts_services():
     compose = """# Generated
 services:
@@ -233,6 +270,67 @@ networks:
     assert parsed.services["cli-edge"].ipv4_address == "10.250.0.10"
     assert parsed.services["svc-origin"].ports == [8080]
     assert parsed.services["svc-origin"].health_check == {"check_type": "http", "port": 80, "path": "/"}
+    assert parsed.subnet == "${CNS_RUNTIME_SUBNET:-10.250.0.0/24}"
+    assert import_svc.resolve_import_subnet({"link_count": 1}, parsed) == "10.250.0.0/24"
+
+
+def test_import_stores_concrete_link_cidr(client_strict, engine_db):
+    headers, project_id = _register_and_headers(client_strict)
+    manifest = {
+        "topology_name": "subnet-lab",
+        "strategy_id": "docker-vm",
+        "link_count": 1,
+        "placement_plan": {
+            "nodes": [
+                {"node_name": "cli-edge", "resource_cpu": 0.25, "resource_memory_mb": 256, "resource_disk_gb": 5},
+                {"node_name": "svc-origin", "resource_cpu": 0.5, "resource_memory_mb": 512, "resource_disk_gb": 8},
+            ],
+        },
+    }
+    compose = """services:
+  cli-edge:
+    image: alpine:latest
+  svc-origin:
+    image: nginx:alpine
+networks:
+  cns-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${CNS_RUNTIME_SUBNET:-10.250.0.0/24}
+"""
+    payload = _zip_bytes(
+        {
+            "deployment-manifest.json": json.dumps(manifest),
+            "host-placement.json": json.dumps({"hosts": [], "placement_constraints": []}),
+            "docker-compose.yml": compose,
+        }
+    )
+    response = client_strict.post(
+        "/runtime-packages/import",
+        headers=headers,
+        data={"project_id": project_id},
+        files={"file": ("subnet.zip", payload, "application/zip")},
+    )
+    assert response.status_code == 201, response.text
+    topo_id = response.json()["topology_id"]
+    links = client_strict.get(f"/topologies/{topo_id}/links", headers=headers)
+    assert links.status_code == 200
+    assert len(links.json()) == 1
+    assert links.json()[0]["cidr"] == "10.250.0.0/24"
+    assert "${" not in (links.json()[0]["cidr"] or "")
+
+    from uuid import UUID
+
+    from app.services.deployment_validation import validate_topology_for_deploy
+    from app.services.topology_version_service import load_topology_with_graph
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as db:
+        topo = load_topology_with_graph(db, UUID(topo_id))
+        assert topo is not None
+        errors = validate_topology_for_deploy(topo)
+        assert not any("invalid CIDR" in err for err in errors)
 
 
 def test_planning_only_package_import_without_compose(client_strict, engine_db):

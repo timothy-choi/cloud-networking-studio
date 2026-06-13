@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import ipaddress
 import json
 import re
 import zipfile
@@ -24,6 +25,7 @@ _REQUIRED_HOST_PLACEMENT = "host-placement.json"
 _MAX_ZIP_BYTES = 10 * 1024 * 1024
 _MAX_ZIP_FILES = 64
 _ALLOWED_EXTENSIONS = frozenset({".json", ".yml", ".yaml", ".md", ".example", ".env"})
+_COMPOSE_ENV_DEFAULT = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*):-(.+)\}$")
 
 
 @dataclass
@@ -118,6 +120,68 @@ def _strip_yaml_scalar(value: str) -> str:
     if value.startswith("'") and value.endswith("'"):
         return value[1:-1]
     return value
+
+
+def resolve_compose_env_default(value: str) -> str:
+    """Resolve Docker Compose ${VAR:-default} substitution to its default value."""
+    text = _strip_yaml_scalar((value or "").strip())
+    match = _COMPOSE_ENV_DEFAULT.match(text)
+    if match:
+        return match.group(2).strip()
+    return text
+
+
+def normalize_import_cidr(value: str | None) -> str | None:
+    """Return a concrete CIDR suitable for topology links; never store ${...} expressions."""
+    if value is None:
+        return None
+    resolved = resolve_compose_env_default(str(value).strip())
+    if not resolved or "${" in resolved or "}" in resolved:
+        return None
+    try:
+        return str(ipaddress.ip_network(resolved, strict=False))
+    except ValueError:
+        return None
+
+
+def _link_cidr_from_entries(entries: Any) -> str | None:
+    if not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        raw = entry.get("cidr")
+        if not raw:
+            continue
+        normalized = normalize_import_cidr(str(raw))
+        if normalized:
+            return normalized
+    return None
+
+
+def extract_manifest_link_cidr(manifest: dict[str, Any]) -> str | None:
+    """Prefer topology/link CIDR from deployment-manifest.json when present."""
+    for key in ("links", "topology_links"):
+        cidr = _link_cidr_from_entries(manifest.get(key))
+        if cidr:
+            return cidr
+    placement_plan = manifest.get("placement_plan")
+    if isinstance(placement_plan, dict):
+        for key in ("links", "topology_links"):
+            cidr = _link_cidr_from_entries(placement_plan.get(key))
+            if cidr:
+                return cidr
+    return None
+
+
+def resolve_import_subnet(manifest: dict[str, Any], compose: ParsedCompose | None) -> str | None:
+    """Resolve import subnet: manifest link CIDR first, then docker-compose fallback."""
+    manifest_cidr = extract_manifest_link_cidr(manifest)
+    if manifest_cidr:
+        return manifest_cidr
+    if compose and compose.subnet:
+        return normalize_import_cidr(compose.subnet)
+    return None
 
 
 def _parse_json_array(value: str) -> list[str]:
@@ -473,7 +537,7 @@ def import_runtime_package(
         raise ValueError("Failed to recreate any topology nodes from runtime package.")
 
     network_name = compose.network_name if compose else "cns-net"
-    subnet = compose.subnet if compose else None
+    subnet = resolve_import_subnet(manifest, compose)
     node_ids = [node.id for node in created_nodes]
     links_created = _create_links_for_nodes(
         db,
